@@ -1,0 +1,526 @@
+diff --git a/src/main/java/org/traccar/api/BaseObjectResource.java b/src/main/java/org/traccar/api/BaseObjectResource.java
+index 795da90..c64c6de 100644
+--- a/src/main/java/org/traccar/api/BaseObjectResource.java
++++ b/src/main/java/org/traccar/api/BaseObjectResource.java
+@@ -18,6 +18,7 @@ package org.traccar.api;
+ 
+ import jakarta.servlet.http.HttpServletRequest;
+ import jakarta.ws.rs.core.Context;
++import org.traccar.api.security.HierarchyService;
+ import org.traccar.api.security.ServiceAccountUser;
+ import org.traccar.model.ObjectOperation;
+ import org.traccar.helper.LogAction;
+@@ -52,6 +53,9 @@ public abstract class BaseObjectResource<T extends BaseModel> extends BaseResour
+     @Inject
+     private LogAction actionLogger;
+ 
++    @Inject
++    private HierarchyService hierarchyService;
++
+     @Context
+     private HttpServletRequest request;
+ 
+@@ -86,6 +90,7 @@ public abstract class BaseObjectResource<T extends BaseModel> extends BaseResour
+             cacheManager.invalidatePermission(true, User.class, getUserId(), baseClass, entity.getId(), true);
+             connectionManager.invalidatePermission(true, User.class, getUserId(), baseClass, entity.getId(), true);
+             actionLogger.link(request, getUserId(), User.class, getUserId(), baseClass, entity.getId());
++            hierarchyService.propagate(getUserId(), baseClass, entity.getId());
+         }
+ 
+         return Response.ok(entity).build();
+diff --git a/src/main/java/org/traccar/api/resource/HierarchyResource.java b/src/main/java/org/traccar/api/resource/HierarchyResource.java
+new file mode 100644
+index 0000000..e0dc9ce
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/HierarchyResource.java
+@@ -0,0 +1,150 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.annotation.security.PermitAll;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.model.ManagedUser;
++import org.traccar.model.Permission;
++import org.traccar.model.User;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++@Path("hierarchy")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class HierarchyResource extends BaseResource {
++
++    public static final String BRAND_PREFIX = "brand.";
++    public static final String BRAND_DOMAINS = "brandDomains";
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    /**
++     * Direct manager of every user visible to the caller, as {@code userId -> managerId}.
++     */
++    @GET
++    @Path("parents")
++    public Map<Long, Long> parents() throws StorageException {
++        Map<Long, Set<Long>> owners = new HashMap<>();
++        for (Permission permission : storage.getPermissions(User.class, ManagedUser.class)) {
++            owners.computeIfAbsent(permission.getPropertyId(), key -> new HashSet<>()).add(permission.getOwnerId());
++        }
++        Set<Long> visible = null;
++        if (permissionsService.notAdmin(getUserId())) {
++            visible = hierarchyService.getDescendants(getUserId());
++        }
++        Map<Long, Long> result = new LinkedHashMap<>();
++        for (var entry : owners.entrySet()) {
++            if (visible != null && !visible.contains(entry.getKey())) {
++                continue;
++            }
++            // every ancestor holds a materialized link, the closest one is the ancestor with most ancestors itself
++            long parent = 0;
++            int parentDepth = -1;
++            for (long owner : entry.getValue()) {
++                int depth = owners.getOrDefault(owner, Set.of()).size();
++                if (depth > parentDepth) {
++                    parent = owner;
++                    parentDepth = depth;
++                }
++            }
++            result.put(entry.getKey(), parent);
++        }
++        return result;
++    }
++
++    @POST
++    @Path("sync")
++    public Response synchronize() throws Exception {
++        permissionsService.checkAdmin(getUserId());
++        hierarchyService.synchronize();
++        return Response.noContent().build();
++    }
++
++    private Map<String, Object> brandAttributes(long userId) throws StorageException {
++        User user = storage.getObject(User.class, new Request(
++                new Columns.All(), new Condition.Equals("id", userId)));
++        Map<String, Object> result = new HashMap<>();
++        if (user != null) {
++            for (var entry : user.getAttributes().entrySet()) {
++                if (entry.getKey().startsWith(BRAND_PREFIX) && entry.getValue() != null
++                        && !entry.getValue().toString().isEmpty()) {
++                    result.put(entry.getKey().substring(BRAND_PREFIX.length()), entry.getValue());
++                }
++            }
++        }
++        return result;
++    }
++
++    private long findDomainOwner(String host) throws StorageException {
++        String domains = permissionsService.getServer().getString(BRAND_DOMAINS);
++        if (host != null && domains != null) {
++            for (String item : domains.split("[,;\\s]+")) {
++                String[] pair = item.split("=");
++                if (pair.length == 2 && pair[0].trim().equalsIgnoreCase(host.trim())) {
++                    try {
++                        return Long.parseLong(pair[1].trim());
++                    } catch (NumberFormatException ignored) {
++                        return 0;
++                    }
++                }
++            }
++        }
++        return 0;
++    }
++
++    /**
++     * White label settings: attributes prefixed with {@code brand.} on the user and its managers, the closest
++     * manager winning. Before login the brand is resolved from the domain using the {@code brandDomains} server
++     * attribute ({@code host=userId} pairs), which only the administrator can change.
++     */
++    @GET
++    @Path("brand")
++    @PermitAll
++    public Map<String, Object> brand(@QueryParam("host") String host) throws StorageException {
++        long userId = getUserId() > 0 ? getUserId() : findDomainOwner(host);
++        Map<String, Object> result = new LinkedHashMap<>();
++        if (userId > 0) {
++            List<Long> chain = new ArrayList<>(hierarchyService.getAncestorChain(userId));
++            chain.add(0, userId);
++            for (int i = chain.size() - 1; i >= 0; i--) {
++                result.putAll(brandAttributes(chain.get(i)));
++            }
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/PermissionsResource.java b/src/main/java/org/traccar/api/resource/PermissionsResource.java
+index 6d16fa1..f573652 100644
+--- a/src/main/java/org/traccar/api/resource/PermissionsResource.java
++++ b/src/main/java/org/traccar/api/resource/PermissionsResource.java
+@@ -19,8 +19,11 @@ package org.traccar.api.resource;
+ import jakarta.servlet.http.HttpServletRequest;
+ import jakarta.ws.rs.core.Context;
+ import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
+ import org.traccar.helper.LogAction;
++import org.traccar.model.ManagedUser;
+ import org.traccar.model.Permission;
++import org.traccar.model.User;
+ import org.traccar.model.UserRestrictions;
+ import org.traccar.session.cache.CacheManager;
+ import org.traccar.storage.StorageException;
+@@ -50,6 +53,9 @@ public class PermissionsResource  extends BaseResource {
+     @Inject
+     private LogAction actionLogger;
+ 
++    @Inject
++    private HierarchyService hierarchyService;
++
+     @Context
+     private HttpServletRequest request;
+ 
+@@ -78,6 +84,10 @@ public class PermissionsResource  extends BaseResource {
+         for (LinkedHashMap<String, Long> entity: entities) {
+             Permission permission = new Permission(entity);
+             checkPermission(permission);
++            boolean userLink = permission.getOwnerClass().equals(User.class);
++            if (userLink && permission.getPropertyClass().equals(ManagedUser.class)) {
++                hierarchyService.checkCycle(permission.getOwnerId(), permission.getPropertyId());
++            }
+             storage.addPermission(permission);
+             cacheManager.invalidatePermission(
+                     true,
+@@ -87,6 +97,10 @@ public class PermissionsResource  extends BaseResource {
+             actionLogger.link(request, getUserId(),
+                     permission.getOwnerClass(), permission.getOwnerId(),
+                     permission.getPropertyClass(), permission.getPropertyId());
++            if (userLink) {
++                hierarchyService.propagate(
++                        permission.getOwnerId(), permission.getPropertyClass(), permission.getPropertyId());
++            }
+         }
+         return Response.noContent().build();
+     }
+diff --git a/src/main/java/org/traccar/api/resource/UserResource.java b/src/main/java/org/traccar/api/resource/UserResource.java
+index dd0deae..d53717e 100644
+--- a/src/main/java/org/traccar/api/resource/UserResource.java
++++ b/src/main/java/org/traccar/api/resource/UserResource.java
+@@ -21,6 +21,7 @@ import jakarta.ws.rs.DELETE;
+ import jakarta.ws.rs.PathParam;
+ import jakarta.ws.rs.core.Context;
+ import org.traccar.api.BaseObjectResource;
++import org.traccar.api.security.HierarchyService;
+ import org.traccar.config.Config;
+ import org.traccar.config.Keys;
+ import org.traccar.helper.LogAction;
+@@ -57,6 +58,9 @@ public class UserResource extends BaseObjectResource<User> {
+     @Inject
+     private Config config;
+ 
++    @Inject
++    private HierarchyService hierarchyService;
++
+     @Inject
+     private LogAction actionLogger;
+ 
+@@ -88,7 +92,7 @@ public class UserResource extends BaseObjectResource<User> {
+     @Override
+     @PermitAll
+     @POST
+-    public Response add(User entity) throws StorageException {
++    public Response add(User entity) throws Exception {
+         User currentUser = getUserId() > 0 ? permissionsService.getUser(getUserId()) : null;
+         if (currentUser == null || !currentUser.getAdministrator()) {
+             permissionsService.checkUserUpdate(getUserId(), new User(), entity);
+@@ -127,6 +131,7 @@ public class UserResource extends BaseObjectResource<User> {
+         if (currentUser != null && currentUser.getUserLimit() != 0) {
+             storage.addPermission(new Permission(User.class, getUserId(), ManagedUser.class, entity.getId()));
+             actionLogger.link(request, getUserId(), User.class, getUserId(), ManagedUser.class, entity.getId());
++            hierarchyService.propagate(getUserId(), ManagedUser.class, entity.getId());
+         }
+         return Response.ok(entity).build();
+     }
+diff --git a/src/main/java/org/traccar/api/security/HierarchyService.java b/src/main/java/org/traccar/api/security/HierarchyService.java
+new file mode 100644
+index 0000000..80d72cb
+--- /dev/null
++++ b/src/main/java/org/traccar/api/security/HierarchyService.java
+@@ -0,0 +1,173 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.security;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.traccar.model.Attribute;
++import org.traccar.model.BaseModel;
++import org.traccar.model.Calendar;
++import org.traccar.model.Command;
++import org.traccar.model.Device;
++import org.traccar.model.Driver;
++import org.traccar.model.Geofence;
++import org.traccar.model.Group;
++import org.traccar.model.Maintenance;
++import org.traccar.model.ManagedUser;
++import org.traccar.model.Notification;
++import org.traccar.model.Order;
++import org.traccar.model.Permission;
++import org.traccar.model.Report;
++import org.traccar.model.User;
++import org.traccar.session.ConnectionManager;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++
++import java.util.ArrayDeque;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Multi-level manager hierarchy.
++ * <p>
++ * Stock Traccar only gives a manager access to the users it manages directly and to the objects linked to
++ * itself. This service materializes the hierarchy: every permission a user gets is also granted to all of its
++ * ancestor managers, so a manager sees everything from itself downwards while the administrator sees everything.
++ * Because the permissions are real rows, queries, cache, live updates and notifications work unchanged.
++ */
++@Singleton
++public class HierarchyService {
++
++    public static final List<Class<? extends BaseModel>> CLASSES = List.of(
++            ManagedUser.class, Device.class, Group.class, Geofence.class, Notification.class, Driver.class,
++            Attribute.class, Calendar.class, Command.class, Maintenance.class, Order.class, Report.class);
++
++    private final Storage storage;
++    private final CacheManager cacheManager;
++    private final ConnectionManager connectionManager;
++
++    @Inject
++    public HierarchyService(Storage storage, CacheManager cacheManager, ConnectionManager connectionManager) {
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++        this.connectionManager = connectionManager;
++    }
++
++    private Set<Long> traverse(long userId, boolean up) throws StorageException {
++        Set<Long> result = new LinkedHashSet<>();
++        var queue = new ArrayDeque<Long>();
++        queue.add(userId);
++        while (!queue.isEmpty()) {
++            long current = queue.poll();
++            var permissions = up
++                    ? storage.getPermissions(User.class, 0, ManagedUser.class, current)
++                    : storage.getPermissions(User.class, current, ManagedUser.class, 0);
++            for (Permission permission : permissions) {
++                long next = up ? permission.getOwnerId() : permission.getPropertyId();
++                if (next != userId && result.add(next)) {
++                    queue.add(next);
++                }
++            }
++        }
++        return result;
++    }
++
++    public Set<Long> getAncestors(long userId) throws StorageException {
++        return traverse(userId, true);
++    }
++
++    public Set<Long> getDescendants(long userId) throws StorageException {
++        return traverse(userId, false);
++    }
++
++    /**
++     * Ancestors ordered from the closest manager to the top of the tree.
++     */
++    public List<Long> getAncestorChain(long userId) throws StorageException {
++        Map<Long, Integer> depth = new HashMap<>();
++        for (long ancestorId : getAncestors(userId)) {
++            depth.put(ancestorId, getAncestors(ancestorId).size());
++        }
++        return depth.keySet().stream()
++                .sorted(Comparator.comparing(depth::get).reversed())
++                .toList();
++    }
++
++    public void checkCycle(long ownerId, long managedUserId) throws StorageException {
++        if (ownerId == managedUserId || getAncestors(ownerId).contains(managedUserId)) {
++            throw new IllegalArgumentException("Cycle in user hierarchy");
++        }
++    }
++
++    private void link(long userId, Class<? extends BaseModel> clazz, long propertyId) throws Exception {
++        if (clazz.equals(ManagedUser.class) && userId == propertyId) {
++            return;
++        }
++        if (storage.getPermissions(User.class, userId, clazz, propertyId).isEmpty()) {
++            storage.addPermission(new Permission(User.class, userId, clazz, propertyId));
++            cacheManager.invalidatePermission(true, User.class, userId, clazz, propertyId, true);
++            connectionManager.invalidatePermission(true, User.class, userId, clazz, propertyId, true);
++        }
++    }
++
++    /**
++     * Call after a permission {@code ownerId -> propertyId} has been stored.
++     */
++    public void propagate(long ownerId, Class<? extends BaseModel> clazz, long propertyId) throws Exception {
++        if (!CLASSES.contains(clazz)) {
++            return;
++        }
++        Set<Long> ancestors = getAncestors(ownerId);
++        for (long ancestorId : ancestors) {
++            link(ancestorId, clazz, propertyId);
++        }
++        if (clazz.equals(ManagedUser.class)) {
++            // a whole subtree was attached: everyone above it inherits users and objects below it
++            Set<Long> owners = new LinkedHashSet<>(ancestors);
++            owners.add(ownerId);
++            Set<Long> subtree = new LinkedHashSet<>(getDescendants(propertyId));
++            subtree.add(propertyId);
++            for (long userId : subtree) {
++                for (long owner : owners) {
++                    link(owner, ManagedUser.class, userId);
++                }
++                for (var objectClass : CLASSES) {
++                    if (objectClass.equals(ManagedUser.class)) {
++                        continue;
++                    }
++                    for (Permission permission : storage.getPermissions(User.class, userId, objectClass, 0)) {
++                        for (long owner : owners) {
++                            link(owner, objectClass, permission.getPropertyId());
++                        }
++                    }
++                }
++            }
++        }
++    }
++
++    /**
++     * Rebuilds inherited permissions for existing data, e.g. after importing users.
++     */
++    public void synchronize() throws Exception {
++        for (Permission permission : storage.getPermissions(User.class, ManagedUser.class)) {
++            propagate(permission.getOwnerId(), ManagedUser.class, permission.getPropertyId());
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/security/PermissionsService.java b/src/main/java/org/traccar/api/security/PermissionsService.java
+index 721793c..a379c2c 100644
+--- a/src/main/java/org/traccar/api/security/PermissionsService.java
++++ b/src/main/java/org/traccar/api/security/PermissionsService.java
+@@ -177,12 +177,14 @@ public class PermissionsService {
+     }
+ 
+     public void checkUserUpdate(long userId, User before, User after) throws StorageException, SecurityException {
+-        if (before.getAdministrator() != after.getAdministrator()
+-                || before.getDeviceLimit() != after.getDeviceLimit()
+-                || before.getUserLimit() != after.getUserLimit()) {
++        User user = userId > 0 ? getUser(userId) : null;
++        if (before.getAdministrator() != after.getAdministrator()) {
+             checkAdmin(userId);
+         }
+-        User user = userId > 0 ? getUser(userId) : null;
++        if (before.getDeviceLimit() != after.getDeviceLimit()
++                || before.getUserLimit() != after.getUserLimit()) {
++            checkLimitsUpdate(user, after);
++        }
+         if (user != null && user.getExpirationTime() != null
+                 && !Objects.equals(before.getExpirationTime(), after.getExpirationTime())
+                 && (after.getExpirationTime() == null
+@@ -208,6 +210,29 @@ public class PermissionsService {
+         }
+     }
+ 
++    private static boolean withinLimit(int ownLimit, int requestedLimit) {
++        return ownLimit == -1 || (requestedLimit != -1 && requestedLimit <= ownLimit);
++    }
++
++    /**
++     * Managers can create sub-managers, as long as the limits they grant do not exceed their own.
++     */
++    private void checkLimitsUpdate(User user, User after) throws StorageException, SecurityException {
++        if (user != null && user.getAdministrator()) {
++            return;
++        }
++        if (user == null || !user.getManager() || user.getId() == after.getId()) {
++            throw new SecurityException("Administrator access required");
++        }
++        if (after.getId() > 0) {
++            checkUser(user.getId(), after.getId());
++        }
++        if (!withinLimit(user.getUserLimit(), after.getUserLimit())
++                || !withinLimit(user.getDeviceLimit(), after.getDeviceLimit())) {
++            throw new SecurityException("Limit exceeds manager limit");
++        }
++    }
++
+     public <T extends BaseModel> void checkPermission(
+             Class<T> clazz, long userId, long objectId) throws StorageException, SecurityException {
+         if (!getUser(userId).getAdministrator() && !(clazz.equals(User.class) && userId == objectId)) {
+diff --git a/src/main/java/org/traccar/session/ConnectionManager.java b/src/main/java/org/traccar/session/ConnectionManager.java
+index eadca89..4ffb2da 100644
+--- a/src/main/java/org/traccar/session/ConnectionManager.java
++++ b/src/main/java/org/traccar/session/ConnectionManager.java
+@@ -49,7 +49,6 @@ import java.util.Collections;
+ import java.util.Date;
+ import java.util.HashMap;
+ import java.util.HashSet;
+-import java.util.List;
+ import java.util.Map;
+ import java.util.Objects;
+ import java.util.Set;
+@@ -336,7 +335,7 @@ public class ConnectionManager implements BroadcastInterface {
+         if (link && clazz1.equals(User.class) && clazz2.equals(Device.class)) {
+             if (listeners.containsKey(id1)) {
+                 userDevices.get(id1).add(id2);
+-                deviceUsers.put(id2, new HashSet<>(List.of(id1)));
++                deviceUsers.computeIfAbsent(id2, key -> new HashSet<>()).add(id1);
+             }
+         }
+     }

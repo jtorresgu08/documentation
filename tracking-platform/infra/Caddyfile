@@ -1,0 +1,24 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Dominio principal. Para marcas blancas con dominio propio añade más bloques (o usa on_demand_tls)
+# apuntando al mismo reverse_proxy y registra el dominio en Apariencia > Dominios de marca blanca.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(self), geolocation=(self), microphone=()"
+		-Server
+	}
+
+	# La consola de base de datos y el endpoint de salud no se exponen
+	@blocked path /console* /api/health
+	respond @blocked 404
+
+	reverse_proxy traccar:8082
+}

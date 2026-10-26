@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM 'http://java.sun.com/dtd/properties.dtd'>
+<properties>
+
+    <!--
+      Documentación: https://www.traccar.org/configuration-file/
+      Cualquier clave se puede sobrescribir con una variable de entorno: database.password -> DATABASE_PASSWORD
+      (CONFIG_USE_ENVIRONMENT_VARIABLES=true ya viene activado en la imagen). Las credenciales van en infra/.env.
+    -->
+
+    <!-- Base de datos (los valores reales llegan por variables de entorno) -->
+    <entry key='database.driver'>org.postgresql.Driver</entry>
+    <entry key='database.url'>jdbc:postgresql://db:5432/traccar</entry>
+    <entry key='database.user'>traccar</entry>
+    <entry key='database.password'></entry>
+    <entry key='database.maxPoolSize'>20</entry>
+    <entry key='database.saveOriginal'>false</entry>
+
+    <!-- Web: solo accesible a través del proxy HTTPS (Caddy) -->
+    <entry key='web.port'>8082</entry>
+    <entry key='web.maxRequestsPerSec'>20</entry>
+    <entry key='web.sessionTimeout'>86400</entry>
+    <entry key='web.persistSession'>true</entry>
+    <entry key='web.sameSiteCookie'>Lax</entry>
+    <entry key='web.console'>false</entry>
+    <entry key='web.debug'>false</entry>
+
+    <!-- Filtrado de posiciones erróneas -->
+    <entry key='filter.enable'>true</entry>
+    <entry key='filter.invalid'>true</entry>
+    <entry key='filter.zero'>true</entry>
+    <entry key='filter.future'>86400</entry>
+    <entry key='filter.maxSpeed'>300</entry>
+
+    <!-- Geocodificación (cambiar a nominatim / locationiq / google con clave propia) -->
+    <entry key='geocoder.enable'>false</entry>
+
+    <!-- Registros -->
+    <entry key='logger.console'>true</entry>
+    <entry key='logger.level'>info</entry>
+    <entry key='logger.fullStackTraces'>false</entry>
+
+    <entry key='media.path'>./media</entry>
+
+</properties>

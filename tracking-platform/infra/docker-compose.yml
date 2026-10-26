@@ -1,0 +1,79 @@
+# Despliegue completo: PostgreSQL + Traccar (parcheado) + Caddy (HTTPS automático).
+# Uso: cp .env.example .env && nano .env && docker compose up -d --build
+
+name: rastreo
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: traccar
+      POSTGRES_USER: traccar
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD en .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./backups:/backups
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traccar -d traccar"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  traccar:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: rastreo-traccar:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: jdbc:postgresql://db:5432/traccar
+      DATABASE_USER: traccar
+      DATABASE_PASSWORD: ${DB_PASSWORD}
+      WEB_URL: https://${DOMAIN:?Define DOMAIN en .env}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx2g}
+    volumes:
+      - traccar-logs:/opt/traccar/logs
+      - traccar-media:/opt/traccar/media
+    # Puertos de los protocolos GPS: abrir solo los que usen tus equipos (lista en
+    # https://www.traccar.org/devices/). Ejemplos: 5001 gt06/Concox, 5013 h02/Coban, 5023 teltonika, 5055 osmand (app móvil).
+    ports:
+      - "${GPS_PORTS:-5001-5100}:${GPS_PORTS:-5001-5100}/tcp"
+      - "${GPS_PORTS:-5001-5100}:${GPS_PORTS:-5001-5100}/udp"
+    networks: [internal]
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [traccar]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Define ACME_EMAIL en .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [internal]
+
+networks:
+  internal:
+
+volumes:
+  db-data:
+  traccar-logs:
+  traccar-media:
+  caddy-data:
+  caddy-config:
