@@ -1,56 +1,67 @@
+import { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { makeStyles } from 'tss-react/mui';
 import {
-  IconButton, Tooltip, Avatar, ListItemAvatar, ListItemText, ListItemButton,
-  Typography,
+  Checkbox, Chip, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Tooltip, Typography,
 } from '@mui/material';
-import BatteryFullIcon from '@mui/icons-material/BatteryFull';
-import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
-import Battery60Icon from '@mui/icons-material/Battery60';
-import BatteryCharging60Icon from '@mui/icons-material/BatteryCharging60';
-import Battery20Icon from '@mui/icons-material/Battery20';
-import BatteryCharging20Icon from '@mui/icons-material/BatteryCharging20';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import RemoveIcon from '@mui/icons-material/Remove';
+import AddIcon from '@mui/icons-material/Add';
 import ErrorIcon from '@mui/icons-material/Error';
+import MyLocationIcon from '@mui/icons-material/MyLocation';
+import HistoryIcon from '@mui/icons-material/History';
+import SendIcon from '@mui/icons-material/Send';
+import ShareIcon from '@mui/icons-material/Share';
+import EditIcon from '@mui/icons-material/Edit';
+import VideocamIcon from '@mui/icons-material/Videocam';
 import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
 import { devicesActions } from '../store';
-import {
-  formatAlarm, formatBoolean, formatPercentage, formatStatus, getStatusColor,
-} from '../common/util/formatter';
+import { formatAlarm } from '../common/util/formatter';
 import { speedFromKnots, speedUnitString } from '../common/util/converter';
 import { useTranslation } from '../common/components/LocalizationProvider';
-import { mapIconKey, mapIcons } from '../map/core/preloadImages';
-import { useAdministrator } from '../common/util/permissions';
-import EngineIcon from '../resources/images/data/engine.svg?react';
+import { useAdministrator, useDeviceReadonly, useRestriction } from '../common/util/permissions';
 import { useAttributePreference } from '../common/util/preferences';
 
-dayjs.extend(relativeTime);
+export const GROUP_ROW_HEIGHT = 56;
+export const DEVICE_ROW_HEIGHT = 84;
 
 const useStyles = makeStyles()((theme) => ({
-  icon: {
-    width: '25px',
-    height: '25px',
-    filter: 'brightness(0) invert(1)',
+  group: {
+    display: 'flex',
+    alignItems: 'center',
+    height: GROUP_ROW_HEIGHT - 8,
+    margin: theme.spacing(0.5, 1),
+    paddingRight: theme.spacing(0.5),
+    borderRadius: theme.shape.borderRadius * 3,
+    backgroundColor: theme.palette.action.hover,
   },
-  batteryText: {
-    fontSize: '0.75rem',
-    fontWeight: 'normal',
-    lineHeight: '0.875rem',
+  groupName: {
+    flexGrow: 1,
+    minWidth: 0,
+    marginLeft: theme.spacing(0.5),
   },
-  success: {
-    color: theme.palette.success.main,
-  },
-  warning: {
-    color: theme.palette.warning.main,
-  },
-  error: {
-    color: theme.palette.error.main,
-  },
-  neutral: {
-    color: theme.palette.neutral.main,
+  device: {
+    display: 'flex',
+    alignItems: 'center',
+    height: DEVICE_ROW_HEIGHT,
+    padding: theme.spacing(0, 0.5, 0, 1.5),
+    cursor: 'pointer',
+    borderBottom: `1px solid ${theme.palette.divider}`,
+    '&:hover': {
+      backgroundColor: theme.palette.action.hover,
+    },
   },
   selected: {
     backgroundColor: theme.palette.action.selected,
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+  texts: {
+    flexGrow: 1,
+    minWidth: 0,
+    marginLeft: theme.spacing(0.5),
   },
   speed: {
     display: 'flex',
@@ -60,130 +71,196 @@ const useStyles = makeStyles()((theme) => ({
     whiteSpace: 'nowrap',
   },
   dot: {
-    width: 10,
-    height: 10,
+    width: 12,
+    height: 12,
     borderRadius: '50%',
     flexShrink: 0,
   },
 }));
 
-// green moving, yellow online but stopped, red offline, grey unknown
-const motionColor = (theme, item, position) => {
-  if (item.status === 'offline') {
-    return theme.palette.error.main;
+export const formatPeriod = (milliseconds) => {
+  const totalMinutes = Math.max(0, Math.floor(milliseconds / 60000));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) {
+    return `${days}d ${hours}h ${minutes}min`;
   }
-  if (item.status === 'online') {
-    return position?.attributes?.motion ? theme.palette.success.main : theme.palette.warning.light;
+  if (hours > 0) {
+    return `${hours}h ${minutes}min`;
   }
-  return theme.palette.neutral.main;
+  return `${minutes}min`;
 };
 
-const DeviceRow = ({ data, index, style }) => {
-  const { classes, theme } = useStyles();
-  const dispatch = useDispatch();
-  const t = useTranslation();
+const isExpired = (device) => device.expirationTime && dayjs(device.expirationTime).isBefore(dayjs());
 
-  const admin = useAdministrator();
-  const selectedDeviceId = useSelector((state) => state.devices.selectedId);
-
-  const item = data[index];
-  const position = useSelector((state) => state.session.positions[item.id]);
-
-  const speedUnit = useAttributePreference('speedUnit', 'kmh');
-  const devicePrimary = useAttributePreference('devicePrimary', 'name');
-  const deviceSecondary = useAttributePreference('deviceSecondary', '');
-
-  const secondaryText = () => {
-    let status;
-    if (item.status === 'online' || !item.lastUpdate) {
-      status = formatStatus(item.status, t);
-    } else {
-      status = dayjs(item.lastUpdate).fromNow();
-    }
-    return (
-      <>
-        {deviceSecondary && item[deviceSecondary] && `${item[deviceSecondary]} • `}
-        <span className={classes[getStatusColor(item.status)]}>{status}</span>
-      </>
-    );
+// green moving, yellow online but stopped, red offline or expired, grey without data
+const statusOf = (device, position) => {
+  if (isExpired(device)) {
+    return { color: 'error', key: 'deviceExpired' };
+  }
+  if (device.status === 'offline') {
+    return { color: 'error', key: 'deviceDisconnected', since: device.lastUpdate };
+  }
+  if (!position) {
+    return { color: 'neutral', key: 'deviceNoData' };
+  }
+  const moving = position.attributes.motion;
+  return {
+    color: moving ? 'success' : 'warning',
+    key: moving ? 'deviceMoving' : 'deviceStopped',
+    since: position.attributes.motionTime || position.fixTime,
   };
+};
 
+export const GroupRow = ({ row, data }) => {
+  const { classes } = useStyles();
+  const t = useTranslation();
+  const visible = row.deviceIds.filter((id) => !data.hidden.has(id)).length;
+  const collapsed = data.collapsed.has(row.id);
   return (
-    <div style={style}>
-      <ListItemButton
-        key={item.id}
-        onClick={() => dispatch(devicesActions.selectId(item.id))}
-        disabled={!admin && item.disabled}
-        selected={selectedDeviceId === item.id}
-        className={selectedDeviceId === item.id ? classes.selected : null}
-      >
-        <ListItemAvatar>
-          <Avatar>
-            <img className={classes.icon} src={mapIcons[mapIconKey(item.category)]} alt="" />
-          </Avatar>
-        </ListItemAvatar>
-        <ListItemText
-          primary={item[devicePrimary]}
-          secondary={secondaryText()}
-          slots={{
-            primary: Typography,
-            secondary: Typography,
-          }}
-          slotProps={{
-            primary: { noWrap: true },
-            secondary: { noWrap: true },
-          }}
-        />
-        {position && (
-          <>
-            {position.attributes.hasOwnProperty('alarm') && (
-              <Tooltip title={`${t('eventAlarm')}: ${formatAlarm(position.attributes.alarm, t)}`}>
-                <IconButton size="small">
-                  <ErrorIcon fontSize="small" className={classes.error} />
-                </IconButton>
-              </Tooltip>
-            )}
-            {position.attributes.hasOwnProperty('ignition') && (
-              <Tooltip title={`${t('positionIgnition')}: ${formatBoolean(position.attributes.ignition, t)}`}>
-                <IconButton size="small">
-                  {position.attributes.ignition ? (
-                    <EngineIcon width={20} height={20} className={classes.success} />
-                  ) : (
-                    <EngineIcon width={20} height={20} className={classes.neutral} />
-                  )}
-                </IconButton>
-              </Tooltip>
-            )}
-            {position.attributes.hasOwnProperty('batteryLevel') && (
-              <Tooltip title={`${t('positionBatteryLevel')}: ${formatPercentage(position.attributes.batteryLevel)}`}>
-                <IconButton size="small">
-                  {(position.attributes.batteryLevel > 70 && (
-                    position.attributes.charge
-                      ? (<BatteryChargingFullIcon fontSize="small" className={classes.success} />)
-                      : (<BatteryFullIcon fontSize="small" className={classes.success} />)
-                  )) || (position.attributes.batteryLevel > 30 && (
-                    position.attributes.charge
-                      ? (<BatteryCharging60Icon fontSize="small" className={classes.warning} />)
-                      : (<Battery60Icon fontSize="small" className={classes.warning} />)
-                  )) || (
-                    position.attributes.charge
-                      ? (<BatteryCharging20Icon fontSize="small" className={classes.error} />)
-                      : (<Battery20Icon fontSize="small" className={classes.error} />)
-                  )}
-                </IconButton>
-              </Tooltip>
-            )}
-          </>
-        )}
-        <div className={classes.speed}>
-          <span className={classes.dot} style={{ backgroundColor: motionColor(theme, item, position) }} />
-          <Typography variant="body2">
-            {`${Math.round(speedFromKnots(position?.speed || 0, speedUnit))} ${speedUnitString(speedUnit, t)}`}
-          </Typography>
-        </div>
-      </ListItemButton>
+    <div className={classes.group}>
+      <Checkbox
+        size="small"
+        checked={visible === row.deviceIds.length && visible > 0}
+        indeterminate={visible > 0 && visible < row.deviceIds.length}
+        onChange={(event) => data.setHidden(row.deviceIds, !event.target.checked)}
+      />
+      <Typography variant="subtitle1" className={classes.groupName} noWrap>
+        {row.name || t('deviceNoGroup')}
+      </Typography>
+      <Chip size="small" color="primary" label={row.deviceIds.length} sx={{ mr: 1, fontWeight: 600 }} />
+      <IconButton size="small" color="primary" onClick={() => data.toggleCollapsed(row.id)}>
+        {collapsed ? <AddIcon /> : <RemoveIcon />}
+      </IconButton>
     </div>
   );
 };
 
-export default DeviceRow;
+export const DeviceRow = ({ row, data }) => {
+  const { classes, cx, theme } = useStyles();
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const t = useTranslation();
+
+  const admin = useAdministrator();
+  const deviceReadonly = useDeviceReadonly();
+  const readonly = useRestriction('readonly');
+  const limitCommands = useRestriction('limitCommands');
+  const selectedDeviceId = useSelector((state) => state.devices.selectedId);
+
+  const item = row.device;
+  const position = useSelector((state) => state.session.positions[item.id]);
+
+  const speedUnit = useAttributePreference('speedUnit', 'kmh');
+  const devicePrimary = useAttributePreference('devicePrimary', 'name');
+
+  const [anchor, setAnchor] = useState(null);
+
+  const status = statusOf(item, position);
+  const statusText = status.since
+    ? `${t(status.key)} ${formatPeriod(dayjs().diff(dayjs(status.since)))}`
+    : t(status.key);
+  const time = position?.fixTime || item.lastUpdate;
+
+  const action = (fn) => (event) => {
+    event.stopPropagation();
+    setAnchor(null);
+    fn();
+  };
+
+  return (
+    <div
+      className={cx(classes.device, selectedDeviceId === item.id && classes.selected, !admin && item.disabled && classes.disabled)}
+      onClick={() => dispatch(devicesActions.selectId(item.id))}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => event.key === 'Enter' && dispatch(devicesActions.selectId(item.id))}
+    >
+      <Checkbox
+        size="small"
+        checked={!data.hidden.has(item.id)}
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => data.setHidden([item.id], !event.target.checked)}
+      />
+      <div className={classes.texts}>
+        <Typography variant="subtitle1" noWrap sx={{ lineHeight: 1.3 }}>{item[devicePrimary]}</Typography>
+        <Typography variant="body2" color="text.secondary" noWrap>{time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '—'}</Typography>
+        <Typography variant="body2" noWrap sx={{ color: status.color === 'error' ? 'error.main' : 'text.secondary' }}>
+          {statusText}
+        </Typography>
+      </div>
+      {position?.attributes.alarm && (
+        <Tooltip title={`${t('eventAlarm')}: ${formatAlarm(position.attributes.alarm, t)}`}>
+          <ErrorIcon fontSize="small" color="error" />
+        </Tooltip>
+      )}
+      <div className={classes.speed}>
+        <span className={classes.dot} style={{ backgroundColor: theme.palette[status.color].main }} />
+        <Typography variant="body1">
+          {`${Math.round(speedFromKnots(position?.speed || 0, speedUnit))} ${speedUnitString(speedUnit, t)}`}
+        </Typography>
+      </div>
+      <IconButton
+        size="small"
+        onClick={(event) => {
+          event.stopPropagation();
+          setAnchor(event.currentTarget);
+        }}
+      >
+        <MoreVertIcon />
+      </IconButton>
+      <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)} onClick={(event) => event.stopPropagation()}>
+        <MenuItem onClick={action(() => dispatch(devicesActions.selectId(item.id)))}>
+          <ListItemIcon><MyLocationIcon fontSize="small" /></ListItemIcon>
+          <ListItemText>{t('deviceShowOnMap')}</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={action(() => {
+          dispatch(devicesActions.selectId(item.id));
+          navigate('/replay');
+        })}
+        >
+          <ListItemIcon><HistoryIcon fontSize="small" /></ListItemIcon>
+          <ListItemText>{t('navHistory')}</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={action(() => {
+          dispatch(devicesActions.selectId(item.id));
+          navigate('/dashcam');
+        })}
+        >
+          <ListItemIcon><VideocamIcon fontSize="small" /></ListItemIcon>
+          <ListItemText>{t('navCameras')}</ListItemText>
+        </MenuItem>
+        {!limitCommands && !readonly && (
+          <MenuItem onClick={action(() => navigate(`/settings/device/${item.id}/command`))}>
+            <ListItemIcon><SendIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('navSendCommand')}</ListItemText>
+          </MenuItem>
+        )}
+        {!readonly && (
+          <MenuItem onClick={action(() => navigate(`/settings/device/${item.id}/share`))}>
+            <ListItemIcon><ShareIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('navShareLocation')}</ListItemText>
+          </MenuItem>
+        )}
+        {!deviceReadonly && (
+          <MenuItem onClick={action(() => navigate(`/settings/device/${item.id}`))}>
+            <ListItemIcon><EditIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('sharedEdit')}</ListItemText>
+          </MenuItem>
+        )}
+      </Menu>
+    </div>
+  );
+};
+
+const Row = ({ data, index, style }) => {
+  const row = data.rows[index];
+  return (
+    <div style={style}>
+      {row.type === 'group' ? <GroupRow row={row} data={data} /> : <DeviceRow row={row} data={data} />}
+    </div>
+  );
+};
+
+export default Row;

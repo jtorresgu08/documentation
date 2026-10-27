@@ -8,8 +8,9 @@ lo que hace falta para venderla a revendedores y clientes finales.
 ```
 tracking-platform/
 ├── server/            Parche del servidor Traccar + Dockerfile + configuración
-│   ├── patches/       0001-multilevel-manager-hierarchy.patch (se aplica sobre Traccar v6.9.1)
-│   └── tests/         Prueba de extremo a extremo de la jerarquía (27 comprobaciones)
+│   ├── patches/       Parches sobre Traccar v6.9.1: jerarquía multinivel, dashcams JT808/JT1078 e
+│   │                  inicio del periodo detenido / en movimiento
+│   └── tests/         Pruebas de extremo a extremo (jerarquía: 27, dashcams: 20) y simulador de dashcam
 ├── web/               Panel web (fork de traccar-web 6.9.1) con el nuevo diseño
 └── infra/             docker-compose (PostgreSQL + Traccar + Caddy HTTPS), scripts y guía de despliegue
 ```
@@ -36,6 +37,24 @@ Lo que el parche añade al servidor Traccar estándar (que solo tiene un nivel d
   superadministrador).
 - **Endpoints nuevos:** `GET /api/hierarchy/parents`, `GET /api/hierarchy/brand`, `POST /api/hierarchy/sync`.
 
+## Dashcams (JT/T 808 + 1078)
+
+Traccar solo guardaba el número de alarma ADAS/DMS de las cámaras JT808. El parche `0002` añade:
+
+- Alarmas **ADAS** (colisión frontal, salida de carril, distancia insegura, peatón, cambio de carril frecuente,
+  señal de tránsito, obstáculo) y **DMS** (fatiga, celular, fumar, distracción, conductor ausente) con nombre,
+  listas para usarse en notificaciones.
+- **Adjuntos de alarma**: el servidor pide las fotos y videos de cada alarma (0x9208) y los recibe en un servidor
+  de adjuntos propio (puerto 5261, mensajes 0x1210/0x1211/0x1212 y flujo de datos). Cada archivo queda vinculado a
+  su alarma.
+- **Fotos** (0x0801 en varios paquetes) y comando **Tomar foto** (0x8801).
+- **Video en vivo** por canal (0x9101 / 0x9102) hacia un servidor de video JT/T 1078, reproducido en el
+  navegador con mpegts.js (HTTP-FLV).
+- Corrección: los archivos recibidos en el mismo segundo ya no se sobrescriben.
+
+En el panel, el menú **Cámaras** muestra los eventos agrupados por alarma (miniatura, tipo, foto y video) y una
+cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/DEPLOY.md](infra/DEPLOY.md).
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -46,7 +65,12 @@ Basado en tus capturas de referencia:
 - Menú de **Administración** (gerentes y superadministrador): Descripción general con contadores, Usuarios (con
   contador y columna *Gerente*), Dispositivos (en línea/total), Métricas, Configuración del servidor, Apariencia,
   Anuncios, Calendarios, Atributos calculados, Comandos guardados, Registros y Auditoría.
-- Lista de dispositivos con velocidad y punto de estado (verde en movimiento, amarillo detenido, rojo desconectado).
+- Lista de dispositivos al estilo de tus capturas: agrupada por grupo con contador, casillas para mostrar u ocultar
+  en el mapa (por vehículo o por grupo), hora del último reporte, "Detenido 5h 20min" / "En movimiento" /
+  "Desconectado" / "Vencido", velocidad con punto de color y menú por vehículo (mapa, historial, cámaras, comando,
+  compartir, editar).
+- Barra de herramientas azul en el mapa: ver todos, geocercas, nombres, agrupar, seguir vehículo, medir distancia
+  y pantalla completa.
 - Español por defecto, con los 61 idiomas de Traccar disponibles.
 
 ## Correspondencia con las capturas
@@ -62,6 +86,10 @@ Basado en tus capturas de referencia:
 | Dispositivo: IMEI, tipo/icono, vencimiento, usuarios, avanzado, exactitud | ✅ Traccar |
 | Administración: contadores, métricas, configuración del servidor, registros | ✅ |
 | Apariencia / marca blanca por gerente | ✅ Nuevo |
+| Lista agrupada con casillas, "Detenido 55h 42min", menú por vehículo | ✅ Nuevo |
+| Barra de herramientas del mapa (medir, seguir, geocercas, nombres…) | ✅ Nuevo |
+| Dashcams: alarmas ADAS/DMS, fotos y videos de eventos, foto bajo demanda | ✅ Nuevo (JT/T 808) |
+| Dashcams: video en vivo | ✅ Comandos y reproductor; requiere un servidor de video JT/T 1078 |
 | Copias de seguridad / limpieza de datos | ✅ Scripts (`infra/`); 🔜 pantalla en el panel |
 | Ecodrive (puntuación de conducción) | 🔜 Fase 2, a partir de los eventos de frenado y aceleración |
 | Puntos de interés con icono, Rutas planificadas | 🔜 Fase 2 (hoy: geocercas de círculo o línea) |
@@ -81,8 +109,9 @@ java -jar target/tracker-server.jar debug.xml          # API en http://localhost
 # Panel web (proxy a localhost:8082)
 cd web && npm ci && npm start                          # http://localhost:3000
 
-# Prueba de jerarquía (con una base de datos vacía)
+# Pruebas (con una base de datos vacía y huabao.attachmentServer / huabao.videoServer configurados)
 python3 server/tests/test_hierarchy.py
+python3 server/tests/test_dashcam.py foto.jpg clip.mp4 cabina.jpg
 ```
 
 ## Producción

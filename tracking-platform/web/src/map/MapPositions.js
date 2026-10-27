@@ -9,7 +9,9 @@ import { useAttributePreference } from '../common/util/preferences';
 import { useCatchCallback } from '../reactHelper';
 import { findFonts } from './core/mapUtil';
 
-const MapPositions = ({ positions, onMapClick, onMarkerClick, showStatus, selectedPosition, titleField }) => {
+const MapPositions = ({
+  positions, onMapClick, onMarkerClick, showStatus, selectedPosition, titleField, cluster, showTitles = true,
+}) => {
   const id = useId();
   const clusters = `${id}-clusters`;
   const selected = `${id}-selected`;
@@ -21,7 +23,8 @@ const MapPositions = ({ positions, onMapClick, onMarkerClick, showStatus, select
   const devices = useSelector((state) => state.devices.items);
   const selectedDeviceId = useSelector((state) => state.devices.selectedId);
 
-  const mapCluster = useAttributePreference('mapCluster', true);
+  const clusterPreference = useAttributePreference('mapCluster', true);
+  const mapCluster = cluster ?? clusterPreference;
   const directionType = useAttributePreference('mapDirection', 'selected');
 
   const createFeature = (devices, position, selectedPositionId) => {
@@ -206,6 +209,14 @@ const MapPositions = ({ positions, onMapClick, onMarkerClick, showStatus, select
       });
     });
   }, [mapCluster, clusters, onMarkerClick, onClusterClick, devices, positions, selectedPosition]);
+
+  useEffect(() => {
+    [id, selected].forEach((source) => {
+      if (map.getLayer(source)) {
+        map.setLayoutProperty(source, 'text-field', showTitles ? `{${titleField || 'name'}}` : '');
+      }
+    });
+  }, [showTitles, titleField, mapCluster]);
 
   return null;
 };

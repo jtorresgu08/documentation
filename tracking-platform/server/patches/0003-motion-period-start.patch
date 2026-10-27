@@ -1,0 +1,31 @@
+diff --git a/src/main/java/org/traccar/handler/MotionHandler.java b/src/main/java/org/traccar/handler/MotionHandler.java
+index 4d02d5f..92b07f8 100644
+--- a/src/main/java/org/traccar/handler/MotionHandler.java
++++ b/src/main/java/org/traccar/handler/MotionHandler.java
+@@ -24,6 +24,8 @@ import org.traccar.session.cache.CacheManager;
+ 
+ public class MotionHandler extends BasePositionHandler {
+ 
++    public static final String KEY_MOTION_TIME = "motionTime";
++
+     private final CacheManager cacheManager;
+ 
+     @Inject
+@@ -38,6 +40,17 @@ public class MotionHandler extends BasePositionHandler {
+                     cacheManager, Keys.EVENT_MOTION_SPEED_THRESHOLD, position.getDeviceId());
+             position.set(Position.KEY_MOTION, position.getSpeed() > threshold);
+         }
++        // start of the current moving / stopped period, used by clients to show "stopped for 5h 20min"
++        Position last = cacheManager.getPosition(position.getDeviceId());
++        if (position.getFixTime() != null) {
++            boolean motion = position.getBoolean(Position.KEY_MOTION);
++            long since = position.getFixTime().getTime();
++            if (last != null && last.getBoolean(Position.KEY_MOTION) == motion && last.hasAttribute(KEY_MOTION_TIME)
++                    && last.getLong(KEY_MOTION_TIME) <= since) {
++                since = last.getLong(KEY_MOTION_TIME);
++            }
++            position.set(KEY_MOTION_TIME, since);
++        }
+         callback.processed(false);
+     }
+ 

@@ -5,14 +5,15 @@ import { map } from '../core/MapView';
 import { usePrevious } from '../../reactHelper';
 import { useAttributePreference } from '../../common/util/preferences';
 
-const MapSelectedDevice = ({ mapReady }) => {
+const MapSelectedDevice = ({ mapReady, follow }) => {
   const currentTime = useSelector((state) => state.devices.selectTime);
   const currentId = useSelector((state) => state.devices.selectedId);
   const previousTime = usePrevious(currentTime);
   const previousId = usePrevious(currentId);
 
   const selectZoom = useAttributePreference('web.selectZoom', 10);
-  const mapFollow = useAttributePreference('mapFollow', false);
+  const followPreference = useAttributePreference('mapFollow', false);
+  const mapFollow = follow ?? followPreference;
 
   const position = useSelector((state) => state.session.positions[currentId]);
 

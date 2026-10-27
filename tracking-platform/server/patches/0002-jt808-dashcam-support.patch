@@ -1,0 +1,793 @@
+diff --git a/src/main/java/org/traccar/BaseProtocolDecoder.java b/src/main/java/org/traccar/BaseProtocolDecoder.java
+index 5e3f668..38fdc8c 100644
+--- a/src/main/java/org/traccar/BaseProtocolDecoder.java
++++ b/src/main/java/org/traccar/BaseProtocolDecoder.java
+@@ -94,6 +94,10 @@ public abstract class BaseProtocolDecoder extends ExtendedObjectDecoder {
+         return mediaManager.writeFile(uniqueId, buf, extension);
+     }
+ 
++    public String writeMediaFile(String uniqueId, ByteBuf buf, String name, String extension) {
++        return mediaManager.writeFile(uniqueId, buf, name, extension);
++    }
++
+     public String getProtocolName() {
+         return protocol != null ? protocol.getName() : PROTOCOL_UNKNOWN;
+     }
+diff --git a/src/main/java/org/traccar/config/PortConfigSuffix.java b/src/main/java/org/traccar/config/PortConfigSuffix.java
+index be7842e..26d5da2 100644
+--- a/src/main/java/org/traccar/config/PortConfigSuffix.java
++++ b/src/main/java/org/traccar/config/PortConfigSuffix.java
+@@ -283,6 +283,7 @@ public class PortConfigSuffix extends ConfigSuffix<Integer> {
+         PORTS.put("hyn600", 5258);
+         PORTS.put("jmak", 5259);
+         PORTS.put("bws", 5260);
++        PORTS.put("jt808attach", 5261);
+     }
+ 
+     PortConfigSuffix(String key, List<KeyType> types) {
+diff --git a/src/main/java/org/traccar/database/MediaManager.java b/src/main/java/org/traccar/database/MediaManager.java
+index 9e77646..07cf7a4 100644
+--- a/src/main/java/org/traccar/database/MediaManager.java
++++ b/src/main/java/org/traccar/database/MediaManager.java
+@@ -61,9 +61,16 @@ public class MediaManager {
+     }
+ 
+     public String writeFile(String uniqueId, ByteBuf buf, String extension) {
++        return writeFile(uniqueId, buf, new SimpleDateFormat("yyyyMMddHHmmss").format(new Date()), extension);
++    }
++
++    /**
++     * Writes a file with an explicit base name, for devices sending several files at once.
++     */
++    public String writeFile(String uniqueId, ByteBuf buf, String baseName, String extension) {
+         if (path != null) {
+             int size = buf.readableBytes();
+-            String name = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date()) + "." + extension;
++            String name = baseName.replaceAll("[^A-Za-z0-9_-]", "_") + "." + extension.replaceAll("[^A-Za-z0-9]", "");
+             try (FileOutputStream output = new FileOutputStream(createFile(uniqueId, name));
+                     FileChannel fileChannel = output.getChannel()) {
+                     ByteBuffer byteBuffer = buf.nioBuffer();
+diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocol.java b/src/main/java/org/traccar/protocol/HuabaoProtocol.java
+index 43ab40d..2a7ff50 100644
+--- a/src/main/java/org/traccar/protocol/HuabaoProtocol.java
++++ b/src/main/java/org/traccar/protocol/HuabaoProtocol.java
+@@ -25,10 +25,26 @@ import jakarta.inject.Inject;
+ 
+ public class HuabaoProtocol extends BaseProtocol {
+ 
++    public static final String TYPE_LIVE_VIDEO = "liveVideo";
++    public static final String TYPE_LIVE_VIDEO_STOP = "liveVideoStop";
++
++    private final String videoServer;
++
++    /**
++     * JT/T 1078 media server (host:port) the dashcams stream live video to.
++     */
++    public String getVideoServer() {
++        return videoServer;
++    }
++
+     @Inject
+     public HuabaoProtocol(Config config) {
++        videoServer = config.getString(getName() + ".videoServer", null);
+         setSupportedDataCommands(
+                 Command.TYPE_CUSTOM,
++                Command.TYPE_REQUEST_PHOTO,
++                TYPE_LIVE_VIDEO,
++                TYPE_LIVE_VIDEO_STOP,
+                 Command.TYPE_REBOOT_DEVICE,
+                 Command.TYPE_POSITION_PERIODIC,
+                 Command.TYPE_ALARM_ARM,
+diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java b/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java
+index 84e133a..fbc175e 100644
+--- a/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java
++++ b/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java
+@@ -19,6 +19,7 @@ import io.netty.buffer.ByteBuf;
+ import io.netty.buffer.ByteBufUtil;
+ import io.netty.buffer.Unpooled;
+ import io.netty.channel.Channel;
++import io.netty.channel.ChannelHandlerContext;
+ import org.traccar.BaseProtocolDecoder;
+ import org.traccar.helper.BufferUtil;
+ import org.traccar.model.WifiAccessPoint;
+@@ -28,6 +29,7 @@ import org.traccar.Protocol;
+ import org.traccar.helper.BcdUtil;
+ import org.traccar.helper.BitUtil;
+ import org.traccar.helper.Checksum;
++import org.traccar.helper.DataConverter;
+ import org.traccar.helper.DateBuilder;
+ import org.traccar.helper.UnitsConverter;
+ import org.traccar.model.CellTower;
+@@ -43,8 +45,11 @@ import java.util.Calendar;
+ import java.util.Date;
+ import java.util.LinkedList;
+ import java.util.List;
++import java.util.Map;
+ import java.util.Set;
+ import java.util.TimeZone;
++import java.util.UUID;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+ 
+@@ -77,11 +82,29 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+     public static final int MSG_REPORT_TEXT_MESSAGE = 0x6006;
+     public static final int MSG_CONFIGURATION_PARAMETERS = 0x8103;
+     public static final int MSG_COMMAND_RESPONSE = 0x0701;
++    public static final int MSG_MULTIMEDIA_EVENT = 0x0800;
++    public static final int MSG_MULTIMEDIA_DATA = 0x0801;
++    public static final int MSG_MULTIMEDIA_RESPONSE = 0x8800;
++    public static final int MSG_CAMERA_SHOOT = 0x8801;
++    public static final int MSG_ALARM_ATTACHMENT_REQUEST = 0x9208;
++    public static final int MSG_LIVE_VIDEO = 0x9101;
++    public static final int MSG_LIVE_VIDEO_CONTROL = 0x9102;
+ 
+     public static final int RESULT_SUCCESS = 0;
+ 
+     private int delimiter = 0x7e;
+ 
++    private ByteBuf multimediaBuffer;
++
++    @Override
++    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
++        if (multimediaBuffer != null) {
++            multimediaBuffer.release();
++            multimediaBuffer = null;
++        }
++        super.handlerRemoved(ctx);
++    }
++
+     public boolean isAlternative() {
+         return delimiter == 0xe7;
+     }
+@@ -195,7 +218,7 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+         return dateBuilder.getDate();
+     }
+ 
+-    private String decodeId(ByteBuf id) {
++    static String decodeId(ByteBuf id) {
+         String serial = ByteBufUtil.hexDump(id);
+         if (serial.matches("[0-9]+")) {
+             return serial;
+@@ -281,6 +304,13 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+             index = buf.readUnsignedShort();
+         }
+ 
++        int packetCount = 1;
++        int packetIndex = 1;
++        if (BitUtil.check(attribute, 13)) {
++            packetCount = buf.readUnsignedShort();
++            packetIndex = buf.readUnsignedShort();
++        }
++
+         DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, decodeId(id));
+         if (deviceSession == null) {
+             return null;
+@@ -325,7 +355,17 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+ 
+             sendGeneralResponse(channel, remoteAddress, id, type, index);
+ 
+-            return decodeLocation(deviceSession, buf);
++            Position position = decodeLocation(deviceSession, buf);
++            requestAlarmAttachments(channel, remoteAddress, id, deviceSession, position);
++            return position;
++
++        } else if (type == MSG_MULTIMEDIA_EVENT) {
++
++            sendGeneralResponse(channel, remoteAddress, id, type, index);
++
++        } else if (type == MSG_MULTIMEDIA_DATA) {
++
++            return decodeMultimedia(channel, remoteAddress, deviceSession, id, index, buf, packetCount, packetIndex);
+ 
+         } else if (type == MSG_LOCATION_REPORT_2 || type == MSG_LOCATION_REPORT_BLIND) {
+ 
+@@ -501,6 +541,179 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+         return sign * (Math.abs(b1) + b2 / 255.0);
+     }
+ 
++    private static final int DRIVER_ASSISTANCE_LENGTH = 47;
++
++    private static final long ATTACHMENT_REQUEST_TIMEOUT = 60 * 60 * 1000;
++
++    /**
++     * Device an alarm attachment upload was requested from, so the attachment connection can store the files
++     * without registering a second session that would replace the main one (and break commands).
++     */
++    public record AttachmentTarget(long deviceId, String uniqueId, long time) {
++    }
++
++    private static final Map<String, AttachmentTarget> ATTACHMENT_TARGETS = new ConcurrentHashMap<>();
++
++    public static AttachmentTarget findAttachmentTarget(String alarmNumber) {
++        return alarmNumber != null ? ATTACHMENT_TARGETS.get(alarmNumber) : null;
++    }
++
++    private static final Map<Integer, String> ADAS_ALARMS = Map.of(
++            0x01, "forwardCollision",
++            0x02, "laneDeparture",
++            0x03, "vehicleDistance",
++            0x04, "pedestrianCollision",
++            0x05, "frequentLaneChange",
++            0x06, "roadSignOverLimit",
++            0x07, "obstacle");
++
++    private static final Map<Integer, String> DMS_ALARMS = Map.of(
++            0x01, Position.ALARM_FATIGUE_DRIVING,
++            0x02, "phoneCall",
++            0x03, "smoking",
++            0x04, "distraction",
++            0x05, "driverAbnormal");
++
++    public static String getDriverAssistanceAlarm(boolean adas, int type) {
++        return (adas ? ADAS_ALARMS : DMS_ALARMS).get(type);
++    }
++
++    /**
++     * Active safety alarms (ADAS 0x64 / DMS 0x65) as defined by the JT/T 808 active safety extension used by most
++     * dashcams and MDVRs. The alarm reference identifies the photos and videos the device can upload.
++     */
++    private void decodeDriverAssistance(Position position, ByteBuf buf, boolean adas) {
++        String prefix = adas ? "adas" : "dms";
++        position.set(prefix + "AlarmId", buf.readUnsignedInt());
++        int status = buf.readUnsignedByte();
++        int type = buf.readUnsignedByte();
++        position.set(prefix + "Alarm", type);
++        position.set("alarmLevel", buf.readUnsignedByte());
++        if (adas) {
++            position.set("frontSpeed", buf.readUnsignedByte());
++            position.set("frontDistance", buf.readUnsignedByte() * 0.1);
++            buf.skipBytes(3); // deviation type, road sign type, road sign data
++        } else {
++            position.set("fatigueLevel", buf.readUnsignedByte());
++            buf.skipBytes(4); // reserved
++        }
++        buf.skipBytes(1 + 2 + 4 + 4 + 6 + 2); // speed, altitude, latitude, longitude, time, vehicle status
++        ByteBuf reference = buf.readSlice(16);
++        position.set("alarmReference", ByteBufUtil.hexDump(reference));
++        position.set("alarmAttachments", (int) reference.getUnsignedByte(14));
++        String alarm = getDriverAssistanceAlarm(adas, type);
++        if (alarm != null && status != 2) {
++            position.addAlarm(alarm);
++        }
++    }
++
++    /**
++     * Asks the device to upload the photos and videos of an active safety alarm to the attachment server.
++     */
++    private void requestAlarmAttachments(
++            Channel channel, SocketAddress remoteAddress, ByteBuf id, DeviceSession deviceSession, Position position) {
++        String server = getConfig().getString(getProtocolName() + ".attachmentServer", null);
++        if (channel == null || position == null || server == null || !server.contains(":")
++                || !position.hasAttribute("alarmReference") || position.getInteger("alarmAttachments") <= 0) {
++            return;
++        }
++        String host = server.substring(0, server.lastIndexOf(':'));
++        int port = Integer.parseInt(server.substring(server.lastIndexOf(':') + 1));
++        String alarmNumber = UUID.randomUUID().toString().replace("-", "");
++        position.set("alarmNumber", alarmNumber);
++        long now = System.currentTimeMillis();
++        ATTACHMENT_TARGETS.values().removeIf(target -> now - target.time() > ATTACHMENT_REQUEST_TIMEOUT);
++        ATTACHMENT_TARGETS.put(alarmNumber,
++                new AttachmentTarget(deviceSession.getDeviceId(), deviceSession.getUniqueId(), now));
++
++        ByteBuf data = Unpooled.buffer();
++        data.writeByte(host.length());
++        data.writeCharSequence(host, StandardCharsets.US_ASCII);
++        data.writeShort(port); // tcp
++        data.writeShort(0); // udp
++        data.writeBytes(DataConverter.parseHex(position.getString("alarmReference")));
++        data.writeCharSequence(alarmNumber, StandardCharsets.US_ASCII);
++        data.writeZero(16); // reserved
++        // the id buffer was already consumed by the general response
++        channel.writeAndFlush(new NetworkMessage(formatMessage(
++                delimiter, MSG_ALARM_ATTACHMENT_REQUEST, id.duplicate().readerIndex(0), false, data), remoteAddress));
++    }
++
++    private static String multimediaExtension(int format) {
++        return switch (format) {
++            case 0 -> "jpg";
++            case 1 -> "tif";
++            case 2 -> "mp3";
++            case 3 -> "wav";
++            case 4 -> "wmv";
++            default -> "bin";
++        };
++    }
++
++    private Position decodeMultimedia(
++            Channel channel, SocketAddress remoteAddress, DeviceSession deviceSession,
++            ByteBuf id, int index, ByteBuf buf, int packetCount, int packetIndex) {
++
++        ByteBuf body = buf.readSlice(buf.readableBytes() - 2);
++        if (packetIndex <= 1) {
++            if (multimediaBuffer != null) {
++                multimediaBuffer.release();
++            }
++            multimediaBuffer = Unpooled.buffer();
++        }
++        if (multimediaBuffer == null) {
++            sendGeneralResponse(channel, remoteAddress, id, MSG_MULTIMEDIA_DATA, index);
++            return null;
++        }
++        multimediaBuffer.writeBytes(body);
++        if (packetIndex < packetCount) {
++            sendGeneralResponse(channel, remoteAddress, id, MSG_MULTIMEDIA_DATA, index);
++            return null;
++        }
++
++        ByteBuf data = multimediaBuffer;
++        multimediaBuffer = null;
++        try {
++            long mediaId = data.readUnsignedInt();
++            int mediaType = data.readUnsignedByte();
++            int format = data.readUnsignedByte();
++            int event = data.readUnsignedByte();
++            int mediaChannel = data.readUnsignedByte();
++
++            Position position = new Position(getProtocolName());
++            position.setDeviceId(deviceSession.getDeviceId());
++            decodeAlarm(position, getDeviceModel(deviceSession), data.readUnsignedInt());
++            decodeCoordinates(position, deviceSession, data);
++            position.setAltitude(data.readShort());
++            position.setSpeed(UnitsConverter.knotsFromKph(data.readUnsignedShort() * 0.1));
++            position.setCourse(data.readUnsignedShort());
++            position.setTime(readDate(data, deviceSession.get(DeviceSession.KEY_TIMEZONE)));
++
++            String key = switch (mediaType) {
++                case 1 -> Position.KEY_AUDIO;
++                case 2 -> Position.KEY_VIDEO;
++                default -> Position.KEY_IMAGE;
++            };
++            String name = "ch" + mediaChannel + "_" + mediaId + "_"
++                    + new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
++            position.set(key, writeMediaFile(deviceSession.getUniqueId(), data, name, multimediaExtension(format)));
++            position.set("channel", mediaChannel);
++            position.set("mediaEvent", event);
++
++            if (channel != null) {
++                ByteBuf response = Unpooled.buffer();
++                response.writeInt((int) mediaId);
++                response.writeByte(0); // no packets to retransmit
++                ByteBuf responseId = id.duplicate().readerIndex(0);
++                channel.writeAndFlush(new NetworkMessage(formatMessage(
++                        delimiter, MSG_MULTIMEDIA_RESPONSE, responseId, false, response), remoteAddress));
++            }
++            return position;
++        } finally {
++            data.release();
++        }
++    }
++
+     private Position decodeLocation(DeviceSession deviceSession, ByteBuf buf) {
+ 
+         Position position = new Position(getProtocolName());
+@@ -629,14 +842,14 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+                     }
+                     break;
+                 case 0x64:
+-                    buf.readUnsignedInt(); // alarm serial number
+-                    buf.readUnsignedByte(); // alarm status
+-                    position.set("adasAlarm", buf.readUnsignedByte());
+-                    break;
+                 case 0x65:
+-                    buf.readUnsignedInt(); // alarm serial number
+-                    buf.readUnsignedByte(); // alarm status
+-                    position.set("dmsAlarm", buf.readUnsignedByte());
++                    if (length >= DRIVER_ASSISTANCE_LENGTH) {
++                        decodeDriverAssistance(position, buf, subtype == 0x64);
++                    } else {
++                        buf.readUnsignedInt(); // alarm serial number
++                        buf.readUnsignedByte(); // alarm status
++                        position.set(subtype == 0x64 ? "adasAlarm" : "dmsAlarm", buf.readUnsignedByte());
++                    }
+                     break;
+                 case 0x67:
+                     stringValue = buf.readCharSequence(8, StandardCharsets.US_ASCII).toString();
+diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java b/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
+index d44b275..f80371d 100644
+--- a/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
++++ b/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
+@@ -32,8 +32,16 @@ import java.util.Set;
+ 
+ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+ 
++    private final String videoServer;
++
+     public HuabaoProtocolEncoder(Protocol protocol) {
+         super(protocol);
++        videoServer = protocol instanceof HuabaoProtocol huabaoProtocol ? huabaoProtocol.getVideoServer() : null;
++    }
++
++    private static int cameraChannel(Command command) {
++        int channel = command.getInteger(Command.KEY_INDEX);
++        return channel > 0 ? channel : 1;
+     }
+ 
+     @Override
+@@ -92,6 +100,43 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+                     data.writeCharSequence(username, StandardCharsets.US_ASCII);
+                     return HuabaoProtocolDecoder.formatMessage(
+                             0x7e, HuabaoProtocolDecoder.MSG_PARAMETER_SETTING, id, false, data);
++                case Command.TYPE_REQUEST_PHOTO:
++                    data.writeByte(cameraChannel(command));
++                    data.writeShort(1); // one photo
++                    data.writeShort(0); // interval
++                    data.writeByte(0); // upload immediately
++                    data.writeByte(0x01); // 320x240
++                    data.writeByte(5); // quality
++                    data.writeByte(128); // brightness
++                    data.writeByte(64); // contrast
++                    data.writeByte(64); // saturation
++                    data.writeByte(128); // chroma
++                    return HuabaoProtocolDecoder.formatMessage(
++                            0x7e, HuabaoProtocolDecoder.MSG_CAMERA_SHOOT, id, false, data);
++                case HuabaoProtocol.TYPE_LIVE_VIDEO:
++                    String server = command.getString(Command.KEY_SERVER, videoServer);
++                    if (server == null || !server.contains(":")) {
++                        data.release();
++                        return null;
++                    }
++                    String host = server.substring(0, server.lastIndexOf(':'));
++                    int port = Integer.parseInt(server.substring(server.lastIndexOf(':') + 1));
++                    data.writeByte(host.length());
++                    data.writeCharSequence(host, StandardCharsets.US_ASCII);
++                    data.writeShort(port); // tcp
++                    data.writeShort(0); // udp
++                    data.writeByte(cameraChannel(command));
++                    data.writeByte(0); // audio and video
++                    data.writeByte(1); // sub stream, less bandwidth
++                    return HuabaoProtocolDecoder.formatMessage(
++                            0x7e, HuabaoProtocolDecoder.MSG_LIVE_VIDEO, id, false, data);
++                case HuabaoProtocol.TYPE_LIVE_VIDEO_STOP:
++                    data.writeByte(cameraChannel(command));
++                    data.writeByte(0); // close transmission
++                    data.writeByte(0); // close audio and video
++                    data.writeByte(1); // sub stream
++                    return HuabaoProtocolDecoder.formatMessage(
++                            0x7e, HuabaoProtocolDecoder.MSG_LIVE_VIDEO_CONTROL, id, false, data);
+                 case Command.TYPE_ENGINE_STOP:
+                 case Command.TYPE_ENGINE_RESUME:
+                     if (alternative) {
+diff --git a/src/main/java/org/traccar/protocol/Jt808AttachFrameDecoder.java b/src/main/java/org/traccar/protocol/Jt808AttachFrameDecoder.java
+new file mode 100644
+index 0000000..030b591
+--- /dev/null
++++ b/src/main/java/org/traccar/protocol/Jt808AttachFrameDecoder.java
+@@ -0,0 +1,47 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.protocol;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.channel.Channel;
++import io.netty.channel.ChannelHandlerContext;
++
++/**
++ * Splits JT/T 808 messages (0x7e delimited) from raw file data frames, which start with 0x30316364 ("01cd")
++ * followed by file name (50), offset (4), length (4) and data.
++ */
++public class Jt808AttachFrameDecoder extends HuabaoFrameDecoder {
++
++    public static final int DATA_HEADER = 0x30316364;
++    public static final int DATA_HEADER_LENGTH = 4 + 50 + 4 + 4;
++
++    @Override
++    protected Object decode(
++            ChannelHandlerContext ctx, Channel channel, ByteBuf buf) throws Exception {
++
++        if (buf.readableBytes() >= 4 && buf.getInt(buf.readerIndex()) == DATA_HEADER) {
++            if (buf.readableBytes() < DATA_HEADER_LENGTH) {
++                return null;
++            }
++            long length = buf.getUnsignedInt(buf.readerIndex() + DATA_HEADER_LENGTH - 4);
++            if (buf.readableBytes() >= DATA_HEADER_LENGTH + length) {
++                return buf.readRetainedSlice(DATA_HEADER_LENGTH + (int) length);
++            }
++            return null;
++        }
++
++        return super.decode(ctx, channel, buf);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/protocol/Jt808AttachProtocol.java b/src/main/java/org/traccar/protocol/Jt808AttachProtocol.java
+new file mode 100644
+index 0000000..9d4fe84
+--- /dev/null
++++ b/src/main/java/org/traccar/protocol/Jt808AttachProtocol.java
+@@ -0,0 +1,40 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.protocol;
++
++import jakarta.inject.Inject;
++import org.traccar.BaseProtocol;
++import org.traccar.PipelineBuilder;
++import org.traccar.TrackerServer;
++import org.traccar.config.Config;
++
++/**
++ * Attachment server of the JT/T 808 active safety extension: dashcams connect here to upload the photos and videos
++ * of ADAS / DMS alarms after the platform sends the attachment upload request (0x9208).
++ */
++public class Jt808AttachProtocol extends BaseProtocol {
++
++    @Inject
++    public Jt808AttachProtocol(Config config) {
++        addServer(new TrackerServer(config, getName(), false) {
++            @Override
++            protected void addProtocolHandlers(PipelineBuilder pipeline, Config config) {
++                pipeline.addLast(new HuabaoFrameEncoder());
++                pipeline.addLast(new Jt808AttachFrameDecoder());
++                pipeline.addLast(new Jt808AttachProtocolDecoder(Jt808AttachProtocol.this));
++            }
++        });
++    }
++
++}
+diff --git a/src/main/java/org/traccar/protocol/Jt808AttachProtocolDecoder.java b/src/main/java/org/traccar/protocol/Jt808AttachProtocolDecoder.java
+new file mode 100644
+index 0000000..a80bb82
+--- /dev/null
++++ b/src/main/java/org/traccar/protocol/Jt808AttachProtocolDecoder.java
+@@ -0,0 +1,237 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.protocol;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.ByteBufUtil;
++import io.netty.buffer.Unpooled;
++import io.netty.channel.Channel;
++import io.netty.channel.ChannelHandlerContext;
++import org.traccar.BaseProtocolDecoder;
++import org.traccar.NetworkMessage;
++import org.traccar.Protocol;
++import org.traccar.model.Position;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++import java.net.SocketAddress;
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++import java.util.Map;
++
++public class Jt808AttachProtocolDecoder extends BaseProtocolDecoder {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(Jt808AttachProtocolDecoder.class);
++
++    public static final int MSG_ALARM_ATTACHMENT_INFO = 0x1210;
++    public static final int MSG_FILE_INFO = 0x1211;
++    public static final int MSG_FILE_COMPLETE = 0x1212;
++    public static final int MSG_FILE_COMPLETE_RESPONSE = 0x9212;
++
++    public static final int MAX_FILE_SIZE = 64 * 1024 * 1024;
++    public static final int MAX_PENDING_FILES = 16;
++
++    private static final class PendingFile {
++        private final int type;
++        private final long size;
++        private final ByteBuf data;
++
++        private PendingFile(int type, long size) {
++            this.type = type;
++            this.size = size;
++            this.data = Unpooled.buffer((int) Math.min(size, 1024 * 1024));
++        }
++    }
++
++    private final Map<String, PendingFile> files = new HashMap<>();
++    private String alarmReference;
++    private String alarmNumber;
++    private HuabaoProtocolDecoder.AttachmentTarget target;
++
++    public Jt808AttachProtocolDecoder(Protocol protocol) {
++        super(protocol);
++    }
++
++    @Override
++    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
++        files.values().forEach(file -> file.data.release());
++        files.clear();
++        super.handlerRemoved(ctx);
++    }
++
++    private void sendGeneralResponse(Channel channel, SocketAddress remoteAddress, ByteBuf id, int type, int index) {
++        if (channel != null) {
++            ByteBuf response = Unpooled.buffer();
++            response.writeShort(index);
++            response.writeShort(type);
++            response.writeByte(HuabaoProtocolDecoder.RESULT_SUCCESS);
++            channel.writeAndFlush(new NetworkMessage(HuabaoProtocolDecoder.formatMessage(
++                    0x7e, HuabaoProtocolDecoder.MSG_GENERAL_RESPONSE, id, false, response), remoteAddress));
++        }
++    }
++
++    private static String readName(ByteBuf buf) {
++        return buf.readCharSequence(buf.readUnsignedByte(), StandardCharsets.US_ASCII).toString();
++    }
++
++    private static String extension(String name, int type) {
++        int dot = name.lastIndexOf('.');
++        if (dot >= 0 && dot < name.length() - 1) {
++            return name.substring(dot + 1).toLowerCase();
++        }
++        return switch (type) {
++            case 0 -> "jpg";
++            case 1 -> "wav";
++            case 2 -> "mp4";
++            default -> "bin";
++        };
++    }
++
++    private static String baseName(String name) {
++        int dot = name.lastIndexOf('.');
++        return dot > 0 ? name.substring(0, dot) : name;
++    }
++
++    /**
++     * File names follow "type_channel_alarm_index_alarmNumber.ext", where alarm is 64xx (ADAS) or 65xx (DMS).
++     */
++    private static void decodeFileName(Position position, String name) {
++        String[] parts = baseName(name).split("_");
++        if (parts.length >= 3) {
++            try {
++                position.set("channel", Integer.parseInt(parts[1]));
++            } catch (NumberFormatException ignored) {
++                // non standard name
++            }
++            String code = parts[2];
++            if (code.length() == 4 && (code.startsWith("64") || code.startsWith("65"))) {
++                try {
++                    String alarm = HuabaoProtocolDecoder.getDriverAssistanceAlarm(
++                            code.startsWith("64"), Integer.parseInt(code.substring(2), 16));
++                    if (alarm != null) {
++                        position.set("mediaAlarm", alarm);
++                    }
++                } catch (NumberFormatException ignored) {
++                    // non standard name
++                }
++            }
++        }
++    }
++
++    @Override
++    protected Object decode(Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
++
++        ByteBuf buf = (ByteBuf) msg;
++
++        if (buf.getInt(buf.readerIndex()) == Jt808AttachFrameDecoder.DATA_HEADER) {
++            buf.skipBytes(4);
++            String name = buf.readCharSequence(50, StandardCharsets.US_ASCII).toString().trim().replace("\0", "");
++            long offset = buf.readUnsignedInt();
++            long length = buf.readUnsignedInt();
++            PendingFile file = files.get(name);
++            if (file != null && offset + length <= file.size) {
++                if (offset + length > file.data.capacity()) {
++                    file.data.capacity((int) (offset + length));
++                }
++                file.data.setBytes((int) offset, buf, buf.readerIndex(), (int) length);
++                file.data.writerIndex((int) Math.max(file.data.writerIndex(), offset + length));
++            }
++            return null;
++        }
++
++        buf.readUnsignedByte(); // delimiter
++        int type = buf.readUnsignedShort();
++        buf.readUnsignedShort(); // attributes
++        ByteBuf id = buf.readSlice(6);
++        int index = buf.readUnsignedShort();
++
++        switch (type) {
++            case MSG_ALARM_ATTACHMENT_INFO -> {
++                buf.skipBytes(7); // terminal id
++                alarmReference = ByteBufUtil.hexDump(buf.readSlice(16));
++                alarmNumber = buf.readCharSequence(32, StandardCharsets.US_ASCII).toString().trim();
++                target = HuabaoProtocolDecoder.findAttachmentTarget(alarmNumber);
++                if (target == null || !target.uniqueId().equals(HuabaoProtocolDecoder.decodeId(id))) {
++                    target = null;
++                    LOGGER.warn("Attachment upload for unknown alarm {} from {}",
++                            alarmNumber, HuabaoProtocolDecoder.decodeId(id));
++                }
++                sendGeneralResponse(channel, remoteAddress, id, type, index);
++            }
++            case MSG_FILE_INFO -> {
++                String name = readName(buf);
++                int fileType = buf.readUnsignedByte();
++                long size = buf.readUnsignedInt();
++                // only files of alarms this server asked for, bounded in number and size
++                if (target != null && size <= MAX_FILE_SIZE
++                        && (files.containsKey(name) || files.size() < MAX_PENDING_FILES)) {
++                    PendingFile previous = files.put(name, new PendingFile(fileType, size));
++                    if (previous != null) {
++                        previous.data.release();
++                    }
++                }
++                sendGeneralResponse(channel, remoteAddress, id, type, index);
++            }
++            case MSG_FILE_COMPLETE -> {
++                String name = readName(buf);
++                int fileType = buf.readUnsignedByte();
++                long size = buf.readUnsignedInt();
++                PendingFile file = files.get(name);
++                boolean complete = file != null && file.data.writerIndex() >= size;
++
++                if (channel != null) {
++                    ByteBuf response = Unpooled.buffer();
++                    response.writeByte(name.length());
++                    response.writeCharSequence(name, StandardCharsets.US_ASCII);
++                    response.writeByte(fileType);
++                    response.writeByte(complete ? 0 : 1);
++                    response.writeByte(0); // packets to retransmit
++                    channel.writeAndFlush(new NetworkMessage(HuabaoProtocolDecoder.formatMessage(
++                            0x7e, MSG_FILE_COMPLETE_RESPONSE, id, false, response), remoteAddress));
++                }
++
++                if (complete) {
++                    files.remove(name);
++                    try {
++                        if (target == null) {
++                            return null;
++                        }
++                        // reported as the main protocol so the latest position keeps offering its commands
++                        Position position = new Position("huabao");
++                        position.setDeviceId(target.deviceId());
++                        getLastLocation(position, null);
++                        file.data.writerIndex((int) size);
++                        String key = switch (file.type) {
++                            case 1 -> Position.KEY_AUDIO;
++                            case 2 -> Position.KEY_VIDEO;
++                            default -> Position.KEY_IMAGE;
++                        };
++                        position.set(key, writeMediaFile(
++                                target.uniqueId(), file.data, baseName(name), extension(name, file.type)));
++                        position.set("alarmReference", alarmReference);
++                        position.set("alarmNumber", alarmNumber);
++                        decodeFileName(position, name);
++                        return position;
++                    } finally {
++                        file.data.release();
++                    }
++                }
++            }
++            default -> sendGeneralResponse(channel, remoteAddress, id, type, index);
++        }
++
++        return null;
++    }
++
++}

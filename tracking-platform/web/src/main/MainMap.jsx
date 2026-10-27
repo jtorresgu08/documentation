@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useDispatch, useSelector } from 'react-redux';
@@ -18,6 +18,11 @@ import MapGeocoder from '../map/geocoder/MapGeocoder';
 import MapScale from '../map/MapScale';
 import MapNotification from '../map/notification/MapNotification';
 import useFeatures from '../common/util/useFeatures';
+import usePersistedState from '../common/util/usePersistedState';
+import { useAttributePreference } from '../common/util/preferences';
+import { map } from '../map/core/MapView';
+import MapToolbar from '../map/main/MapToolbar';
+import MapRuler from '../map/main/MapRuler';
 
 const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
   const theme = useTheme();
@@ -33,11 +38,56 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
     dispatch(devicesActions.selectId(deviceId));
   }, [dispatch]);
 
+  const geofencesPreference = useAttributePreference('mapGeofences', true);
+  const clusterPreference = useAttributePreference('mapCluster', true);
+  const followPreference = useAttributePreference('mapFollow', false);
+  const [toolValues, setToolValues] = usePersistedState('mapTools', {});
+  const [ruler, setRuler] = useState(false);
+  const [distance, setDistance] = useState(null);
+
+  const values = {
+    geofences: toolValues.geofences ?? geofencesPreference,
+    labels: toolValues.labels ?? true,
+    cluster: toolValues.cluster ?? clusterPreference,
+    follow: toolValues.follow ?? followPreference,
+    ruler,
+  };
+
+  const fitAll = () => {
+    if (filteredPositions.length) {
+      const lons = filteredPositions.map((it) => it.longitude);
+      const lats = filteredPositions.map((it) => it.latitude);
+      map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], {
+        padding: { top: 60, bottom: 60, left: desktop ? 420 : 40, right: 80 },
+        maxZoom: 15,
+      });
+    }
+  };
+
+  const tools = {
+    values,
+    toggle: (key) => {
+      if (key === 'fit') {
+        fitAll();
+      } else if (key === 'fullscreen') {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          document.documentElement.requestFullscreen?.();
+        }
+      } else if (key === 'ruler') {
+        setRuler(!ruler);
+      } else {
+        setToolValues({ ...toolValues, [key]: !values[key] });
+      }
+    },
+  };
+
   return (
     <>
       <MapView>
         <MapOverlay />
-        <MapGeofence />
+        {values.geofences && <MapGeofence />}
         <MapAccuracy positions={filteredPositions} />
         <MapLiveRoutes />
         <MapPositions
@@ -45,11 +95,15 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
           onMarkerClick={onMarkerClick}
           selectedPosition={selectedPosition}
           showStatus
+          cluster={values.cluster}
+          showTitles={values.labels}
         />
         <MapDefaultCamera />
-        <MapSelectedDevice />
+        <MapSelectedDevice follow={values.follow} />
+        <MapRuler active={ruler} color={theme.palette.primary.main} onDistance={setDistance} />
         <PoiMap />
       </MapView>
+      <MapToolbar tools={tools} distance={ruler ? (distance ?? 0) : null} />
       <MapScale />
       <MapCurrentLocation />
       <MapGeocoder />

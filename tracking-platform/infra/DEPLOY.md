@@ -58,11 +58,65 @@ Cada protocolo usa un puerto (lista completa en https://www.traccar.org/devices/
 | teltonika | 5027 | Teltonika FMB/FMC |
 | osmand | 5055 | App móvil (Traccar Client / app propia) |
 | gl200 | 5004 | Queclink GV |
+| huabao (JT808) | 5015 | Dashcams y MDVR JT/T 808 / 1078 (Jimi, Howen, Streamax en modo JT808, genéricos) |
 
 Configura el equipo con `IP o dominio : puerto` y da de alta el IMEI como *Identificador* del dispositivo.
 Si usas puertos fuera de `GPS_PORTS`, amplía el rango en `.env` y en el firewall (`ufw allow 5200:5300/tcp`).
 
-## 6. Copias de seguridad
+## 6. Dashcams (JT/T 808 + 1078)
+
+La plataforma recibe de las dashcams y MDVR que hablan JT/T 808 (el estándar de la mayoría de cámaras chinas):
+
+- **Alarmas ADAS** (colisión frontal, salida de carril, distancia insegura, peatón, cambio de carril frecuente,
+  señal de tránsito, obstáculo) y **DMS** (fatiga, celular, fumar, distracción, conductor ausente). Aparecen como
+  alarmas normales: puedes crear notificaciones por correo, web o Telegram para cada una.
+- **Fotos y videos de cada alarma.** El servidor los pide automáticamente y la cámara los sube al puerto **5261**.
+  Se ven en el menú **Cámaras** agrupados por alarma.
+- **Foto bajo demanda** (botón *Tomar foto* o el comando *Solicitar foto*).
+- **Video en vivo por canal** (comandos *Video en vivo* / *Detener video en vivo*), con un servidor de video
+  JT/T 1078 (más abajo).
+
+Configuración de la cámara (por SMS, app o software del fabricante):
+
+1. Servidor: IP pública del VPS (`PUBLIC_HOST` en `.env`), puerto **5015**, protocolo JT808 / TCP.
+2. El "número de teléfono" o "ID de terminal" que configures (12 dígitos, p. ej. `013912345678`) es el
+   **Identificador** del dispositivo en la plataforma.
+3. Activa ADAS/DMS y la "subida de adjuntos de alarma" (en algunas marcas: *active safety*, *Su-standard*).
+
+### Video en vivo
+
+Las cámaras envían el video por el protocolo JT/T 1078 a un servidor de video, que lo publica como HTTP-FLV para el
+navegador. Traccar no incluye ese servidor; opciones de código abierto:
+
+- [JT1078Gateway](https://gitee.com/ldming/JT1078Gateway) (C#, MIT, FLV por HTTP y WebSocket)
+- [jtt1078-video-server](https://gitee.com/hushup/jtt1078-video-server) (Java, Apache 2.0, FLV)
+- [m7s + plugin jt1078](https://hub.docker.com/r/cdcddcdc/m7s-jt1078) (Go, imagen Docker)
+
+Pasos:
+
+1. Instala el servidor de video escuchando JT/T 1078 en `VIDEO_PORT` (7611 por defecto) y su HTTP-FLV en un
+   puerto interno; abre `VIDEO_PORT` en el firewall.
+2. Publica el HTTP-FLV bajo `https://tu-dominio/live/` (bloque comentado en el `Caddyfile`), para que el
+   navegador lo cargue por HTTPS.
+3. En *Configuración del servidor > Atributos* añade `dashcam.playUrl` con la dirección de reproducción. Admite
+   `{uniqueId}`, `{channel}` y `{deviceId}`, por ejemplo `https://tu-dominio/live/{uniqueId}_{channel}.flv`
+   (el formato exacto depende del servidor de video elegido).
+
+Al pulsar *Iniciar* en un canal, la plataforma envía el comando 0x9101 a la cámara con la dirección de
+`HUABAO_VIDEO_SERVER` y empieza a reproducir el FLV.
+
+### Probar sin cámara
+
+`server/tests/dashcam_simulator.py` simula una dashcam completa (alarmas, adjuntos, fotos y peticiones de video):
+
+```bash
+python3 server/tests/dashcam_simulator.py --host IP_DEL_VPS --port 5015 --phone 013912345678 \
+    --image foto.jpg --video clip.mp4 --alarm adas:1 --alarm dms:2
+```
+
+Da de alta antes el dispositivo con identificador `013912345678`.
+
+## 7. Copias de seguridad
 
 ```bash
 crontab -e
@@ -75,7 +129,7 @@ Para restaurar: `./scripts/restore.sh backups/traccar-AAAAMMDD-HHMMSS.dump`.
 
 **Prueba una restauración al menos una vez** antes de tener clientes.
 
-## 7. Mantenimiento
+## 8. Mantenimiento
 
 - Actualizar la plataforma: `git pull && docker compose up -d --build`.
 - Limpieza de posiciones antiguas (ejemplo: más de 180 días):
@@ -88,7 +142,7 @@ Para restaurar: `./scripts/restore.sh backups/traccar-AAAAMMDD-HHMMSS.dump`.
 - Monitorización: `docker compose ps`, `docker stats`, y un servicio externo (UptimeRobot, BetterStack) contra
   `https://tu-dominio/`.
 
-## 8. Marcas blancas con dominio propio
+## 9. Marcas blancas con dominio propio
 
 1. El revendedor apunta su dominio (p. ej. `gps.cliente.com`) a la IP del VPS.
 2. Añade un bloque al `Caddyfile` con ese dominio y el mismo `reverse_proxy traccar:8082`, y luego `docker compose restart caddy`.

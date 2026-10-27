@@ -20,5 +20,10 @@
 	@blocked path /console* /api/health
 	respond @blocked 404
 
+	# Video en vivo de dashcams: si instalas un servidor JT/T 1078 (ver DEPLOY.md) publica su HTTP-FLV en /live/
+	# handle /live/* {
+	# 	reverse_proxy video:8080
+	# }
+
 	reverse_proxy traccar:8082
 }

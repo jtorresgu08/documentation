@@ -1,5 +1,5 @@
 import {
-  useState, useCallback, useEffect,
+  useState, useCallback, useEffect, useMemo,
 } from 'react';
 import { Paper } from '@mui/material';
 import { makeStyles } from 'tss-react/mui';
@@ -80,6 +80,7 @@ const MainPage = () => {
   });
   const [filterSort, setFilterSort] = usePersistedState('filterSort', '');
   const [filterMap, setFilterMap] = usePersistedState('filterMap', false);
+  const [hiddenDevices, setHiddenDevices] = usePersistedState('hiddenDevices', []);
 
   const [devicesOpen, setDevicesOpen] = useState(desktop);
   const [eventsOpen, setEventsOpen] = useState(false);
@@ -94,11 +95,16 @@ const MainPage = () => {
 
   useFilter(keyword, filter, filterSort, filterMap, positions, setFilteredDevices, setFilteredPositions);
 
+  const mapPositions = useMemo(() => {
+    const hidden = new Set(hiddenDevices);
+    return filteredPositions.filter((position) => !hidden.has(position.deviceId));
+  }, [filteredPositions, hiddenDevices]);
+
   return (
     <div className={classes.root}>
       {desktop && (
         <MainMap
-          filteredPositions={filteredPositions}
+          filteredPositions={mapPositions}
           selectedPosition={selectedPosition}
           onEventsClick={onEventsClick}
         />
@@ -123,14 +129,14 @@ const MainPage = () => {
           {!desktop && (
             <div className={classes.contentMap}>
               <MainMap
-                filteredPositions={filteredPositions}
+                filteredPositions={mapPositions}
                 selectedPosition={selectedPosition}
                 onEventsClick={onEventsClick}
               />
             </div>
           )}
           <Paper square className={classes.contentList} style={devicesOpen ? {} : { visibility: 'hidden' }}>
-            <DeviceList devices={filteredDevices} />
+            <DeviceList devices={filteredDevices} hiddenDevices={hiddenDevices} setHiddenDevices={setHiddenDevices} />
           </Paper>
         </div>
       </div>

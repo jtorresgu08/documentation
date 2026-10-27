@@ -36,6 +36,7 @@ import FunctionsIcon from '@mui/icons-material/Functions';
 import PublishIcon from '@mui/icons-material/Publish';
 import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
+import VideocamIcon from '@mui/icons-material/Videocam';
 import { useLocalization, useTranslation } from './LocalizationProvider';
 import { useAdministrator, useManager, useRestriction } from '../util/permissions';
 import useFeatures from '../util/useFeatures';
@@ -261,6 +262,9 @@ const AppSidebar = () => {
     },
     !disableReports && {
       key: 'history', title: t('navHistory'), icon: <HistoryIcon />, href: '/replay',
+    },
+    {
+      key: 'cameras', title: t('navCameras'), icon: <VideocamIcon />, href: '/dashcam',
     },
     !readonly && {
       key: 'alerts', title: t('navAlerts'), icon: <NotificationsIcon />, href: '/settings/notifications', match: '/settings/notification',

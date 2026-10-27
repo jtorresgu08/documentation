@@ -64,6 +64,7 @@ import fetchOrThrow from './common/util/fetchOrThrow';
 import AuditPage from './reports/AuditPage';
 import AdminDashboardPage from './admin/AdminDashboardPage';
 import BrandingPage from './settings/BrandingPage';
+import DashcamPage from './dashcam/DashcamPage';
 
 const Navigation = () => {
   const navigate = useNavigate();
@@ -123,6 +124,7 @@ const Navigation = () => {
         <Route path="geofences" element={<GeofencesPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
         <Route path="admin" element={<AdminDashboardPage />} />
+        <Route path="dashcam" element={<DashcamPage />} />
 
         <Route path="settings">
           <Route path="accumulators/:deviceId" element={<AccumulatorsPage />} />
