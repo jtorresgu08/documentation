@@ -1,0 +1,98 @@
+diff --git a/src/main/java/org/traccar/protocol/TeltonikaProtocol.java b/src/main/java/org/traccar/protocol/TeltonikaProtocol.java
+index 17f7592..d634e5c 100644
+--- a/src/main/java/org/traccar/protocol/TeltonikaProtocol.java
++++ b/src/main/java/org/traccar/protocol/TeltonikaProtocol.java
+@@ -20,17 +20,29 @@ import org.traccar.PipelineBuilder;
+ import org.traccar.TrackerServer;
+ import org.traccar.config.Config;
+ import org.traccar.model.Command;
++import org.traccar.model.Device;
++import org.traccar.storage.Storage;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
+ 
+ import jakarta.inject.Inject;
+ 
+ public class TeltonikaProtocol extends BaseProtocol {
+ 
++    private final Storage storage;
++
+     @Inject
+-    public TeltonikaProtocol(Config config) {
++    public TeltonikaProtocol(Config config, Storage storage) {
++        this.storage = storage;
+         setSupportedDataCommands(
+                 Command.TYPE_CUSTOM,
+                 Command.TYPE_ENGINE_STOP,
+                 Command.TYPE_ENGINE_RESUME);
++        setSupportedTextCommands(
++                Command.TYPE_CUSTOM,
++                Command.TYPE_ENGINE_STOP,
++                Command.TYPE_ENGINE_RESUME);
+         addServer(new TrackerServer(config, getName(), false) {
+             @Override
+             protected void addProtocolHandlers(PipelineBuilder pipeline, Config config) {
+@@ -48,4 +60,36 @@ public class TeltonikaProtocol extends BaseProtocol {
+         });
+     }
+ 
++    // SMS start with the device SMS credentials: "<login> <password> " on FMB (two spaces when not set), only
++    // "<password> " on the FT platform (one space); custom text that already starts with a space is sent as typed
++    public static String smsPrefix(String model, String login, String password) {
++        String pass = password != null ? password : "";
++        if (model != null && model.startsWith("FT")) {
++            return pass + " ";
++        }
++        return (login != null ? login : "") + " " + pass + " ";
++    }
++
++    @Override
++    public void sendTextCommand(String destAddress, Command command) throws Exception {
++        String text = switch (command.getType()) {
++            case Command.TYPE_ENGINE_STOP -> "setdigout 1";
++            case Command.TYPE_ENGINE_RESUME -> "setdigout 0";
++            default -> command.getString(Command.KEY_DATA);
++        };
++        if (text != null && !text.isEmpty() && !Character.isWhitespace(text.charAt(0))) {
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", command.getDeviceId())));
++            if (device != null) {
++                text = smsPrefix(device.getModel(), device.getString("smsLogin"), device.getString("smsPassword"))
++                        + text;
++            }
++        }
++        Command sms = new Command();
++        sms.setDeviceId(command.getDeviceId());
++        sms.setType(Command.TYPE_CUSTOM);
++        sms.set(Command.KEY_DATA, text);
++        super.sendTextCommand(destAddress, sms);
++    }
++
+ }
+diff --git a/src/test/java/org/traccar/protocol/TeltonikaProtocolTest.java b/src/test/java/org/traccar/protocol/TeltonikaProtocolTest.java
+new file mode 100644
+index 0000000..20cf380
+--- /dev/null
++++ b/src/test/java/org/traccar/protocol/TeltonikaProtocolTest.java
+@@ -0,0 +1,20 @@
++package org.traccar.protocol;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++public class TeltonikaProtocolTest {
++
++    @Test
++    public void testSmsPrefix() {
++
++        assertEquals("  ", TeltonikaProtocol.smsPrefix("FMB920", null, null));
++        assertEquals("admin 1234 ", TeltonikaProtocol.smsPrefix("FMB920", "admin", "1234"));
++        assertEquals("  ", TeltonikaProtocol.smsPrefix(null, null, null));
++        assertEquals(" ", TeltonikaProtocol.smsPrefix("FTC920", null, null));
++        assertEquals("1234 ", TeltonikaProtocol.smsPrefix("FTC961", "admin", "1234"));
++
++    }
++
++}

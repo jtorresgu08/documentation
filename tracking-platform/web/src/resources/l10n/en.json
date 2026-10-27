@@ -734,6 +734,8 @@
     "addDevicePort": "Port",
     "addDeviceProtocol": "Protocol",
     "addDeviceSms": "SMS",
+    "addDeviceSmsTwoSpaces": "␣ = space. The SMS starts with 2 spaces (empty SMS login and password); if the device has them, they go there: \"login password setparam…\".",
+    "addDeviceSmsOneSpace": "␣ = space. FT devices take a single space (empty SMS password); if the device has a password, it goes there: \"password setparam…\".",
     "addDeviceCopy": "Copy",
     "addDeviceCreated": "Created",
     "addDeviceAnother": "Add another",

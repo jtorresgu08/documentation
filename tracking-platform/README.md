@@ -84,6 +84,12 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   modelo (p. ej. `FTC920`), que es lo que activa en el servidor los parámetros por modelo: batería %, ICCID,
   entradas analógicas, OBD/CAN, temperaturas, etc. En los FT el **voltaje externo llega en el AVL 800** (mV, 4 bytes)
   en lugar del 66, y se muestra como *Alimentación*. En unidades ya creadas, basta con poner el código en *Modelo*.
+- **SMS de Teltonika** (parche `0007`): los SMS llevan delante las credenciales SMS del equipo. En **FMB** son
+  `login contraseña ` (**2 espacios** si están vacías) y en la **plataforma FT** solo `contraseña ` (**1 espacio**).
+  Los comandos por GPRS no llevan prefijo. El alta muestra el SMS de configuración con el número correcto de
+  espacios (␣), y al enviar un comando por SMS desde *Enviar comando* el servidor añade el prefijo según el modelo
+  y los atributos `smsLogin` / `smsPassword` de la unidad. Si el texto empieza con un espacio, se envía tal cual.
+  Requiere un gateway SMS configurado (`sms.http.url` en `traccar.xml`).
 - El **superadministrador es la raíz de la jerarquía** (parche `0005`): los usuarios que crea quedan bajo él, así
   que ve todas las unidades en el mapa y en vivo, no solo en los listados de administración.
 
@@ -148,7 +154,7 @@ python3 server/tests/test_hierarchy.py
 python3 server/tests/test_dashcam.py foto.jpg clip.mp4 cabina.jpg
 python3 server/tests/test_jimi.py clip.mp4 cabina.jpg
 python3 server/tests/test_status.py
-python3 server/tests/test_teltonika_ft.py
+SMS_CAPTURE_PORT=7620 python3 server/tests/test_teltonika_ft.py   # con sms.http.url=http://127.0.0.1:7620/sms
 ```
 
 ## Producción

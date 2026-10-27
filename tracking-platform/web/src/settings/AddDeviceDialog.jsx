@@ -147,11 +147,18 @@ const AddDeviceDialog = ({
       {sms && (
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1 }}>
           <Typography variant="body2">{`${t('addDeviceSms')}:`}</Typography>
-          <Box component="code" sx={{ bgcolor: 'action.hover', px: 1, py: 0.25, borderRadius: 1 }}>{sms}</Box>
+          <Box component="code" sx={{ bgcolor: 'action.hover', px: 1, py: 0.25, borderRadius: 1 }}>
+            {sms.replace(/^ +/, (spaces) => '␣'.repeat(spaces.length))}
+          </Box>
           <Tooltip title={t('addDeviceCopy')}>
             <IconButton size="small" onClick={() => navigator.clipboard?.writeText(sms)}><ContentCopyIcon fontSize="small" /></IconButton>
           </Tooltip>
         </Stack>
+      )}
+      {sms?.startsWith(' ') && (
+        <Typography variant="caption" color="text.secondary">
+          {t(sms.startsWith('  ') ? 'addDeviceSmsTwoSpaces' : 'addDeviceSmsOneSpace')}
+        </Typography>
       )}
     </Alert>
   );

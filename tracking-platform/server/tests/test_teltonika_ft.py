@@ -3,12 +3,17 @@
 Prueba de los equipos Teltonika de la plataforma FT (FTC920, FTC961...): un FTC920 simulado envía Codec 8
 Extended al puerto 5027 y se comprueba que los datos compartidos con FMB (nivel de batería, ICCID, ADC) y el
 voltaje externo propio de FT (AVL 800) se decodifican; un FMB920 sigue usando el voltaje del AVL 66.
+Con SMS_CAPTURE_PORT (y sms.http.url=http://127.0.0.1:<puerto>/sms en traccar.xml) comprueba además el prefijo de
+los SMS: dos espacios en FMB (login y contraseña vacíos), uno en FT (solo contraseña).
 Uso: TRACCAR_URL=http://127.0.0.1:8082 ADMIN_EMAIL=... ADMIN_PASSWORD=... python3 test_teltonika_ft.py
 """
 import os
+import http.server
+import json
 import socket
 import struct
 import sys
+import threading
 import time
 import urllib.parse
 
@@ -53,6 +58,41 @@ def crc16_ibm(data):
     return crc
 
 
+def check_sms(api, devices, ftc, fmb):
+    received = []
+
+    class Gateway(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append(self.rfile.read(int(self.headers['Content-Length'])).decode())
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(('127.0.0.1', int(os.environ['SMS_CAPTURE_PORT'])), Gateway)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def sms(imei, command, attributes=None):
+        device = dict(devices[imei], phone='+51900000001', attributes=attributes or {})
+        api.req('PUT', f'/api/devices/{device["id"]}', device)
+        received.clear()
+        status, _ = api.req('POST', '/api/commands/send', dict(command, deviceId=device['id'], textChannel=True))
+        found = wait_for(lambda: received)
+        return status, found and json.loads(found[0])['message']
+
+    custom = {'type': 'custom', 'attributes': {'data': 'getinfo'}}
+    check('FTC920 SMS with one space', sms(ftc, custom) == (200, ' getinfo'))
+    check('FTC920 SMS with password', sms(ftc, custom, {'smsPassword': '1234'}) == (200, '1234 getinfo'))
+    check('FMB920 SMS with two spaces', sms(fmb, custom) == (200, '  getinfo'))
+    check('FMB920 SMS with login and password',
+          sms(fmb, custom, {'smsLogin': 'adm', 'smsPassword': '1234'}) == (200, 'adm 1234 getinfo'))
+    check('FTC920 engine stop by SMS', sms(ftc, {'type': 'engineStop'}) == (200, ' setdigout 1'))
+    check('typed prefix kept as is', sms(fmb, {'type': 'custom', 'attributes': {'data': ' x getinfo'}})
+          == (200, ' x getinfo'))
+    server.shutdown()
+
+
 def main():
     api = Client()
     email = os.environ.get('ADMIN_EMAIL', 'admin@test')
@@ -89,6 +129,9 @@ def main():
     fm = wait_for(lambda: latest(fmb))
     check('FMB920 external voltage still from AVL 66', fm and abs(fm.get('power', 0) - 12.345) < 1e-6, fm)
     check('FMB920 leaves AVL 800 raw', fm and fm.get('io800') == 24300, fm)
+
+    if os.environ.get('SMS_CAPTURE_PORT'):
+        check_sms(api, devices, ftc, fmb)
 
     failed = [name for name, ok in results if not ok]
     print(f'\n{len(results) - len(failed)}/{len(results)} passed')

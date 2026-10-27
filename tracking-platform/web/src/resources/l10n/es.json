@@ -734,6 +734,8 @@
     "addDevicePort": "Puerto",
     "addDeviceProtocol": "Protocolo",
     "addDeviceSms": "SMS",
+    "addDeviceSmsTwoSpaces": "␣ = espacio. El SMS empieza con 2 espacios (login y contraseña SMS vacíos); si el equipo los tiene, van en su lugar: \"login contraseña setparam…\".",
+    "addDeviceSmsOneSpace": "␣ = espacio. Los equipos FT llevan 1 solo espacio (contraseña SMS vacía); si el equipo tiene contraseña, va en su lugar: \"contraseña setparam…\".",
     "addDeviceCopy": "Copiar",
     "addDeviceCreated": "Creadas",
     "addDeviceAnother": "Agregar otra",
