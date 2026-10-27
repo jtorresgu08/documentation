@@ -38,6 +38,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import { useLocalization, useTranslation } from './LocalizationProvider';
 import { useAdministrator, useManager, useRestriction } from '../util/permissions';
 import useFeatures from '../util/useFeatures';
@@ -289,7 +290,14 @@ const AppSidebar = () => {
       match: /\/settings\/device\/\d+\/command/,
     },
     !disableReports && {
-      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs)/,
+      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel)/,
+    },
+    !disableReports && {
+      key: 'fuel',
+      title: t('fuelTitle'),
+      icon: <LocalGasStationIcon />,
+      href: selectedDeviceId ? `/reports/fuel?deviceId=${selectedDeviceId}` : '/reports/fuel',
+      match: /^\/reports\/fuel/,
     },
     !readonly && {
       key: 'geofences', title: t('sharedGeofences'), icon: <PolylineIcon />, href: '/geofences', match: /^\/(geofences|settings\/geofence)/,

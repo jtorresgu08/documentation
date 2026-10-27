@@ -93,6 +93,30 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
 - El **superadministrador es la raíz de la jerarquía** (parche `0005`): los usuarios que crea quedan bajo él, así
   que ve todas las unidades en el mapa y en vivo, no solo en los listados de administración.
 
+## Sensores, ficha de la unidad y combustible (parche `0008`)
+
+- **Sensores estilo WOX** (Editar unidad → *Sensores*): combustible (tanque), temperatura, voltaje, digital
+  (encendido, puerta… con textos propios) y numérico. Cada sensor lee un parámetro del equipo (`io201` de una sonda
+  LLS, `adc1`, `fuel`, `temp1`…; el editor lista los que la unidad está enviando con su valor actual) y lo convierte
+  con **multiplicador y suma** o con una **tabla de calibración** (valor del equipo → litros, con interpolación; se
+  puede pegar desde Excel). El valor queda en cada posición (`sensor.<id>`) y se ve en la ventana del mapa; el primer
+  sensor de combustible llena además el nivel estándar `fuel`.
+- **Detección de llenado y descarga/robo** por sensor de combustible: **llenado mínimo**, **descarga mínima**,
+  **tiempo de espera** (el cambio debe mantenerse ese tiempo), **filtro** (mediana de N lecturas contra el oleaje),
+  velocidad de detenido y **solo con la unidad detenida** (activado por defecto: nunca se detecta en movimiento).
+  Una carga gradual en la bomba se cuenta como una sola, y el consumo en ralentí no se toma como robo. Las alertas en
+  vivo usan los eventos *Carga de combustible* y *Descarga / robo de combustible*, así que se pueden notificar desde
+  *Alertas* (web, correo, Telegram…), con litros antes, después y cantidad.
+- **Página Combustible** (menú lateral y Reportes): gráfica del nivel filtrado y de la lectura cruda, velocidad de
+  fondo, cargas (verde) y descargas (rojo) marcadas, resumen (inicial, final, cargado, descargado, consumido) y tabla
+  con hora, litros y lugar. Se recalcula desde los datos crudos (`GET /api/sensors/fuel`), así que un cambio de
+  calibración o de umbrales también se aplica al historial.
+- **Información de la unidad estilo Wialon** (Editar unidad → *Información de la unidad*): número de SIM, ICCID,
+  operador, placa, número económico, VIN, marca, modelo, año, color, tipo, número de motor, combustible, capacidad
+  del tanque, rendimiento, fecha de instalación, instalador, póliza y notas (atributos `info.*`). Se consulta desde
+  el menú ⋮ de cada unidad → *Información de la unidad*, junto con los datos del equipo y los sensores en vivo, y se
+  puede copiar.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -155,6 +179,7 @@ python3 server/tests/test_dashcam.py foto.jpg clip.mp4 cabina.jpg
 python3 server/tests/test_jimi.py clip.mp4 cabina.jpg
 python3 server/tests/test_status.py
 SMS_CAPTURE_PORT=7620 python3 server/tests/test_teltonika_ft.py   # con sms.http.url=http://127.0.0.1:7620/sms
+python3 server/tests/test_fuel.py
 ```
 
 ## Producción

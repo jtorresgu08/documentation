@@ -15,6 +15,8 @@ import SendIcon from '@mui/icons-material/Send';
 import ShareIcon from '@mui/icons-material/Share';
 import EditIcon from '@mui/icons-material/Edit';
 import VideocamIcon from '@mui/icons-material/Videocam';
+import InfoIcon from '@mui/icons-material/Info';
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import dayjs from 'dayjs';
 import { devicesActions } from '../store';
 import { formatAlarm, formatBoolean } from '../common/util/formatter';
@@ -23,6 +25,8 @@ import { speedFromKnots, speedUnitString } from '../common/util/converter';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useAdministrator, useDeviceReadonly, useRestriction } from '../common/util/permissions';
 import { useAttributePreference } from '../common/util/preferences';
+import { fuelSensors } from '../common/util/sensors';
+import UnitInfoDialog from './UnitInfoDialog';
 
 export const GROUP_ROW_HEIGHT = 56;
 export const DEVICE_ROW_HEIGHT = 84;
@@ -164,6 +168,7 @@ export const DeviceRow = ({ row, data }) => {
   const devicePrimary = useAttributePreference('devicePrimary', 'name');
 
   const [anchor, setAnchor] = useState(null);
+  const [showInfo, setShowInfo] = useState(false);
 
   const status = statusOf(item, position);
   const statusText = status.since
@@ -235,6 +240,16 @@ export const DeviceRow = ({ row, data }) => {
           <ListItemIcon><MyLocationIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('deviceShowOnMap')}</ListItemText>
         </MenuItem>
+        <MenuItem onClick={action(() => setShowInfo(true))}>
+          <ListItemIcon><InfoIcon fontSize="small" /></ListItemIcon>
+          <ListItemText>{t('unitInfoTitle')}</ListItemText>
+        </MenuItem>
+        {fuelSensors(item).length > 0 && (
+          <MenuItem onClick={action(() => navigate(`/reports/fuel?deviceId=${item.id}`))}>
+            <ListItemIcon><LocalGasStationIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('fuelTitle')}</ListItemText>
+          </MenuItem>
+        )}
         <MenuItem onClick={action(() => {
           dispatch(devicesActions.selectId(item.id));
           navigate('/replay');
@@ -270,6 +285,11 @@ export const DeviceRow = ({ row, data }) => {
           </MenuItem>
         )}
       </Menu>
+      {showInfo && (
+        <div onClick={(event) => event.stopPropagation()} role="presentation">
+          <UnitInfoDialog deviceId={item.id} onClose={() => setShowInfo(false)} />
+        </div>
+      )}
     </div>
   );
 };

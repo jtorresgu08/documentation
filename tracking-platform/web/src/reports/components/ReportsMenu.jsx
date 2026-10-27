@@ -7,6 +7,7 @@ import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import BarChartIcon from '@mui/icons-material/BarChart';
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import RouteIcon from '@mui/icons-material/Route';
 import EventRepeatIcon from '@mui/icons-material/EventRepeat';
 import NotesIcon from '@mui/icons-material/Notes';
@@ -61,6 +62,12 @@ const ReportsMenu = () => {
           link="/reports/chart"
           icon={<TrendingUpIcon />}
           selected={location.pathname === '/reports/chart'}
+        />
+        <MenuItem
+          title={t('fuelTitle')}
+          link="/reports/fuel"
+          icon={<LocalGasStationIcon />}
+          selected={location.pathname === '/reports/fuel'}
         />
         <MenuItem
           title={t('reportReplay')}

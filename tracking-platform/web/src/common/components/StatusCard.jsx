@@ -36,6 +36,7 @@ import { devicesActions } from '../../store';
 import { useCatch, useCatchCallback } from '../../reactHelper';
 import { useAttributePreference } from '../util/preferences';
 import fetchOrThrow from '../util/fetchOrThrow';
+import { formatSensorValue, parseSensors, sensorValue } from '../util/sensors';
 
 const useStyles = makeStyles()((theme, { desktopPadding }) => ({
   card: {
@@ -223,7 +224,9 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
                           )}
                         />
                       ))}
-
+                      {parseSensors(device).filter((sensor) => sensorValue(sensor, position) !== undefined).map((sensor) => (
+                        <StatusRow key={sensor.id} name={sensor.name} content={formatSensorValue(sensor, sensorValue(sensor, position), t)} />
+                      ))}
                     </TableBody>
                     <TableFooter>
                       <TableRow>

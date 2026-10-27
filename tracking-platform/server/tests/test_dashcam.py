@@ -30,13 +30,14 @@ class Client:
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.ProxyHandler({}))
 
-    def req(self, method, path, body=None, form=None, raw=False):
-        data, headers = None, {}
+    def req(self, method, path, body=None, form=None, raw=False, headers=None):
+        data, extra = None, headers or {}
+        headers = {}
         if body is not None:
             data, headers = json.dumps(body).encode(), {'Content-Type': 'application/json'}
         if form is not None:
             data, headers = urllib.parse.urlencode(form).encode(), {'Content-Type': 'application/x-www-form-urlencoded'}
-        request = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
+        request = urllib.request.Request(BASE + path, data=data, method=method, headers={**headers, **extra})
         try:
             response = self.opener.open(request)
             content = response.read()

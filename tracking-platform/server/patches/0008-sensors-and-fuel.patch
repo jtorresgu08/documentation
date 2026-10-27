@@ -1,0 +1,969 @@
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index 26c0ad7..81e7081 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -40,6 +40,7 @@ import org.traccar.handler.MotionHandler;
+ import org.traccar.handler.OutdatedHandler;
+ import org.traccar.handler.PositionForwardingHandler;
+ import org.traccar.handler.PostProcessHandler;
++import org.traccar.handler.SensorHandler;
+ import org.traccar.handler.SpeedLimitHandler;
+ import org.traccar.handler.TimeHandler;
+ import org.traccar.handler.events.AlarmEventHandler;
+@@ -48,6 +49,7 @@ import org.traccar.handler.events.BehaviorEventHandler;
+ import org.traccar.handler.events.CommandResultEventHandler;
+ import org.traccar.handler.events.DriverEventHandler;
+ import org.traccar.handler.events.FuelEventHandler;
++import org.traccar.handler.events.FuelSensorEventHandler;
+ import org.traccar.handler.events.GeofenceEventHandler;
+ import org.traccar.handler.events.IgnitionEventHandler;
+ import org.traccar.handler.events.MaintenanceEventHandler;
+@@ -107,6 +109,7 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 SpeedLimitHandler.class,
+                 MotionHandler.class,
+                 ComputedAttributesHandler.Late.class,
++                SensorHandler.class,
+                 EngineHoursHandler.class,
+                 DriverHandler.class,
+                 CopyAttributesHandler.class,
+@@ -122,6 +125,7 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 OverspeedEventHandler.class,
+                 BehaviorEventHandler.class,
+                 FuelEventHandler.class,
++                FuelSensorEventHandler.class,
+                 MotionEventHandler.class,
+                 GeofenceEventHandler.class,
+                 AlarmEventHandler.class,
+diff --git a/src/main/java/org/traccar/api/resource/SensorResource.java b/src/main/java/org/traccar/api/resource/SensorResource.java
+new file mode 100644
+index 0000000..895de9b
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/SensorResource.java
+@@ -0,0 +1,136 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.model.UserRestrictions;
++import org.traccar.sensor.FuelAnalyzer;
++import org.traccar.sensor.Sensor;
++import org.traccar.sensor.SensorConfig;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Fuel report of a unit fuel sensor: level series for the chart, detected fills and drains and the period summary.
++ * Levels are recomputed from the raw parameter, so calibration changes also apply to past data.
++ */
++@Path("sensors")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class SensorResource extends BaseResource {
++
++    private static final long MAX_PERIOD = 62L * 24 * 60 * 60 * 1000;
++    private static final int MAX_POINTS = 4000;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    private static double round(double value) {
++        return Math.round(value * 100) / 100.0;
++    }
++
++    @GET
++    @Path("fuel")
++    public Map<String, Object> fuel(
++            @QueryParam("deviceId") long deviceId, @QueryParam("sensorId") String sensorId,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > MAX_PERIOD) {
++            throw new BadRequestException("Invalid period");
++        }
++        Device device = storage.getObject(Device.class, new Request(
++                new Columns.All(), new Condition.Equals("id", deviceId)));
++        Sensor sensor = SensorConfig.fuelSensors(objectMapper, device).stream()
++                .filter(item -> sensorId == null || sensorId.equals(item.getId()))
++                .findFirst()
++                .orElseThrow(() -> new BadRequestException("No fuel sensor"));
++
++        List<FuelAnalyzer.Sample> samples = new ArrayList<>();
++        for (Position position : PositionUtil.getPositions(storage, deviceId, from, to)) {
++            Double value = sensor.compute(position);
++            if (value != null) {
++                samples.add(new FuelAnalyzer.Sample(
++                        position.getFixTime().getTime(), value, UnitsConverter.kphFromKnots(position.getSpeed()),
++                        position.getLatitude(), position.getLongitude(), position.getId()));
++            }
++        }
++        FuelAnalyzer.Result analysis = FuelAnalyzer.analyze(samples, sensor);
++
++        List<Map<String, Object>> points = new ArrayList<>();
++        int step = Math.max(1, (samples.size() + MAX_POINTS - 1) / MAX_POINTS);
++        for (int i = 0; i < samples.size(); i += step) {
++            var sample = samples.get(i);
++            Map<String, Object> point = new LinkedHashMap<>();
++            point.put("time", sample.time());
++            point.put("value", round(sample.value()));
++            point.put("level", round(analysis.smoothed()[i]));
++            point.put("speed", Math.round(sample.speed()));
++            points.add(point);
++        }
++
++        List<Map<String, Object>> changes = new ArrayList<>();
++        for (var change : analysis.changes()) {
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("type", change.type());
++            item.put("time", change.time());
++            item.put("endTime", change.endTime());
++            item.put("before", round(change.before()));
++            item.put("after", round(change.after()));
++            item.put("amount", round(Math.abs(change.amount())));
++            item.put("latitude", change.latitude());
++            item.put("longitude", change.longitude());
++            item.put("positionId", change.positionId());
++            changes.add(item);
++        }
++
++        Map<String, Object> summary = new LinkedHashMap<>();
++        summary.put("start", round(analysis.start()));
++        summary.put("end", round(analysis.end()));
++        summary.put("filled", round(analysis.filled()));
++        summary.put("drained", round(analysis.drained()));
++        summary.put("consumed", round(analysis.consumed()));
++        summary.put("fills", analysis.changes().stream().filter(c -> FuelAnalyzer.FILL.equals(c.type())).count());
++        summary.put("drains", analysis.changes().stream().filter(c -> FuelAnalyzer.DRAIN.equals(c.type())).count());
++
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("sensor", sensor);
++        result.put("points", points);
++        result.put("changes", changes);
++        result.put("summary", summary);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/SensorHandler.java b/src/main/java/org/traccar/handler/SensorHandler.java
+new file mode 100644
+index 0000000..26f86ca
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/SensorHandler.java
+@@ -0,0 +1,56 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.sensor.Sensor;
++import org.traccar.sensor.SensorConfig;
++import org.traccar.session.cache.CacheManager;
++
++/**
++ * Stores the value of every unit sensor in the position ("sensor.&lt;id&gt;"); the first fuel sensor also fills the
++ * standard fuel level, so reports, charts and alerts use the calibrated litres.
++ */
++public class SensorHandler extends BasePositionHandler {
++
++    private final CacheManager cacheManager;
++    private final ObjectMapper objectMapper;
++
++    @Inject
++    public SensorHandler(CacheManager cacheManager, ObjectMapper objectMapper) {
++        this.cacheManager = cacheManager;
++        this.objectMapper = objectMapper;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        Device device = cacheManager.getObject(Device.class, position.getDeviceId());
++        boolean fuelSet = false;
++        for (Sensor sensor : SensorConfig.parse(objectMapper, device)) {
++            Double value = sensor.compute(position);
++            if (value != null) {
++                position.set(sensor.getKey(), Math.round(value * 100) / 100.0);
++                if (!fuelSet && Sensor.TYPE_FUEL.equals(sensor.getType())) {
++                    position.set(Position.KEY_FUEL_LEVEL, Math.round(value * 100) / 100.0);
++                    fuelSet = true;
++                }
++            }
++        }
++        callback.processed(false);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/events/FuelSensorEventHandler.java b/src/main/java/org/traccar/handler/events/FuelSensorEventHandler.java
+new file mode 100644
+index 0000000..32ab8c5
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/FuelSensorEventHandler.java
+@@ -0,0 +1,115 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.sensor.FuelAnalyzer;
++import org.traccar.sensor.Sensor;
++import org.traccar.sensor.SensorConfig;
++import org.traccar.session.cache.CacheManager;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.LinkedList;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Live fuel fill and drain alerts from the unit fuel sensors. Keeps the recent levels of each sensor in memory, runs
++ * the same analysis as the fuel report and raises deviceFuelIncrease / deviceFuelDrop once a change is confirmed.
++ */
++public class FuelSensorEventHandler extends BaseEventHandler {
++
++    static final int MAX_SAMPLES = 2000;
++    static final long MAX_AGE = 24 * 60 * 60 * 1000L;
++
++    private final CacheManager cacheManager;
++    private final ObjectMapper objectMapper;
++
++    private final Map<String, State> states = new ConcurrentHashMap<>();
++
++    private static final class State {
++        private final LinkedList<FuelAnalyzer.Sample> samples = new LinkedList<>();
++        private long lastReported;
++    }
++
++    @Inject
++    public FuelSensorEventHandler(CacheManager cacheManager, ObjectMapper objectMapper) {
++        this.cacheManager = cacheManager;
++        this.objectMapper = objectMapper;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        Device device = cacheManager.getObject(Device.class, position.getDeviceId());
++        if (device == null || !PositionUtil.isLatest(cacheManager, position)) {
++            return;
++        }
++        for (Sensor sensor : SensorConfig.fuelSensors(objectMapper, device)) {
++            Double value = sensor.compute(position);
++            if (value == null) {
++                continue;
++            }
++            for (Event event : update(device.getId(), sensor, position, value)) {
++                callback.eventDetected(event);
++            }
++        }
++    }
++
++    List<Event> update(long deviceId, Sensor sensor, Position position, double value) {
++        long time = position.getFixTime().getTime();
++        State state = states.computeIfAbsent(deviceId + "/" + sensor.getId(), key -> {
++            State created = new State();
++            created.lastReported = time;
++            return created;
++        });
++        List<Event> events = new ArrayList<>();
++        synchronized (state) {
++            if (!state.samples.isEmpty() && state.samples.getLast().time() >= time) {
++                return events;
++            }
++            state.samples.add(new FuelAnalyzer.Sample(
++                    time, value, UnitsConverter.kphFromKnots(position.getSpeed()),
++                    position.getLatitude(), position.getLongitude(), position.getId()));
++            while (state.samples.size() > MAX_SAMPLES || state.samples.getFirst().time() < time - MAX_AGE) {
++                state.samples.removeFirst();
++            }
++            for (FuelAnalyzer.Change change : FuelAnalyzer.analyze(state.samples, sensor, false).changes()) {
++                if (change.time() > state.lastReported) {
++                    state.lastReported = change.time();
++                    Event event = new Event(FuelAnalyzer.FILL.equals(change.type())
++                            ? Event.TYPE_DEVICE_FUEL_INCREASE : Event.TYPE_DEVICE_FUEL_DROP, position);
++                    event.setEventTime(new Date(change.time()));
++                    if (change.positionId() > 0) {
++                        event.setPositionId(change.positionId());
++                    }
++                    event.set("sensor", sensor.getName());
++                    event.set("before", Math.round(change.before() * 10) / 10.0);
++                    event.set("after", Math.round(change.after() * 10) / 10.0);
++                    event.set("amount", Math.round(Math.abs(change.amount()) * 10) / 10.0);
++                    events.add(event);
++                }
++            }
++        }
++        return events;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/sensor/FuelAnalyzer.java b/src/main/java/org/traccar/sensor/FuelAnalyzer.java
+new file mode 100644
+index 0000000..b36d38d
+--- /dev/null
++++ b/src/main/java/org/traccar/sensor/FuelAnalyzer.java
+@@ -0,0 +1,164 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.sensor;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++
++/**
++ * Finds fuel fills and drains in a fuel level series. Levels are first smoothed with a median filter, changes are
++ * only searched while the unit is stopped (when the sensor asks for it) and a change counts only when it still holds
++ * after the wait time, so tank sloshing on curves, slopes or braking is not reported. The reference level follows the
++ * unit while it moves and ages out after a while when stopped, so idling consumption is not taken as a drain. A change
++ * is closed once the level stops rising or falling; with live data (incomplete) it stays pending until then.
++ */
++public final class FuelAnalyzer {
++
++    public static final String FILL = "fill";
++    public static final String DRAIN = "drain";
++
++    static final long REFERENCE_AGE = 30 * 60 * 1000L;
++
++    private FuelAnalyzer() {
++    }
++
++    public record Sample(long time, double value, double speed, double latitude, double longitude, long positionId) {
++    }
++
++    public record Change(
++            String type, long time, long endTime, double before, double after, double amount,
++            double latitude, double longitude, long positionId) {
++    }
++
++    public record Result(double[] smoothed, List<Change> changes, boolean pending) {
++
++        public double filled() {
++            return changes.stream().filter(change -> FILL.equals(change.type())).mapToDouble(Change::amount).sum();
++        }
++
++        public double drained() {
++            return -changes.stream().filter(change -> DRAIN.equals(change.type())).mapToDouble(Change::amount).sum();
++        }
++
++        public double start() {
++            return smoothed.length > 0 ? smoothed[0] : 0;
++        }
++
++        public double end() {
++            return smoothed.length > 0 ? smoothed[smoothed.length - 1] : 0;
++        }
++
++        public double consumed() {
++            return Math.max(0, start() - end() + filled() - drained());
++        }
++
++    }
++
++    static double[] smooth(List<Sample> samples, int window) {
++        int half = Math.max(0, window) / 2;
++        double[] result = new double[samples.size()];
++        for (int i = 0; i < samples.size(); i++) {
++            int from = Math.max(0, i - half);
++            int to = Math.min(samples.size() - 1, i + half);
++            double[] values = new double[to - from + 1];
++            for (int j = from; j <= to; j++) {
++                values[j - from] = samples.get(j).value();
++            }
++            Arrays.sort(values);
++            int middle = values.length / 2;
++            result[i] = values.length % 2 == 1 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
++        }
++        return result;
++    }
++
++    public static Result analyze(List<Sample> samples, Sensor sensor) {
++        return analyze(samples, sensor, true);
++    }
++
++    public static Result analyze(List<Sample> samples, Sensor sensor, boolean complete) {
++        int count = samples.size();
++        double[] smoothed = smooth(samples, sensor.getFilter());
++        boolean[] moving = new boolean[count];
++        for (int i = 0; i < count; i++) {
++            moving[i] = sensor.getStoppedOnly() && samples.get(i).speed() > sensor.getSpeedThreshold();
++        }
++        List<Change> changes = new ArrayList<>();
++        if (count == 0) {
++            return new Result(smoothed, changes, false);
++        }
++
++        long wait = Math.max(0, sensor.getWaitTime()) * 1000L;
++        // the reference only ages out on a small drift, never in the middle of a change
++        double drift = Math.min(
++                sensor.getMinFill() > 0 ? sensor.getMinFill() : Double.MAX_VALUE,
++                sensor.getMinDrain() > 0 ? sensor.getMinDrain() : Double.MAX_VALUE) / 4;
++        double reference = smoothed[0];
++        long referenceTime = samples.get(0).time();
++        boolean pending = false;
++        int i = 1;
++        while (i < count) {
++            Sample sample = samples.get(i);
++            if (moving[i]) {
++                reference = smoothed[i];
++                referenceTime = sample.time();
++                i += 1;
++                continue;
++            }
++            double difference = smoothed[i] - reference;
++            boolean fill = sensor.getMinFill() > 0 && difference >= sensor.getMinFill();
++            boolean drain = sensor.getMinDrain() > 0 && -difference >= sensor.getMinDrain();
++            if (!fill && !drain) {
++                if (sample.time() - referenceTime > REFERENCE_AGE && Math.abs(difference) < drift) {
++                    reference = smoothed[i];
++                    referenceTime = sample.time();
++                }
++                i += 1;
++                continue;
++            }
++
++            int end = i;
++            while (end < count && samples.get(end).time() < sample.time() + wait) {
++                end += 1;
++            }
++            if (end >= count) {
++                pending = true;
++                break;
++            }
++            double threshold = fill ? sensor.getMinFill() : sensor.getMinDrain();
++            double step = threshold * 0.05;
++            while (end + 1 < count && !moving[end + 1]
++                    && (fill ? smoothed[end + 1] > smoothed[end] + step : smoothed[end + 1] < smoothed[end] - step)) {
++                end += 1;
++            }
++            if (!complete && end + 1 >= count) {
++                pending = true;
++                break;
++            }
++            double amount = smoothed[end] - reference;
++            if (fill ? amount >= threshold : -amount >= threshold) {
++                changes.add(new Change(
++                        fill ? FILL : DRAIN, sample.time(), samples.get(end).time(), reference, smoothed[end], amount,
++                        sample.latitude(), sample.longitude(), sample.positionId()));
++                reference = smoothed[end];
++                referenceTime = samples.get(end).time();
++                i = end + 1;
++            } else {
++                i += 1;
++            }
++        }
++        return new Result(smoothed, changes, pending);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/sensor/Sensor.java b/src/main/java/org/traccar/sensor/Sensor.java
+new file mode 100644
+index 0000000..86ba838
+--- /dev/null
++++ b/src/main/java/org/traccar/sensor/Sensor.java
+@@ -0,0 +1,234 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.sensor;
++
++import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.List;
++
++/**
++ * A unit sensor, GPS-Server / WOX style: reads a position attribute (io201, adc1, fuel...) and turns it into a value
++ * with a calibration table (piecewise linear) or a multiplier and offset. Fuel sensors also carry the fill and drain
++ * detection settings.
++ */
++@JsonIgnoreProperties(ignoreUnknown = true)
++public class Sensor {
++
++    public static final String TYPE_FUEL = "fuel";
++    public static final String TYPE_BINARY = "binary";
++
++    public static final String ATTRIBUTE_PREFIX = "sensor.";
++
++    private String id;
++    private String name;
++    private String type = "numeric";
++    private String source;
++    private List<double[]> calibration = new ArrayList<>();
++    private double multiplier = 1;
++    private double offset;
++    private String unit;
++    private boolean invert;
++    private double tankCapacity;
++    private double minFill = 10;
++    private double minDrain = 10;
++    private int waitTime = 120;
++    private int filter = 5;
++    private boolean stoppedOnly = true;
++    private double speedThreshold = 5;
++
++    public String getId() {
++        return id;
++    }
++
++    public void setId(String id) {
++        this.id = id;
++    }
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    public String getType() {
++        return type;
++    }
++
++    public void setType(String type) {
++        this.type = type;
++    }
++
++    public String getSource() {
++        return source;
++    }
++
++    public void setSource(String source) {
++        this.source = source;
++    }
++
++    public List<double[]> getCalibration() {
++        return calibration;
++    }
++
++    public void setCalibration(List<double[]> calibration) {
++        this.calibration = calibration != null ? calibration : new ArrayList<>();
++    }
++
++    public double getMultiplier() {
++        return multiplier;
++    }
++
++    public void setMultiplier(double multiplier) {
++        this.multiplier = multiplier;
++    }
++
++    public double getOffset() {
++        return offset;
++    }
++
++    public void setOffset(double offset) {
++        this.offset = offset;
++    }
++
++    public String getUnit() {
++        return unit;
++    }
++
++    public void setUnit(String unit) {
++        this.unit = unit;
++    }
++
++    public boolean getInvert() {
++        return invert;
++    }
++
++    public void setInvert(boolean invert) {
++        this.invert = invert;
++    }
++
++    public double getTankCapacity() {
++        return tankCapacity;
++    }
++
++    public void setTankCapacity(double tankCapacity) {
++        this.tankCapacity = tankCapacity;
++    }
++
++    public double getMinFill() {
++        return minFill;
++    }
++
++    public void setMinFill(double minFill) {
++        this.minFill = minFill;
++    }
++
++    public double getMinDrain() {
++        return minDrain;
++    }
++
++    public void setMinDrain(double minDrain) {
++        this.minDrain = minDrain;
++    }
++
++    public int getWaitTime() {
++        return waitTime;
++    }
++
++    public void setWaitTime(int waitTime) {
++        this.waitTime = waitTime;
++    }
++
++    public int getFilter() {
++        return filter;
++    }
++
++    public void setFilter(int filter) {
++        this.filter = filter;
++    }
++
++    public boolean getStoppedOnly() {
++        return stoppedOnly;
++    }
++
++    public void setStoppedOnly(boolean stoppedOnly) {
++        this.stoppedOnly = stoppedOnly;
++    }
++
++    public double getSpeedThreshold() {
++        return speedThreshold;
++    }
++
++    public void setSpeedThreshold(double speedThreshold) {
++        this.speedThreshold = speedThreshold;
++    }
++
++    public String getKey() {
++        return ATTRIBUTE_PREFIX + id;
++    }
++
++    public static Double readRaw(Position position, String source) {
++        if (source == null || !position.hasAttribute(source)) {
++            return null;
++        }
++        Object value = position.getAttributes().get(source);
++        if (value instanceof Number number) {
++            return number.doubleValue();
++        } else if (value instanceof Boolean bool) {
++            return bool ? 1.0 : 0.0;
++        } else if (value instanceof String string) {
++            try {
++                return Double.parseDouble(string);
++            } catch (NumberFormatException e) {
++                return null;
++            }
++        }
++        return null;
++    }
++
++    public Double convert(double raw) {
++        if (TYPE_BINARY.equals(type)) {
++            return (raw != 0) != invert ? 1.0 : 0.0;
++        }
++        List<double[]> points = calibration.stream()
++                .filter(point -> point != null && point.length >= 2)
++                .sorted(Comparator.comparingDouble(point -> point[0]))
++                .toList();
++        if (points.size() >= 2) {
++            if (raw <= points.get(0)[0]) {
++                return points.get(0)[1];
++            }
++            for (int i = 1; i < points.size(); i++) {
++                double[] low = points.get(i - 1);
++                double[] high = points.get(i);
++                if (raw <= high[0]) {
++                    double span = high[0] - low[0];
++                    return span == 0 ? high[1] : low[1] + (raw - low[0]) * (high[1] - low[1]) / span;
++                }
++            }
++            return points.get(points.size() - 1)[1];
++        }
++        return raw * multiplier + offset;
++    }
++
++    public Double compute(Position position) {
++        Double raw = readRaw(position, source);
++        return raw != null ? convert(raw) : null;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/sensor/SensorConfig.java b/src/main/java/org/traccar/sensor/SensorConfig.java
+new file mode 100644
+index 0000000..b0012a6
+--- /dev/null
++++ b/src/main/java/org/traccar/sensor/SensorConfig.java
+@@ -0,0 +1,72 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.sensor;
++
++import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.model.Device;
++
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Sensors of a unit, kept as a JSON array in the "sensors" device attribute.
++ */
++public final class SensorConfig {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(SensorConfig.class);
++
++    public static final String ATTRIBUTE = "sensors";
++
++    private static final Map<String, List<Sensor>> CACHE = new ConcurrentHashMap<>();
++
++    private SensorConfig() {
++    }
++
++    public static List<Sensor> parse(ObjectMapper objectMapper, Device device) {
++        String json = device != null ? device.getString(ATTRIBUTE) : null;
++        if (json == null || json.isBlank()) {
++            return List.of();
++        }
++        List<Sensor> cached = CACHE.get(json);
++        if (cached != null) {
++            return cached;
++        }
++        try {
++            List<Sensor> sensors = objectMapper.readValue(json, new TypeReference<List<Sensor>>() { }).stream()
++                    .filter(Objects::nonNull)
++                    .filter(sensor -> sensor.getId() != null && sensor.getSource() != null)
++                    .toList();
++            if (CACHE.size() > 10000) {
++                CACHE.clear();
++            }
++            CACHE.put(json, sensors);
++            return sensors;
++        } catch (Exception e) {
++            LOGGER.warn("Invalid sensors of device {}", device.getId(), e);
++            return List.of();
++        }
++    }
++
++    public static List<Sensor> fuelSensors(ObjectMapper objectMapper, Device device) {
++        return parse(objectMapper, device).stream()
++                .filter(sensor -> Sensor.TYPE_FUEL.equals(sensor.getType()))
++                .toList();
++    }
++
++}
+diff --git a/src/test/java/org/traccar/sensor/FuelAnalyzerTest.java b/src/test/java/org/traccar/sensor/FuelAnalyzerTest.java
+new file mode 100644
+index 0000000..d856d85
+--- /dev/null
++++ b/src/test/java/org/traccar/sensor/FuelAnalyzerTest.java
+@@ -0,0 +1,114 @@
++package org.traccar.sensor;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class FuelAnalyzerTest {
++
++    private final List<FuelAnalyzer.Sample> samples = new ArrayList<>();
++    private long time;
++
++    private void add(int count, double value, double speed) {
++        for (int i = 0; i < count; i++) {
++            time += 30_000;
++            samples.add(new FuelAnalyzer.Sample(time, value, speed, 0, 0, samples.size() + 1));
++        }
++    }
++
++    private Sensor sensor() {
++        Sensor sensor = new Sensor();
++        sensor.setId("t1");
++        sensor.setType(Sensor.TYPE_FUEL);
++        sensor.setMinFill(20);
++        sensor.setMinDrain(15);
++        sensor.setWaitTime(120);
++        return sensor;
++    }
++
++    @Test
++    public void testCalibration() {
++        Sensor sensor = sensor();
++        sensor.setCalibration(List.of(new double[] {0, 0}, new double[] {4095, 400}, new double[] {2000, 180}));
++        assertEquals(0, sensor.convert(-5));
++        assertEquals(90, sensor.convert(1000), 0.01);
++        assertEquals(400, sensor.convert(5000));
++        sensor.setCalibration(null);
++        sensor.setMultiplier(0.1);
++        assertEquals(12.3, sensor.convert(123), 0.0001);
++    }
++
++    @Test
++    public void testFillAndDrainWhileStopped() {
++        add(10, 100, 60);
++        add(5, 100, 0);
++        add(10, 160, 0);
++        add(10, 160, 50);
++        add(5, 160, 0);
++        add(10, 130, 0);
++        add(5, 130, 40);
++        var result = FuelAnalyzer.analyze(samples, sensor());
++        assertEquals(2, result.changes().size());
++        assertEquals(FuelAnalyzer.FILL, result.changes().get(0).type());
++        assertEquals(60, result.changes().get(0).amount(), 0.01);
++        assertEquals(FuelAnalyzer.DRAIN, result.changes().get(1).type());
++        assertEquals(-30, result.changes().get(1).amount(), 0.01);
++        assertEquals(60, result.filled(), 0.01);
++        assertEquals(30, result.drained(), 0.01);
++    }
++
++    @Test
++    public void testIgnoredChanges() {
++        add(10, 100, 0);
++        add(3, 70, 0);
++        add(10, 100, 0);
++        add(10, 100, 60);
++        add(2, 140, 60);
++        add(10, 100, 60);
++        add(5, 100, 0);
++        add(10, 92, 0);
++        var result = FuelAnalyzer.analyze(samples, sensor());
++        assertTrue(result.changes().isEmpty());
++    }
++
++    @Test
++    public void testPendingUntilWaitTime() {
++        add(10, 100, 0);
++        add(2, 150, 0);
++        var result = FuelAnalyzer.analyze(samples, sensor());
++        assertTrue(result.changes().isEmpty());
++        assertTrue(result.pending());
++        add(5, 150, 0);
++        assertEquals(1, FuelAnalyzer.analyze(samples, sensor()).changes().size());
++    }
++
++    @Test
++    public void testLiveWaitsForGradualFill() {
++        add(10, 100, 0);
++        for (int i = 1; i <= 6; i++) {
++            add(1, 100 + i * 30, 0);
++        }
++        assertTrue(FuelAnalyzer.analyze(samples, sensor(), false).changes().isEmpty());
++        add(6, 280, 0);
++        var changes = FuelAnalyzer.analyze(samples, sensor(), false).changes();
++        assertEquals(1, changes.size());
++        assertEquals(180, changes.get(0).amount(), 0.01);
++    }
++
++    @Test
++    public void testSlowDrainAfterLongStop() {
++        add(70, 100, 0);
++        for (int i = 1; i <= 8; i++) {
++            add(1, 100 - i * 5, 0);
++        }
++        add(10, 60, 0);
++        var changes = FuelAnalyzer.analyze(samples, sensor()).changes();
++        assertEquals(1, changes.size());
++        assertEquals(-40, changes.get(0).amount(), 0.01);
++    }
++
++}

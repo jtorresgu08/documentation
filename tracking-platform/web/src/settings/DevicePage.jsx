@@ -26,6 +26,9 @@ import useSettingsStyles from './common/useSettingsStyles';
 import QrCodeDialog from '../common/components/QrCodeDialog';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import DeviceCameraAccordion from './components/DeviceCameraAccordion';
+import DeviceInfoAccordion from './components/DeviceInfoAccordion';
+import DeviceSensorsAccordion from './components/DeviceSensorsAccordion';
+import { isHiddenAttribute } from '../common/util/sensors';
 
 const DevicePage = () => {
   const { classes } = useSettingsStyles();
@@ -177,14 +180,16 @@ const DevicePage = () => {
               </AccordionDetails>
             </Accordion>
           )}
+          <DeviceInfoAccordion item={item} setItem={setItem} />
+          <DeviceSensorsAccordion item={item} setItem={setItem} />
           <DeviceCameraAccordion item={item} setItem={setItem} />
           <EditAttributesAccordion
-            attributes={Object.fromEntries(Object.entries(item.attributes || {}).filter(([key]) => !key.startsWith('dashcam.')))}
+            attributes={Object.fromEntries(Object.entries(item.attributes || {}).filter(([key]) => !isHiddenAttribute(key)))}
             setAttributes={(attributes) => setItem({
               ...item,
               attributes: {
                 ...attributes,
-                ...Object.fromEntries(Object.entries(item.attributes || {}).filter(([key]) => key.startsWith('dashcam.'))),
+                ...Object.fromEntries(Object.entries(item.attributes || {}).filter(([key]) => isHiddenAttribute(key))),
               },
             })}
             definitions={{ ...commonDeviceAttributes, ...deviceAttributes }}
