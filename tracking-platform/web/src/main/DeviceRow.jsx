@@ -17,7 +17,8 @@ import EditIcon from '@mui/icons-material/Edit';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import dayjs from 'dayjs';
 import { devicesActions } from '../store';
-import { formatAlarm } from '../common/util/formatter';
+import { formatAlarm, formatBoolean } from '../common/util/formatter';
+import EngineIcon from '../resources/images/data/engine.svg?react';
 import { speedFromKnots, speedUnitString } from '../common/util/converter';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useAdministrator, useDeviceReadonly, useRestriction } from '../common/util/permissions';
@@ -69,6 +70,10 @@ const useStyles = makeStyles()((theme) => ({
     gap: theme.spacing(0.75),
     marginLeft: theme.spacing(1),
     whiteSpace: 'nowrap',
+  },
+  engine: {
+    flexShrink: 0,
+    marginLeft: theme.spacing(0.5),
   },
   dot: {
     width: 12,
@@ -193,6 +198,16 @@ export const DeviceRow = ({ row, data }) => {
       {position?.attributes.alarm && (
         <Tooltip title={`${t('eventAlarm')}: ${formatAlarm(position.attributes.alarm, t)}`}>
           <ErrorIcon fontSize="small" color="error" />
+        </Tooltip>
+      )}
+      {position?.attributes.hasOwnProperty('ignition') && (
+        <Tooltip title={`${t('positionIgnition')}: ${formatBoolean(position.attributes.ignition, t)}`}>
+          <EngineIcon
+            width={20}
+            height={20}
+            className={classes.engine}
+            style={{ color: position.attributes.ignition ? theme.palette.success.main : theme.palette.neutral.main }}
+          />
         </Tooltip>
       )}
       <div className={classes.speed}>
