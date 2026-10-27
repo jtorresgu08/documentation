@@ -104,6 +104,9 @@ const statusOf = (device, position) => {
   if (isExpired(device)) {
     return { color: 'error', key: 'deviceExpired' };
   }
+  if (!device.lastUpdate) {
+    return { color: 'neutral', key: 'deviceNoData' };
+  }
   if (device.status === 'offline') {
     return { color: 'error', key: 'deviceDisconnected', since: device.lastUpdate };
   }
