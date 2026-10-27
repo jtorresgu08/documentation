@@ -79,6 +79,11 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   Se actualiza cada 10 segundos.
 - El servidor que se muestra en las instrucciones es el atributo `deviceHost` de *Configuración del servidor*
   (por defecto, el dominio del panel).
+- **Teltonika FMB y plataforma FT** (FTC920, FTC921, FTC961, FTC965, FTC968, FTM880…; parche `0006`): todos usan
+  el protocolo `teltonika` en el **puerto 5027** (Codec 8 / 8 Extended). El catálogo guarda el código exacto del
+  modelo (p. ej. `FTC920`), que es lo que activa en el servidor los parámetros por modelo: batería %, ICCID,
+  entradas analógicas, OBD/CAN, temperaturas, etc. En los FT el **voltaje externo llega en el AVL 800** (mV, 4 bytes)
+  en lugar del 66, y se muestra como *Alimentación*. En unidades ya creadas, basta con poner el código en *Modelo*.
 - El **superadministrador es la raíz de la jerarquía** (parche `0005`): los usuarios que crea quedan bajo él, así
   que ve todas las unidades en el mapa y en vivo, no solo en los listados de administración.
 
@@ -142,6 +147,8 @@ cd web && npm ci && npm start                          # http://localhost:3000
 python3 server/tests/test_hierarchy.py
 python3 server/tests/test_dashcam.py foto.jpg clip.mp4 cabina.jpg
 python3 server/tests/test_jimi.py clip.mp4 cabina.jpg
+python3 server/tests/test_status.py
+python3 server/tests/test_teltonika_ft.py
 ```
 
 ## Producción

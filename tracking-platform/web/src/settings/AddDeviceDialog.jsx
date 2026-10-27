@@ -106,7 +106,7 @@ const AddDeviceDialog = ({
             name: entry.name,
             uniqueId: entry.uniqueId,
             phone: bulk ? null : item.phone || null,
-            model: model ? `${model.brand} ${model.model}` : null,
+            model: model ? model.deviceModel || `${model.brand} ${model.model}` : null,
             category: item.category,
             groupId: item.groupId || 0,
             disabled: !item.active,

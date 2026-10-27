@@ -1,0 +1,60 @@
+diff --git a/src/main/java/org/traccar/protocol/TeltonikaProtocolDecoder.java b/src/main/java/org/traccar/protocol/TeltonikaProtocolDecoder.java
+index 53ea83f..66bde68 100644
+--- a/src/main/java/org/traccar/protocol/TeltonikaProtocolDecoder.java
++++ b/src/main/java/org/traccar/protocol/TeltonikaProtocolDecoder.java
+@@ -187,16 +187,33 @@ public class TeltonikaProtocolDecoder extends BaseProtocolDecoder {
+         };
+     }
+ 
++    private static final Set<String> FMB_MODELS = Set.of(
++            "FMB001", "FMC001", "FMB010", "FMB002", "FMB020", "FMB003", "FMB110", "FMB120", "FMB122", "FMB125",
++            "FMB130", "FMB140", "FMU125", "FMB900", "FMB920", "FMB962", "FMB964", "FM3001", "FMB202", "FMB204",
++            "FMB206", "FMT100", "MTB100", "FMP100", "MSP500", "FMC125", "FMM125", "FMU130", "FMC130", "FMM130",
++            "FMB150", "FMC150", "FMM150", "FMC920");
++
++    // FT platform (FTC920, FTC961, FTM880...) keeps the FMB meaning of every AVL ID registered for FMB models;
++    // the IDs it redefines (70, 155-157, 358-360, 641, 800) are not among them
++    private static final Set<String> FT_MODELS = Set.of();
++
++    private static boolean modelMatches(Set<String> models, String model) {
++        if (models == null) {
++            return true;
++        }
++        if (model == null) {
++            return false;
++        }
++        boolean ft = model.startsWith("FT");
++        return models.contains(model) || ft && (models == FMB_MODELS || models == FT_MODELS);
++    }
++
+     private static void register(int id, Set<String> models, BiConsumer<Position, ByteBuf> handler) {
+         PARAMETERS.computeIfAbsent(id, key -> new HashMap<>()).put(models, handler);
+     }
+ 
+     static {
+-        var fmbXXX = Set.of(
+-                "FMB001", "FMC001", "FMB010", "FMB002", "FMB020", "FMB003", "FMB110", "FMB120", "FMB122", "FMB125",
+-                "FMB130", "FMB140", "FMU125", "FMB900", "FMB920", "FMB962", "FMB964", "FM3001", "FMB202", "FMB204",
+-                "FMB206", "FMT100", "MTB100", "FMP100", "MSP500", "FMC125", "FMM125", "FMU130", "FMC130", "FMM130",
+-                "FMB150", "FMC150", "FMM150", "FMC920");
++        var fmbXXX = FMB_MODELS;
+ 
+         register(1, null, (p, b) -> p.set(Position.PREFIX_IN + 1, b.readUnsignedByte() > 0));
+         register(2, null, (p, b) -> p.set(Position.PREFIX_IN + 2, b.readUnsignedByte() > 0));
+@@ -224,6 +241,7 @@ public class TeltonikaProtocolDecoder extends BaseProtocolDecoder {
+         register(43, fmbXXX, (p, b) -> p.set("milDistance", b.readUnsignedShort()));
+         register(57, fmbXXX, (p, b) -> p.set("hybridBatteryLevel", b.readByte()));
+         register(66, null, (p, b) -> p.set(Position.KEY_POWER, b.readUnsignedShort() * 0.001));
++        register(800, FT_MODELS, (p, b) -> p.set(Position.KEY_POWER, b.readUnsignedInt() * 0.001));
+         register(67, null, (p, b) -> p.set(Position.KEY_BATTERY, b.readUnsignedShort() * 0.001));
+         register(68, fmbXXX, (p, b) -> p.set("batteryCurrent", b.readUnsignedShort() * 0.001));
+         register(72, fmbXXX, (p, b) -> p.set(Position.PREFIX_TEMP + 1, b.readInt() * 0.1));
+@@ -334,7 +352,7 @@ public class TeltonikaProtocolDecoder extends BaseProtocolDecoder {
+             int index = buf.readerIndex();
+             boolean decoded = false;
+             for (var entry : PARAMETERS.getOrDefault(id, new HashMap<>()).entrySet()) {
+-                if (entry.getKey() == null || model != null && entry.getKey().contains(model)) {
++                if (modelMatches(entry.getKey(), model)) {
+                     entry.getValue().accept(position, buf);
+                     decoded = true;
+                     break;
