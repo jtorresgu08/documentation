@@ -46,7 +46,8 @@ ufw allow 443/tcp
 ufw allow 443/udp
 ufw allow "${GPS_PORTS}/tcp"
 ufw allow "${GPS_PORTS}/udp"
-ufw allow 5261/tcp   # adjuntos ADAS/DMS de dashcams
+ufw allow 5261/tcp   # adjuntos ADAS/DMS de dashcams JT808
+ufw allow 5262/tcp   # subida HTTP de archivos de dashcams Jimi GT06
 ufw allow "${VIDEO_PORT:-7611}/tcp"   # video JT/T 1078 (si instalas el servidor de video)
 ufw --force enable
 

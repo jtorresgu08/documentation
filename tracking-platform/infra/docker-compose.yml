@@ -48,8 +48,10 @@ services:
     ports:
       - "${GPS_PORTS:-5001-5100}:${GPS_PORTS:-5001-5100}/tcp"
       - "${GPS_PORTS:-5001-5100}:${GPS_PORTS:-5001-5100}/udp"
-      # adjuntos (fotos y videos) de las alarmas ADAS / DMS de las dashcams
+      # adjuntos (fotos y videos) de las alarmas ADAS / DMS de las dashcams JT808
       - "5261:5261/tcp"
+      # subida HTTP de fotos y videos de las dashcams Jimi GT06 (JC400 / JC261)
+      - "5262:5262/tcp"
     networks: [internal]
     logging:
       driver: json-file

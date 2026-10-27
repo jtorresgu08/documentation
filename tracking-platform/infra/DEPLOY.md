@@ -58,7 +58,14 @@ Cada protocolo usa un puerto (lista completa en https://www.traccar.org/devices/
 | teltonika | 5027 | Teltonika FMB/FMC |
 | osmand | 5055 | App móvil (Traccar Client / app propia) |
 | gl200 | 5004 | Queclink GV |
-| huabao (JT808) | 5015 | Dashcams y MDVR JT/T 808 / 1078 (Jimi, Howen, Streamax en modo JT808, genéricos) |
+| huabao (JT808) | 5015 | Dashcams y MDVR JT/T 808 / 1078 (Jimi JC450/JC181/JC371, Howen, Streamax en modo JT808, genéricos) |
+| jt808attach | 5261 | Fotos y videos de alarmas ADAS/DMS de las cámaras JT808 (los pide el servidor) |
+| jimiupload | 5262 | Fotos y videos de eventos de las dashcams Jimi GT06 (JC400 / JC261), por HTTP |
+
+**Los puertos van por protocolo, no por marca.** Todos los equipos que hablan el mismo protocolo comparten
+puerto: un rastreador Concox GT06 y una dashcam Jimi JC400 usan ambos el 5023, y una JC450 de Jimi, una Howen o
+un MDVR genérico JT808 usan todos el 5015. La marca y el modelo solo cambian qué funciones tiene cada equipo, y
+eso se configura por dispositivo (sección *Cámara / MDVR*).
 
 Configura el equipo con `IP o dominio : puerto` y da de alta el IMEI como *Identificador* del dispositivo.
 Si usas puertos fuera de `GPS_PORTS`, amplía el rango en `.env` y en el firewall (`ufw allow 5200:5300/tcp`).
@@ -82,6 +89,42 @@ Configuración de la cámara (por SMS, app o software del fabricante):
 2. El "número de teléfono" o "ID de terminal" que configures (12 dígitos, p. ej. `013912345678`) es el
    **Identificador** del dispositivo en la plataforma.
 3. Activa ADAS/DMS y la "subida de adjuntos de alarma" (en algunas marcas: *active safety*, *Su-standard*).
+
+### Cámaras y canales por dispositivo
+
+En *Dispositivos > editar > Cámara / MDVR* se indica para cada equipo:
+
+- **Tipo**: dashcam o MDVR (solo estos equipos aparecen en el menú *Cámaras*).
+- **Cantidad de canales**: de 1 a 12. La pantalla de video en vivo muestra un recuadro por canal.
+- **Protocolo**: automático (según el puerto por el que se conecta), JT/T 808 / 1078 o Jimi GT06.
+- **Nombres de los canales** (opcional), p. ej. `Frontal, Cabina, Trasera, Puerta`.
+- **Dirección del video en vivo** (opcional) si ese equipo usa un servidor de video distinto.
+
+### Dashcams Jimi con protocolo GT06 (JC400, JC261)
+
+Estas cámaras envían el GPS y las alarmas por TCP con el protocolo GT06 y suben las fotos y videos de cada evento
+por HTTP. Configuración por SMS (o con la herramienta de Jimi), con la IP pública del VPS:
+
+```
+SERVER,1,IP_DEL_VPS,5023,0#
+UPLOAD,http://IP_DEL_VPS:5262/upload/IMEI_DEL_EQUIPO
+UPLOADSW,SOS,ON          (activa la subida de video por tipo de evento: SOS, choque, frenado…)
+RSERVICE,rtmp://IP_DEL_VPS:1935/live     (servidor de video en vivo, ver abajo)
+```
+
+La plataforma vincula cada archivo con su alarma: la alarma JC400 trae la lista de archivos del evento
+(`EVENT_<IMEI>_..._F_1.mp4` frontal, `..._I_2.mp4` cabina) y el servidor los asocia al recibirlos.
+
+El video en vivo y la foto bajo demanda se envían como comandos de texto. Por defecto la plataforma usa
+`RTMP,ON,OUT` / `RTMP,ON,IN` (canal 1 frontal, canal 2 cabina), `RTMP,OFF,...` y `PICTURE,...`. **Verifica estos
+textos con la lista de comandos de tu firmware**: se pueden cambiar por dispositivo en *Cámara / MDVR*. Las Jimi
+transmiten por RTMP, así que necesitan un servidor que lo convierta a HTTP-FLV, por ejemplo
+[SRS](https://github.com/ossrs/srs) (código abierto, imagen Docker `ossrs/srs`). En *Configuración del servidor >
+Atributos*, `dashcam.playUrlJimi` define la dirección de reproducción, p. ej.
+`https://tu-dominio/live/{channel}/{uniqueId}.flv`.
+
+Las Jimi JC450, JC181, JC371, JC182 y JC451 usan JT/T 808 / 1078: van al puerto 5015 como el resto de cámaras
+JT808.
 
 ### Video en vivo
 
@@ -114,7 +157,8 @@ python3 server/tests/dashcam_simulator.py --host IP_DEL_VPS --port 5015 --phone 
     --image foto.jpg --video clip.mp4 --alarm adas:1 --alarm dms:2
 ```
 
-Da de alta antes el dispositivo con identificador `013912345678`.
+Da de alta antes el dispositivo con identificador `013912345678`. Para las Jimi GT06 está
+`server/tests/jimi_simulator.py` (`--imei 862798052429087 --front clip.mp4 --cabin cabina.jpg`).
 
 ## 7. Copias de seguridad
 

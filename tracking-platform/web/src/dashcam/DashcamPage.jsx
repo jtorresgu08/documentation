@@ -18,10 +18,18 @@ import { formatAlarm, formatTime } from '../common/util/formatter';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import usePersistedState from '../common/util/usePersistedState';
 import LivePlayer from './LivePlayer';
-
-const CHANNELS = [1, 2, 3, 4];
+import { buildCameraCommand, getCameraConfig } from '../common/util/dashcam';
 const PERIODS = { day: 1, week: 7, month: 30 };
 const DMS_ALARMS = ['fatigueDriving', 'phoneCall', 'smoking', 'distraction', 'driverAbnormal'];
+const ADAS_ALARMS = ['forwardCollision', 'laneDeparture', 'vehicleDistance', 'pedestrianCollision', 'frequentLaneChange',
+  'roadSignOverLimit', 'obstacle'];
+
+const alarmFamily = (alarm) => {
+  if (DMS_ALARMS.includes(alarm)) {
+    return 'DMS';
+  }
+  return ADAS_ALARMS.includes(alarm) ? 'ADAS' : null;
+};
 
 const mediaUrl = (device, file) => `/api/media/${device.uniqueId}/${file}`;
 
@@ -46,12 +54,23 @@ const MediaView = ({ device, item, large }) => (item.type === 'video' ? (
   />
 ));
 
-// Groups media events with the ADAS / DMS alarm that produced them (same alarm number)
+// Groups media events with the alarm that produced them: same alarm number (JT/T 808) or file listed in the
+// alarm (Jimi GT06 cameras report the event file names in the alarm and upload them over HTTP afterwards)
 const groupEvents = (events, positions) => {
   const groups = new Map();
+  const jimiFiles = new Map();
+  events.filter((event) => event.type === 'alarm').forEach((event) => {
+    const files = positions[event.positionId]?.attributes.eventFiles;
+    if (files) {
+      files.split(/[,;\s]+/).filter(Boolean).forEach((name) => jimiFiles.set(name, `jimi-${event.id}`));
+    }
+  });
   events.forEach((event) => {
     const position = positions[event.positionId] || { attributes: {} };
-    const key = position.attributes.alarmNumber || `media-${event.id}`;
+    const key = position.attributes.alarmNumber
+      || jimiFiles.get(position.attributes.eventFile)
+      || (event.type === 'alarm' && position.attributes.eventFiles ? `jimi-${event.id}` : null)
+      || `media-${event.id}`;
     const group = groups.get(key) || {
       key, time: event.eventTime, alarm: null, media: [], position,
     };
@@ -70,7 +89,8 @@ const groupEvents = (events, positions) => {
     groups.set(key, group);
   });
   return [...groups.values()]
-    .filter((group) => group.media.length || group.position.attributes.alarmAttachments)
+    .filter((group) => group.media.length || group.position.attributes.alarmAttachments
+      || group.position.attributes.eventFiles)
     .sort((a, b) => dayjs(b.time).valueOf() - dayjs(a.time).valueOf());
 };
 
@@ -78,8 +98,10 @@ const DashcamPage = () => {
   const t = useTranslation();
 
   const devices = useSelector((state) => state.devices.items);
+  const positions = useSelector((state) => state.session.positions);
   const selectedId = useSelector((state) => state.devices.selectedId);
-  const playUrl = useSelector((state) => state.session.server.attributes['dashcam.playUrl']);
+  const serverPlayUrl = useSelector((state) => state.session.server.attributes['dashcam.playUrl']);
+  const serverJimiPlayUrl = useSelector((state) => state.session.server.attributes['dashcam.playUrlJimi']);
 
   const [storedDeviceId, setDeviceId] = usePersistedState('dashcamDevice', null);
   const deviceId = storedDeviceId ?? selectedId;
@@ -89,9 +111,20 @@ const DashcamPage = () => {
   const [timestamp, setTimestamp] = useState(Date.now());
   const [open, setOpen] = useState(null);
   const [message, setMessage] = useState(null);
+  const [photoChannel, setPhotoChannel] = useState(1);
 
   const device = devices[deviceId];
-  const deviceOptions = useMemo(() => Object.values(devices).sort((a, b) => a.name.localeCompare(b.name)), [devices]);
+  const config = getCameraConfig(device, positions[deviceId]);
+  const playUrl = config.playUrl || (config.protocol === 'jimi' && serverJimiPlayUrl) || serverPlayUrl;
+  const channels = Array.from({ length: config.channels }, (_, index) => index + 1);
+  const channelLabel = (channel) => config.channelName(channel) || `${t('dashcamChannel')} ${channel}`;
+
+  // only devices configured as camera, unless none is configured yet
+  const deviceOptions = useMemo(() => {
+    const all = Object.values(devices).sort((a, b) => a.name.localeCompare(b.name));
+    const cameras = all.filter((item) => item.attributes?.['dashcam.kind']);
+    return cameras.length ? cameras : all;
+  }, [devices]);
 
   useEffectAsync(async () => {
     if (!device) {
@@ -119,16 +152,16 @@ const DashcamPage = () => {
     setGroups(groupEvents(events, positions));
   }, [device?.id, period, timestamp]);
 
-  const sendCommand = useCatch(async (type, channel) => {
+  const sendCommand = useCatch(async (action, channel) => {
     await fetchOrThrow('/api/commands/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: device.id, type, attributes: { index: channel } }),
+      body: JSON.stringify(buildCameraCommand(device.id, config, action, channel)),
     });
   });
 
   const takePhoto = async () => {
-    await sendCommand('requestPhoto', 1);
+    await sendCommand('photo', Math.min(photoChannel, config.channels));
     setMessage(t('dashcamPhotoRequested'));
     setTimeout(() => setTimestamp(Date.now()), 8000);
   };
@@ -136,7 +169,8 @@ const DashcamPage = () => {
   const resolveUrl = (channel) => (playUrl && device ? playUrl
     .replaceAll('{uniqueId}', device.uniqueId)
     .replaceAll('{deviceId}', device.id)
-    .replaceAll('{channel}', channel) : null);
+    .replaceAll('{channel}', channel)
+    .replaceAll('{camera}', channel === 1 ? 'OUT' : 'IN') : null);
 
   return (
     <Container maxWidth="xl" sx={{ py: 3 }}>
@@ -151,9 +185,22 @@ const DashcamPage = () => {
           onChange={(_, value) => setDeviceId(value?.id || null)}
           renderInput={(params) => <TextField {...params} label={t('dashcamSelectDevice')} />}
         />
-        <Button variant="contained" startIcon={<PhotoCameraIcon />} disabled={!device} onClick={takePhoto}>
-          {t('dashcamTakePhoto')}
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <TextField
+            select
+            size="small"
+            label={t('dashcamChannel')}
+            value={Math.min(photoChannel, config.channels)}
+            onChange={(event) => setPhotoChannel(Number(event.target.value))}
+            disabled={!device}
+            sx={{ minWidth: 120 }}
+          >
+            {channels.map((channel) => <MenuItem key={channel} value={channel}>{channelLabel(channel)}</MenuItem>)}
+          </TextField>
+          <Button variant="contained" startIcon={<PhotoCameraIcon />} disabled={!device} onClick={takePhoto}>
+            {t('dashcamTakePhoto')}
+          </Button>
+        </Stack>
       </Stack>
 
       <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}>
@@ -167,13 +214,14 @@ const DashcamPage = () => {
         <>
           {!playUrl && <Alert severity="warning" sx={{ mb: 2 }}>{t('dashcamNoVideoServer')}</Alert>}
           <Grid container spacing={2}>
-            {CHANNELS.map((channel) => (
-              <Grid key={channel} size={{ xs: 12, sm: 6, lg: 3 }}>
+            {channels.map((channel) => (
+              <Grid key={channel} size={{ xs: 12, sm: 6, lg: channels.length > 4 ? 3 : 12 / Math.min(channels.length, 4) }}>
                 <LivePlayer
                   channel={channel}
+                  label={channelLabel(channel)}
                   url={resolveUrl(channel)}
-                  onStart={(value) => sendCommand('liveVideo', value)}
-                  onStop={(value) => sendCommand('liveVideoStop', value)}
+                  onStart={(value) => sendCommand('live', value)}
+                  onStop={(value) => sendCommand('liveStop', value)}
                 />
               </Grid>
             ))}
@@ -197,7 +245,7 @@ const DashcamPage = () => {
           {groups && !groups.length && <Alert severity="info">{t('dashcamNoEvents')}</Alert>}
           <Grid container spacing={2}>
             {(groups || []).map((group) => {
-              const dms = DMS_ALARMS.includes(group.alarm);
+              const family = alarmFamily(group.alarm);
               const cover = group.media.find((item) => item.type === 'image') || group.media[0];
               return (
                 <Grid key={group.key} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
@@ -210,10 +258,10 @@ const DashcamPage = () => {
                         <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
                           <Chip
                             size="small"
-                            color={group.alarm ? (dms ? 'warning' : 'error') : 'default'}
+                            color={group.alarm ? (family === 'DMS' ? 'warning' : 'error') : 'default'}
                             label={group.alarm ? formatAlarm(group.alarm, t) : t('dashcamManualCapture')}
                           />
-                          {group.alarm && <Chip size="small" variant="outlined" label={dms ? 'DMS' : 'ADAS'} />}
+                          {family && <Chip size="small" variant="outlined" label={family} />}
                         </Stack>
                         <Typography variant="body2">{formatTime(group.time, 'seconds')}</Typography>
                         <Stack direction="row" spacing={1} sx={{ mt: 0.5, color: 'text.secondary' }} alignItems="center">
@@ -259,7 +307,7 @@ const DashcamPage = () => {
                     <MediaView device={device} item={item} large />
                     <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 0.5 }}>
                       <Typography variant="caption" color="text.secondary">
-                        {item.channel ? `${t('dashcamChannel')} ${item.channel}` : ''}
+                        {item.channel ? channelLabel(item.channel) : ''}
                       </Typography>
                       <Button size="small" startIcon={<DownloadIcon />} href={mediaUrl(device, item.file)} download>
                         {t('dashcamDownload')}

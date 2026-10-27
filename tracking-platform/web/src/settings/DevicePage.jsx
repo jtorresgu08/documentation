@@ -25,6 +25,7 @@ import useQuery from '../common/util/useQuery';
 import useSettingsStyles from './common/useSettingsStyles';
 import QrCodeDialog from '../common/components/QrCodeDialog';
 import fetchOrThrow from '../common/util/fetchOrThrow';
+import DeviceCameraAccordion from './components/DeviceCameraAccordion';
 
 const DevicePage = () => {
   const { classes } = useSettingsStyles();
@@ -176,9 +177,16 @@ const DevicePage = () => {
               </AccordionDetails>
             </Accordion>
           )}
+          <DeviceCameraAccordion item={item} setItem={setItem} />
           <EditAttributesAccordion
-            attributes={item.attributes}
-            setAttributes={(attributes) => setItem({ ...item, attributes })}
+            attributes={Object.fromEntries(Object.entries(item.attributes || {}).filter(([key]) => !key.startsWith('dashcam.')))}
+            setAttributes={(attributes) => setItem({
+              ...item,
+              attributes: {
+                ...attributes,
+                ...Object.fromEntries(Object.entries(item.attributes || {}).filter(([key]) => key.startsWith('dashcam.'))),
+              },
+            })}
             definitions={{ ...commonDeviceAttributes, ...deviceAttributes }}
           />
         </>

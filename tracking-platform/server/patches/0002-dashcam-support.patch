@@ -14,14 +14,15 @@ index 5e3f668..38fdc8c 100644
          return protocol != null ? protocol.getName() : PROTOCOL_UNKNOWN;
      }
 diff --git a/src/main/java/org/traccar/config/PortConfigSuffix.java b/src/main/java/org/traccar/config/PortConfigSuffix.java
-index be7842e..26d5da2 100644
+index be7842e..b81e472 100644
 --- a/src/main/java/org/traccar/config/PortConfigSuffix.java
 +++ b/src/main/java/org/traccar/config/PortConfigSuffix.java
-@@ -283,6 +283,7 @@ public class PortConfigSuffix extends ConfigSuffix<Integer> {
+@@ -283,6 +283,8 @@ public class PortConfigSuffix extends ConfigSuffix<Integer> {
          PORTS.put("hyn600", 5258);
          PORTS.put("jmak", 5259);
          PORTS.put("bws", 5260);
 +        PORTS.put("jt808attach", 5261);
++        PORTS.put("jimiupload", 5262);
      }
  
      PortConfigSuffix(String key, List<KeyType> types) {
@@ -47,6 +48,39 @@ index 9e77646..07cf7a4 100644
              try (FileOutputStream output = new FileOutputStream(createFile(uniqueId, name));
                      FileChannel fileChannel = output.getChannel()) {
                      ByteBuffer byteBuffer = buf.nioBuffer();
+diff --git a/src/main/java/org/traccar/handler/network/StandardLoggingHandler.java b/src/main/java/org/traccar/handler/network/StandardLoggingHandler.java
+index 8e63cae..8f9cb41 100644
+--- a/src/main/java/org/traccar/handler/network/StandardLoggingHandler.java
++++ b/src/main/java/org/traccar/handler/network/StandardLoggingHandler.java
+@@ -37,6 +37,8 @@ public class StandardLoggingHandler extends ChannelDuplexHandler {
+ 
+     private static final Logger LOGGER = LoggerFactory.getLogger(StandardLoggingHandler.class);
+ 
++    private static final int MAX_LOGGED_BYTES = 1024;
++
+     private final String protocol;
+     private ConnectionManager connectionManager;
+     private boolean decodeTextData;
+@@ -76,12 +78,15 @@ public class StandardLoggingHandler extends ChannelDuplexHandler {
+             if (networkMessage.getMessage() instanceof ByteBuf data) {
+                 LogRecord record = new LogRecord(ctx.channel().localAddress(), networkMessage.getRemoteAddress());
+                 record.setProtocol(protocol);
+-                if (decodeTextData && BufferUtil.isPrintable(data, data.readableBytes())) {
++                // media uploads (dashcam photos and videos) would otherwise flood the log
++                int length = Math.min(data.readableBytes(), MAX_LOGGED_BYTES);
++                String suffix = length < data.readableBytes() ? "...(" + data.readableBytes() + " bytes)" : "";
++                if (decodeTextData && BufferUtil.isPrintable(data, length)) {
+                     record.setData(data.getCharSequence(
+-                            data.readerIndex(), data.readableBytes(), StandardCharsets.US_ASCII).toString()
+-                            .replace("\r", "\\r").replace("\n", "\\n"));
++                            data.readerIndex(), length, StandardCharsets.US_ASCII).toString()
++                            .replace("\r", "\\r").replace("\n", "\\n") + suffix);
+                 } else {
+-                    record.setData(ByteBufUtil.hexDump(data));
++                    record.setData(ByteBufUtil.hexDump(data, data.readerIndex(), length) + suffix);
+                 }
+                 return record;
+             }
 diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocol.java b/src/main/java/org/traccar/protocol/HuabaoProtocol.java
 index 43ab40d..2a7ff50 100644
 --- a/src/main/java/org/traccar/protocol/HuabaoProtocol.java
@@ -449,6 +483,268 @@ index d44b275..f80371d 100644
                  case Command.TYPE_ENGINE_STOP:
                  case Command.TYPE_ENGINE_RESUME:
                      if (alternative) {
+diff --git a/src/main/java/org/traccar/protocol/JimiUploadProtocol.java b/src/main/java/org/traccar/protocol/JimiUploadProtocol.java
+new file mode 100644
+index 0000000..83533d7
+--- /dev/null
++++ b/src/main/java/org/traccar/protocol/JimiUploadProtocol.java
+@@ -0,0 +1,47 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.protocol;
++
++import io.netty.handler.codec.http.HttpObjectAggregator;
++import io.netty.handler.codec.http.HttpRequestDecoder;
++import io.netty.handler.codec.http.HttpResponseEncoder;
++import jakarta.inject.Inject;
++import org.traccar.BaseProtocol;
++import org.traccar.PipelineBuilder;
++import org.traccar.TrackerServer;
++import org.traccar.config.Config;
++
++/**
++ * HTTP file server for Jimi IoT dashcams using the GT06 based Jimi protocol (JC400, JC261 series). They report
++ * positions and alarms over TCP (gt06 port) and upload event photos and videos over HTTP to the address set with
++ * the UPLOAD command, for example {@code UPLOAD,http://server:5262/upload/{IMEI}}.
++ */
++public class JimiUploadProtocol extends BaseProtocol {
++
++    public static final int MAX_UPLOAD_SIZE = 64 * 1024 * 1024;
++
++    @Inject
++    public JimiUploadProtocol(Config config) {
++        addServer(new TrackerServer(config, getName(), false) {
++            @Override
++            protected void addProtocolHandlers(PipelineBuilder pipeline, Config config) {
++                pipeline.addLast(new HttpResponseEncoder());
++                pipeline.addLast(new HttpRequestDecoder());
++                pipeline.addLast(new HttpObjectAggregator(MAX_UPLOAD_SIZE));
++                pipeline.addLast(new JimiUploadProtocolDecoder(JimiUploadProtocol.this));
++            }
++        });
++    }
++
++}
+diff --git a/src/main/java/org/traccar/protocol/JimiUploadProtocolDecoder.java b/src/main/java/org/traccar/protocol/JimiUploadProtocolDecoder.java
+new file mode 100644
+index 0000000..e10a03d
+--- /dev/null
++++ b/src/main/java/org/traccar/protocol/JimiUploadProtocolDecoder.java
+@@ -0,0 +1,203 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.protocol;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import io.netty.channel.Channel;
++import io.netty.handler.codec.http.FullHttpRequest;
++import io.netty.handler.codec.http.HttpHeaderNames;
++import io.netty.handler.codec.http.HttpMethod;
++import io.netty.handler.codec.http.HttpResponseStatus;
++import io.netty.handler.codec.http.QueryStringDecoder;
++import io.netty.handler.codec.http.multipart.Attribute;
++import io.netty.handler.codec.http.multipart.DefaultHttpDataFactory;
++import io.netty.handler.codec.http.multipart.FileUpload;
++import io.netty.handler.codec.http.multipart.HttpPostRequestDecoder;
++import io.netty.handler.codec.http.multipart.InterfaceHttpData;
++import jakarta.inject.Inject;
++import org.traccar.BaseHttpProtocolDecoder;
++import org.traccar.Protocol;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.io.IOException;
++import java.net.SocketAddress;
++import java.nio.charset.StandardCharsets;
++import java.util.LinkedHashMap;
++import java.util.LinkedList;
++import java.util.List;
++import java.util.Map;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++public class JimiUploadProtocolDecoder extends BaseHttpProtocolDecoder {
++
++    private static final Pattern IMEI_SEGMENT = Pattern.compile("^\\d{10,17}$");
++    private static final Pattern EVENT_FILE = Pattern.compile("^EVENT_(\\d{10,17})_.*_([FI])_\\d+$");
++
++    private Storage storage;
++
++    public JimiUploadProtocolDecoder(Protocol protocol) {
++        super(protocol);
++    }
++
++    @Inject
++    public void setStorage(Storage storage) {
++        this.storage = storage;
++    }
++
++    private static String baseName(String name) {
++        int dot = name.lastIndexOf('.');
++        return dot > 0 ? name.substring(0, dot) : name;
++    }
++
++    private static String extension(String name) {
++        int dot = name.lastIndexOf('.');
++        return dot > 0 && dot < name.length() - 1 ? name.substring(dot + 1).toLowerCase() : "bin";
++    }
++
++    private static String mediaKey(String extension) {
++        return switch (extension) {
++            case "jpg", "jpeg", "png", "bmp" -> Position.KEY_IMAGE;
++            case "wav", "mp3", "amr", "aac" -> Position.KEY_AUDIO;
++            default -> Position.KEY_VIDEO;
++        };
++    }
++
++    private static String findImei(String path, Map<String, String> fields, Map<String, ByteBuf> files) {
++        for (String key : List.of("imei", "deviceImei", "deviceId")) {
++            if (fields.containsKey(key)) {
++                return fields.get(key);
++            }
++        }
++        for (String segment : path.split("/")) {
++            if (IMEI_SEGMENT.matcher(segment).matches()) {
++                return segment;
++            }
++        }
++        for (String name : files.keySet()) {
++            Matcher matcher = EVENT_FILE.matcher(baseName(name));
++            if (matcher.matches()) {
++                return matcher.group(1);
++            }
++        }
++        return null;
++    }
++
++    private Device findDevice(String imei) throws StorageException {
++        if (imei == null) {
++            return null;
++        }
++        Device device = storage.getObject(Device.class, new Request(
++                new Columns.All(), new Condition.Equals("uniqueId", imei)));
++        if (device == null && imei.length() == 16 && imei.startsWith("0")) {
++            device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("uniqueId", imei.substring(1))));
++        }
++        return device;
++    }
++
++    private static String headerFileName(FullHttpRequest request) {
++        String disposition = request.headers().get(HttpHeaderNames.CONTENT_DISPOSITION);
++        if (disposition != null) {
++            Matcher matcher = Pattern.compile("filename=\"?([^\";]+)\"?").matcher(disposition);
++            if (matcher.find()) {
++                return matcher.group(1);
++            }
++        }
++        return request.headers().get("fileName");
++    }
++
++    @Override
++    protected Object decode(Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
++
++        FullHttpRequest request = (FullHttpRequest) msg;
++        if (!HttpMethod.POST.equals(request.method()) && !HttpMethod.PUT.equals(request.method())) {
++            sendResponse(channel, HttpResponseStatus.METHOD_NOT_ALLOWED);
++            return null;
++        }
++
++        QueryStringDecoder query = new QueryStringDecoder(request.uri());
++        Map<String, String> fields = new LinkedHashMap<>();
++        query.parameters().forEach((key, values) -> fields.put(key, values.get(0)));
++        Map<String, ByteBuf> files = new LinkedHashMap<>();
++
++        HttpPostRequestDecoder multipart = null;
++        try {
++            if (HttpPostRequestDecoder.isMultipart(request)) {
++                multipart = new HttpPostRequestDecoder(new DefaultHttpDataFactory(false), request);
++                for (InterfaceHttpData data : multipart.getBodyHttpDatas()) {
++                    if (data instanceof FileUpload upload && upload.isCompleted()) {
++                        files.put(upload.getFilename(), upload.getByteBuf().retainedDuplicate());
++                    } else if (data instanceof Attribute attribute) {
++                        fields.put(attribute.getName(), attribute.getValue());
++                    }
++                }
++            } else if (request.content().isReadable()) {
++                String name = fields.getOrDefault("fileName", fields.getOrDefault("filename", headerFileName(request)));
++                if (name == null) {
++                    String path = query.path();
++                    name = path.substring(path.lastIndexOf('/') + 1);
++                }
++                if (name != null && name.contains(".")) {
++                    files.put(name, request.content().retainedDuplicate());
++                }
++            }
++
++            Device device = findDevice(findImei(query.path(), fields, files));
++            if (device == null || files.isEmpty()) {
++                sendResponse(channel, device == null ? HttpResponseStatus.NOT_FOUND : HttpResponseStatus.BAD_REQUEST);
++                return null;
++            }
++
++            List<Position> positions = new LinkedList<>();
++            for (var entry : files.entrySet()) {
++                String name = entry.getKey().substring(entry.getKey().lastIndexOf('/') + 1);
++                // reported as the tracking protocol so the latest position keeps offering its commands
++                Position position = new Position("gt06");
++                position.setDeviceId(device.getId());
++                getLastLocation(position, null);
++                String extension = extension(name);
++                position.set(mediaKey(extension), writeMediaFile(
++                        device.getUniqueId(), entry.getValue(), baseName(name), extension));
++                position.set("eventFile", name);
++                Matcher matcher = EVENT_FILE.matcher(baseName(name));
++                if (matcher.matches()) {
++                    position.set("channel", matcher.group(2).equals("F") ? 1 : 2);
++                }
++                positions.add(position);
++            }
++
++            sendResponse(channel, HttpResponseStatus.OK, Unpooled.copiedBuffer(
++                    "{\"code\":0,\"msg\":\"success\"}", StandardCharsets.US_ASCII));
++            return positions;
++
++        } catch (HttpPostRequestDecoder.ErrorDataDecoderException | IOException e) {
++            sendResponse(channel, HttpResponseStatus.BAD_REQUEST);
++            return null;
++        } finally {
++            files.values().forEach(ByteBuf::release);
++            if (multipart != null) {
++                multipart.destroy();
++            }
++        }
++    }
++
++}
 diff --git a/src/main/java/org/traccar/protocol/Jt808AttachFrameDecoder.java b/src/main/java/org/traccar/protocol/Jt808AttachFrameDecoder.java
 new file mode 100644
 index 0000000..030b591

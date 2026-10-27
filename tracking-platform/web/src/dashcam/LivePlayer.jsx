@@ -10,7 +10,7 @@ import { useTranslation } from '../common/components/LocalizationProvider';
 
 // Plays the HTTP-FLV / WS-FLV stream a JT/T 1078 media server publishes for one camera channel
 const LivePlayer = ({
-  channel, url, onStart, onStop,
+  channel, label, url, onStart, onStop,
 }) => {
   const t = useTranslation();
   const videoRef = useRef(null);
@@ -67,7 +67,7 @@ const LivePlayer = ({
             position: 'absolute', top: 6, left: 8, color: '#fff', bgcolor: 'rgba(0,0,0,0.55)', px: 0.75, borderRadius: 0.5,
           }}
         >
-          {`${t('dashcamChannel')} ${channel}`}
+          {label || `${t('dashcamChannel')} ${channel}`}
         </Typography>
         {playing && error && (
           <Typography variant="caption" sx={{ position: 'absolute', bottom: 8, color: 'grey.300' }}>{error}</Typography>

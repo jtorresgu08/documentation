@@ -10,7 +10,7 @@ tracking-platform/
 ├── server/            Parche del servidor Traccar + Dockerfile + configuración
 │   ├── patches/       Parches sobre Traccar v6.9.1: jerarquía multinivel, dashcams JT808/JT1078 e
 │   │                  inicio del periodo detenido / en movimiento
-│   └── tests/         Pruebas de extremo a extremo (jerarquía: 27, dashcams: 20) y simulador de dashcam
+│   └── tests/         Pruebas de extremo a extremo (jerarquía: 27, dashcams JT808: 20, Jimi GT06: 16) y simuladores
 ├── web/               Panel web (fork de traccar-web 6.9.1) con el nuevo diseño
 └── infra/             docker-compose (PostgreSQL + Traccar + Caddy HTTPS), scripts y guía de despliegue
 ```
@@ -37,7 +37,7 @@ Lo que el parche añade al servidor Traccar estándar (que solo tiene un nivel d
   superadministrador).
 - **Endpoints nuevos:** `GET /api/hierarchy/parents`, `GET /api/hierarchy/brand`, `POST /api/hierarchy/sync`.
 
-## Dashcams (JT/T 808 + 1078)
+## Dashcams y MDVR (JT/T 808 + 1078 y Jimi GT06)
 
 Traccar solo guardaba el número de alarma ADAS/DMS de las cámaras JT808. El parche `0002` añade:
 
@@ -51,6 +51,15 @@ Traccar solo guardaba el número de alarma ADAS/DMS de las cámaras JT808. El pa
 - **Video en vivo** por canal (0x9101 / 0x9102) hacia un servidor de video JT/T 1078, reproducido en el
   navegador con mpegts.js (HTTP-FLV).
 - Corrección: los archivos recibidos en el mismo segundo ya no se sobrescriben.
+
+Dashcams **Jimi con protocolo GT06** (JC400, JC261): el mismo parche añade un servidor HTTP (puerto 5262) que
+recibe las fotos y videos de cada evento (`UPLOAD,http://servidor:5262/upload/IMEI`) y los vincula con la alarma
+JC400 que los anunció. El video en vivo y las fotos se piden con comandos de texto configurables por dispositivo.
+
+Los puertos van **por protocolo, no por marca**: 5023 para GT06 (incluidas las Jimi JC400/JC261), 5015 para
+cualquier cámara o MDVR JT808 (Jimi JC450/JC181/JC371, Howen, genéricos), 5261 para los adjuntos JT808 y 5262
+para las subidas Jimi. Cada dispositivo se configura como dashcam o MDVR con **1 a 12 canales**, protocolo y
+nombres de canal.
 
 En el panel, el menú **Cámaras** muestra los eventos agrupados por alarma (miniatura, tipo, foto y video) y una
 cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/DEPLOY.md](infra/DEPLOY.md).
@@ -89,6 +98,8 @@ Basado en tus capturas de referencia:
 | Lista agrupada con casillas, "Detenido 55h 42min", menú por vehículo | ✅ Nuevo |
 | Barra de herramientas del mapa (medir, seguir, geocercas, nombres…) | ✅ Nuevo |
 | Dashcams: alarmas ADAS/DMS, fotos y videos de eventos, foto bajo demanda | ✅ Nuevo (JT/T 808) |
+| Dashcams Jimi GT06 (JC400 / JC261): alarmas con sus fotos y videos | ✅ Nuevo |
+| Dashcam / MDVR de 1 a 12 canales por dispositivo | ✅ Nuevo |
 | Dashcams: video en vivo | ✅ Comandos y reproductor; requiere un servidor de video JT/T 1078 |
 | Copias de seguridad / limpieza de datos | ✅ Scripts (`infra/`); 🔜 pantalla en el panel |
 | Ecodrive (puntuación de conducción) | 🔜 Fase 2, a partir de los eventos de frenado y aceleración |
@@ -112,6 +123,7 @@ cd web && npm ci && npm start                          # http://localhost:3000
 # Pruebas (con una base de datos vacía y huabao.attachmentServer / huabao.videoServer configurados)
 python3 server/tests/test_hierarchy.py
 python3 server/tests/test_dashcam.py foto.jpg clip.mp4 cabina.jpg
+python3 server/tests/test_jimi.py clip.mp4 cabina.jpg
 ```
 
 ## Producción
