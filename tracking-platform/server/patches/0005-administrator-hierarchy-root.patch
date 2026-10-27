@@ -1,0 +1,14 @@
+diff --git a/src/main/java/org/traccar/api/resource/UserResource.java b/src/main/java/org/traccar/api/resource/UserResource.java
+index d53717e..59ab34c 100644
+--- a/src/main/java/org/traccar/api/resource/UserResource.java
++++ b/src/main/java/org/traccar/api/resource/UserResource.java
+@@ -128,7 +128,8 @@ public class UserResource extends BaseObjectResource<User> {
+ 
+         actionLogger.create(request, getUserId(), entity);
+ 
+-        if (currentUser != null && currentUser.getUserLimit() != 0) {
++        // the administrator is the root of the hierarchy, so it inherits every unit created below it
++        if (currentUser != null && (currentUser.getAdministrator() || currentUser.getUserLimit() != 0)) {
+             storage.addPermission(new Permission(User.class, getUserId(), ManagedUser.class, entity.getId()));
+             actionLogger.link(request, getUserId(), User.class, getUserId(), ManagedUser.class, entity.getId());
+             hierarchyService.propagate(getUserId(), ManagedUser.class, entity.getId());

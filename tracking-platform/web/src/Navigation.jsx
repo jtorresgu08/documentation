@@ -65,6 +65,7 @@ import AuditPage from './reports/AuditPage';
 import AdminDashboardPage from './admin/AdminDashboardPage';
 import BrandingPage from './settings/BrandingPage';
 import DashcamPage from './dashcam/DashcamPage';
+import SystemStatusPage from './admin/SystemStatusPage';
 
 const Navigation = () => {
   const navigate = useNavigate();
@@ -125,6 +126,7 @@ const Navigation = () => {
         <Route path="emulator" element={<EmulatorPage />} />
         <Route path="admin" element={<AdminDashboardPage />} />
         <Route path="dashcam" element={<DashcamPage />} />
+        <Route path="admin/status" element={<SystemStatusPage />} />
 
         <Route path="settings">
           <Route path="accumulators/:deviceId" element={<AccumulatorsPage />} />

@@ -160,6 +160,14 @@ python3 server/tests/dashcam_simulator.py --host IP_DEL_VPS --port 5015 --phone 
 Da de alta antes el dispositivo con identificador `013912345678`. Para las Jimi GT06 está
 `server/tests/jimi_simulator.py` (`--imei 862798052429087 --front clip.mp4 --cabin cabina.jpg`).
 
+### Alta de unidades y monitoreo
+
+- En *Configuración del servidor > Atributos* añade `deviceHost` con la IP pública o el dominio que deben usar los
+  equipos (aparece en las instrucciones de la ventana *Agregar unidad*).
+- *Administración > Estado del sistema* muestra si cada puerto está escuchando, cuántos equipos y mensajes recibe, y
+  los IMEI desconocidos que intentan conectarse. Si un equipo "no aparece", revisa primero esa lista: si su IMEI
+  está ahí, el equipo llega bien al servidor y solo falta darlo de alta (o el IMEI cargado está mal escrito).
+
 ## 7. Copias de seguridad
 
 ```bash

@@ -37,6 +37,7 @@ import PublishIcon from '@mui/icons-material/Publish';
 import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
 import VideocamIcon from '@mui/icons-material/Videocam';
+import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import { useLocalization, useTranslation } from './LocalizationProvider';
 import { useAdministrator, useManager, useRestriction } from '../util/permissions';
 import useFeatures from '../util/useFeatures';
@@ -317,7 +318,7 @@ const AppSidebar = () => {
     },
     { divider: 'map' },
     {
-      key: 'overview', title: t('navOverview'), icon: <DashboardIcon />, href: '/admin',
+      key: 'overview', title: t('navOverview'), icon: <DashboardIcon />, href: '/admin', match: (path) => path === '/admin',
     },
     {
       key: 'users',
@@ -337,6 +338,9 @@ const AppSidebar = () => {
     },
     admin && {
       key: 'metrics', title: t('navMetrics'), icon: <SpeedIcon />, href: '/reports/statistics',
+    },
+    admin && {
+      key: 'status', title: t('statusTitle'), icon: <MonitorHeartIcon />, href: '/admin/status',
     },
     admin && {
       key: 'server', title: t('navServerSettings'), icon: <DnsIcon />, href: '/settings/server',

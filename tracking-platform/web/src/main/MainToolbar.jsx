@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react';
 import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
 import {
   Toolbar, IconButton, OutlinedInput, InputAdornment, Popover, FormControl, InputLabel, Select, MenuItem, FormGroup, FormControlLabel, Checkbox, Badge, ListItemButton, ListItemText, Tooltip,
 } from '@mui/material';
@@ -12,7 +11,8 @@ import AddIcon from '@mui/icons-material/Add';
 import TuneIcon from '@mui/icons-material/Tune';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useDeviceReadonly } from '../common/util/permissions';
-import DeviceRow from './DeviceRow';
+import { DeviceRow } from './DeviceRow';
+import AddDeviceDialog from '../settings/AddDeviceDialog';
 
 const useStyles = makeStyles()((theme) => ({
   toolbar: {
@@ -43,7 +43,6 @@ const MainToolbar = ({
 }) => {
   const { classes } = useStyles();
   const theme = useTheme();
-  const navigate = useNavigate();
   const t = useTranslation();
 
   const deviceReadonly = useDeviceReadonly();
@@ -55,6 +54,7 @@ const MainToolbar = ({
   const inputRef = useRef();
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [devicesAnchorEl, setDevicesAnchorEl] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const deviceStatusCount = (status) => Object.values(devices).filter((d) => d.status === status).length;
 
@@ -101,7 +101,7 @@ const MainToolbar = ({
         disableEnforceFocus
       >
         {filteredDevices.slice(0, 3).map((_, index) => (
-          <DeviceRow key={filteredDevices[index].id} data={filteredDevices} index={index} />
+          <DeviceRow key={filteredDevices[index].id} row={{ type: 'device', device: filteredDevices[index] }} data={{}} />
         ))}
         {filteredDevices.length > 3 && (
           <ListItemButton alignItems="center" onClick={() => setDevicesOpen(true)}>
@@ -169,11 +169,12 @@ const MainToolbar = ({
           </FormGroup>
         </div>
       </Popover>
-      <IconButton edge="end" onClick={() => navigate('/settings/device')} disabled={deviceReadonly}>
+      <IconButton edge="end" onClick={() => setAddOpen(true)} disabled={deviceReadonly}>
         <Tooltip open={!deviceReadonly && Object.keys(devices).length === 0} title={t('deviceRegisterFirst')} arrow>
           <AddIcon />
         </Tooltip>
       </IconButton>
+      <AddDeviceDialog open={addOpen} onClose={() => setAddOpen(false)} />
     </Toolbar>
   );
 };

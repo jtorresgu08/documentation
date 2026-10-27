@@ -1,0 +1,380 @@
+diff --git a/src/main/java/org/traccar/BaseProtocolDecoder.java b/src/main/java/org/traccar/BaseProtocolDecoder.java
+index 38fdc8c..ab9a97d 100644
+--- a/src/main/java/org/traccar/BaseProtocolDecoder.java
++++ b/src/main/java/org/traccar/BaseProtocolDecoder.java
+@@ -28,6 +28,7 @@ import org.traccar.model.Device;
+ import org.traccar.model.Position;
+ import org.traccar.session.ConnectionManager;
+ import org.traccar.session.DeviceSession;
++import org.traccar.session.ProtocolStatistics;
+ import org.traccar.session.cache.CacheManager;
+ 
+ import jakarta.inject.Inject;
+@@ -165,6 +166,7 @@ public abstract class BaseProtocolDecoder extends ExtendedObjectDecoder {
+         if (statisticsManager != null) {
+             statisticsManager.registerMessageReceived();
+         }
++        ProtocolStatistics.recordMessage(getProtocolName());
+         Set<Long> deviceIds = new HashSet<>();
+         if (decodedMessage != null) {
+             if (decodedMessage instanceof Position position) {
+diff --git a/src/main/java/org/traccar/ServerManager.java b/src/main/java/org/traccar/ServerManager.java
+index 1b0c441..5f5bed9 100644
+--- a/src/main/java/org/traccar/ServerManager.java
++++ b/src/main/java/org/traccar/ServerManager.java
+@@ -29,6 +29,7 @@ import java.net.BindException;
+ import java.net.ConnectException;
+ import java.net.URISyntaxException;
+ import java.util.Arrays;
++import java.util.Collection;
+ import java.util.HashSet;
+ import java.util.LinkedList;
+ import java.util.List;
+@@ -63,6 +64,10 @@ public class ServerManager implements LifecycleObject {
+         }
+     }
+ 
++    public Collection<BaseProtocol> getProtocols() {
++        return protocolList.values();
++    }
++
+     public BaseProtocol getProtocol(String name) {
+         return protocolList.get(name);
+     }
+diff --git a/src/main/java/org/traccar/api/resource/SystemResource.java b/src/main/java/org/traccar/api/resource/SystemResource.java
+new file mode 100644
+index 0000000..d1674fe
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/SystemResource.java
+@@ -0,0 +1,166 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.BaseProtocol;
++import org.traccar.ServerManager;
++import org.traccar.TrackerConnector;
++import org.traccar.TrackerServer;
++import org.traccar.api.BaseResource;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.model.Device;
++import org.traccar.model.Server;
++import org.traccar.session.ConnectionManager;
++import org.traccar.session.ProtocolStatistics;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Request;
++
++import java.io.File;
++import java.lang.management.ManagementFactory;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Server health for administrators: JVM, database, disk, connected devices and the state of every listening port.
++ */
++@Path("system")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class SystemResource extends BaseResource {
++
++    @Inject
++    private ServerManager serverManager;
++
++    @Inject
++    private ConnectionManager connectionManager;
++
++    @Inject
++    private Config config;
++
++    private static Map<String, Object> messages(ProtocolStatistics.Counter counter, long now) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("total", counter != null ? counter.getTotal() : 0);
++        result.put("lastMinute", counter != null ? counter.getRecent(1, now) : 0);
++        result.put("last5Minutes", counter != null ? counter.getRecent(5, now) : 0);
++        result.put("lastHour", counter != null ? counter.getRecent(60, now) : 0);
++        result.put("lastTime", counter != null && counter.getLastTime() > 0 ? counter.getLastTime() : null);
++        return result;
++    }
++
++    @GET
++    @Path("status")
++    public Map<String, Object> status() throws StorageException {
++        permissionsService.checkAdmin(getUserId());
++        long now = System.currentTimeMillis();
++        Map<String, Object> result = new LinkedHashMap<>();
++
++        long started = System.nanoTime();
++        Server server = storage.getObject(Server.class, new Request(new Columns.All()));
++        Map<String, Object> database = new LinkedHashMap<>();
++        database.put("ok", server != null);
++        database.put("latencyMs", (System.nanoTime() - started) / 1_000_000.0);
++        database.put("driver", config.getString(Keys.DATABASE_DRIVER));
++        result.put("database", database);
++        result.put("version", server != null ? server.getVersion() : null);
++        result.put("time", now);
++
++        Runtime runtime = Runtime.getRuntime();
++        Map<String, Object> jvm = new LinkedHashMap<>();
++        jvm.put("uptime", ManagementFactory.getRuntimeMXBean().getUptime());
++        jvm.put("memoryUsed", runtime.totalMemory() - runtime.freeMemory());
++        jvm.put("memoryMax", runtime.maxMemory());
++        jvm.put("processors", runtime.availableProcessors());
++        jvm.put("loadAverage", ManagementFactory.getOperatingSystemMXBean().getSystemLoadAverage());
++        jvm.put("threads", ManagementFactory.getThreadMXBean().getThreadCount());
++        result.put("jvm", jvm);
++
++        String mediaPath = config.getString(Keys.MEDIA_PATH);
++        File disk = new File(mediaPath != null ? mediaPath : ".");
++        if (!disk.exists()) {
++            disk = new File(".");
++        }
++        Map<String, Object> storageInfo = new LinkedHashMap<>();
++        storageInfo.put("free", disk.getUsableSpace());
++        storageInfo.put("total", disk.getTotalSpace());
++        result.put("disk", storageInfo);
++
++        Collection<Device> devices = storage.getObjects(Device.class, new Request(new Columns.Include("uniqueId")));
++        Set<String> known = new HashSet<>();
++        devices.forEach(device -> known.add(device.getUniqueId()));
++        Map<String, Integer> online = connectionManager.getOnlineByProtocol();
++        Map<String, Object> deviceInfo = new LinkedHashMap<>();
++        deviceInfo.put("total", devices.size());
++        deviceInfo.put("connected", online.values().stream().mapToInt(Integer::intValue).sum());
++        result.put("devices", deviceInfo);
++
++        long messagesLastMinute = 0;
++        List<Map<String, Object>> ports = new ArrayList<>();
++        for (BaseProtocol protocol : serverManager.getProtocols()) {
++            ProtocolStatistics.Counter counter = ProtocolStatistics.getCounter(protocol.getName());
++            if (counter != null) {
++                messagesLastMinute += counter.getRecent(1, now);
++            }
++            for (TrackerConnector connector : protocol.getConnectorList()) {
++                if (connector instanceof TrackerServer trackerServer) {
++                    Map<String, Object> port = new LinkedHashMap<>();
++                    port.put("protocol", protocol.getName());
++                    port.put("port", trackerServer.getPort());
++                    port.put("transport", trackerServer.isDatagram() ? "udp" : "tcp");
++                    int channels = trackerServer.getChannelGroup().size();
++                    port.put("listening", channels > 0);
++                    port.put("connections", trackerServer.isDatagram() ? null : Math.max(0, channels - 1));
++                    port.put("devices", online.getOrDefault(protocol.getName(), 0));
++                    port.put("messages", messages(counter, now));
++                    ports.add(port);
++                }
++            }
++        }
++        result.put("messagesLastMinute", messagesLastMinute);
++        result.put("ports", ports);
++
++        List<Map<String, Object>> unknown = new ArrayList<>();
++        for (ProtocolStatistics.UnknownDevice item : ProtocolStatistics.getUnknownDevices()) {
++            if (known.contains(item.uniqueId())) {
++                ProtocolStatistics.removeUnknown(item.uniqueId());
++                continue;
++            }
++            Map<String, Object> entry = new LinkedHashMap<>();
++            entry.put("uniqueId", item.uniqueId());
++            entry.put("protocol", item.protocol());
++            entry.put("port", config.getInteger(Keys.PROTOCOL_PORT.withPrefix(item.protocol())));
++            entry.put("address", item.address());
++            entry.put("firstTime", item.firstTime());
++            entry.put("lastTime", item.lastTime());
++            entry.put("attempts", item.attempts());
++            unknown.add(entry);
++        }
++        result.put("unknownDevices", unknown);
++
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/session/ConnectionManager.java b/src/main/java/org/traccar/session/ConnectionManager.java
+index 4ffb2da..67a13ab 100644
+--- a/src/main/java/org/traccar/session/ConnectionManager.java
++++ b/src/main/java/org/traccar/session/ConnectionManager.java
+@@ -99,6 +99,17 @@ public class ConnectionManager implements BroadcastInterface {
+         broadcastService.registerListener(this);
+     }
+ 
++    /**
++     * Connected devices per protocol, for the server status page.
++     */
++    public Map<String, Integer> getOnlineByProtocol() {
++        Map<String, Integer> result = new HashMap<>();
++        for (DeviceSession session : sessionsByDeviceId.values()) {
++            result.merge(session.getProtocol().getName(), 1, Integer::sum);
++        }
++        return result;
++    }
++
+     public DeviceSession getDeviceSession(long deviceId) {
+         return sessionsByDeviceId.get(deviceId);
+     }
+@@ -159,6 +170,8 @@ public class ConnectionManager implements BroadcastInterface {
+             return deviceSession;
+         } else {
+             unknownByEndpoint.put(connectionKey, firstUniqueId);
++            ProtocolStatistics.recordUnknown(protocol.getName(), firstUniqueId,
++                    ((InetSocketAddress) remoteAddress).getHostString());
+             LOGGER.warn("Unknown device - " + String.join(" ", uniqueIds)
+                     + " (" + ((InetSocketAddress) remoteAddress).getHostString() + ")");
+             return null;
+diff --git a/src/main/java/org/traccar/session/DeviceSession.java b/src/main/java/org/traccar/session/DeviceSession.java
+index 31d5e6a..48420ae 100644
+--- a/src/main/java/org/traccar/session/DeviceSession.java
++++ b/src/main/java/org/traccar/session/DeviceSession.java
+@@ -57,6 +57,10 @@ public class DeviceSession {
+         return model;
+     }
+ 
++    public Protocol getProtocol() {
++        return protocol;
++    }
++
+     public Channel getChannel() {
+         return channel;
+     }
+diff --git a/src/main/java/org/traccar/session/ProtocolStatistics.java b/src/main/java/org/traccar/session/ProtocolStatistics.java
+new file mode 100644
+index 0000000..4354467
+--- /dev/null
++++ b/src/main/java/org/traccar/session/ProtocolStatistics.java
+@@ -0,0 +1,113 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.session;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.atomic.AtomicLong;
++
++/**
++ * In memory counters for the server status page: messages per protocol (total and per minute for the last hour)
++ * and identifiers of unknown devices trying to connect.
++ */
++public final class ProtocolStatistics {
++
++    private static final int MINUTES = 60;
++    private static final int MAX_UNKNOWN = 500;
++
++    private ProtocolStatistics() {
++    }
++
++    public static final class Counter {
++        private final AtomicLong total = new AtomicLong();
++        private final long[] minuteStamp = new long[MINUTES];
++        private final long[] minuteCount = new long[MINUTES];
++        private volatile long lastTime;
++
++        private synchronized void record(long now) {
++            total.incrementAndGet();
++            lastTime = now;
++            long minute = now / 60000;
++            int index = (int) (minute % MINUTES);
++            if (minuteStamp[index] != minute) {
++                minuteStamp[index] = minute;
++                minuteCount[index] = 0;
++            }
++            minuteCount[index]++;
++        }
++
++        public long getTotal() {
++            return total.get();
++        }
++
++        public long getLastTime() {
++            return lastTime;
++        }
++
++        /**
++         * Messages received during the last {@code minutes} full minutes, including the current one.
++         */
++        public synchronized long getRecent(int minutes, long now) {
++            long current = now / 60000;
++            long sum = 0;
++            for (int i = 0; i < MINUTES; i++) {
++                if (current - minuteStamp[i] < minutes) {
++                    sum += minuteCount[i];
++                }
++            }
++            return sum;
++        }
++    }
++
++    public record UnknownDevice(String uniqueId, String protocol, String address, long firstTime, long lastTime,
++                                long attempts) {
++    }
++
++    private static final Map<String, Counter> COUNTERS = new ConcurrentHashMap<>();
++    private static final Map<String, UnknownDevice> UNKNOWN = new ConcurrentHashMap<>();
++
++    public static void recordMessage(String protocol) {
++        COUNTERS.computeIfAbsent(protocol, key -> new Counter()).record(System.currentTimeMillis());
++    }
++
++    public static Counter getCounter(String protocol) {
++        return COUNTERS.get(protocol);
++    }
++
++    public static void recordUnknown(String protocol, String uniqueId, String address) {
++        long now = System.currentTimeMillis();
++        UNKNOWN.compute(uniqueId, (key, previous) -> previous == null
++                ? new UnknownDevice(uniqueId, protocol, address, now, now, 1)
++                : new UnknownDevice(uniqueId, protocol, address, previous.firstTime(), now, previous.attempts() + 1));
++        if (UNKNOWN.size() > MAX_UNKNOWN) {
++            UNKNOWN.values().stream()
++                    .min(Comparator.comparingLong(UnknownDevice::lastTime))
++                    .ifPresent(oldest -> UNKNOWN.remove(oldest.uniqueId()));
++        }
++    }
++
++    public static List<UnknownDevice> getUnknownDevices() {
++        List<UnknownDevice> result = new ArrayList<>(UNKNOWN.values());
++        result.sort(Comparator.comparingLong(UnknownDevice::lastTime).reversed());
++        return result;
++    }
++
++    public static void removeUnknown(String uniqueId) {
++        UNKNOWN.remove(uniqueId);
++    }
++
++}

@@ -185,12 +185,14 @@ export const DeviceRow = ({ row, data }) => {
       tabIndex={0}
       onKeyDown={(event) => event.key === 'Enter' && dispatch(devicesActions.selectId(item.id))}
     >
-      <Checkbox
-        size="small"
-        checked={!data.hidden.has(item.id)}
-        onClick={(event) => event.stopPropagation()}
-        onChange={(event) => data.setHidden([item.id], !event.target.checked)}
-      />
+      {data.setHidden && (
+        <Checkbox
+          size="small"
+          checked={!data.hidden.has(item.id)}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => data.setHidden([item.id], !event.target.checked)}
+        />
+      )}
       <div className={classes.texts}>
         <Typography variant="subtitle1" noWrap sx={{ lineHeight: 1.3 }}>{item[devicePrimary]}</Typography>
         <Typography variant="body2" color="text.secondary" noWrap>{time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '—'}</Typography>

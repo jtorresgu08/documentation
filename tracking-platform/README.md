@@ -10,7 +10,8 @@ tracking-platform/
 ├── server/            Parche del servidor Traccar + Dockerfile + configuración
 │   ├── patches/       Parches sobre Traccar v6.9.1: jerarquía multinivel, dashcams JT808/JT1078 e
 │   │                  inicio del periodo detenido / en movimiento
-│   └── tests/         Pruebas de extremo a extremo (jerarquía: 27, dashcams JT808: 20, Jimi GT06: 16) y simuladores
+│   └── tests/         Pruebas de extremo a extremo (jerarquía: 28, dashcams JT808: 20, Jimi GT06: 16, estado: 11)
+│                      y simuladores de dashcam
 ├── web/               Panel web (fork de traccar-web 6.9.1) con el nuevo diseño
 └── infra/             docker-compose (PostgreSQL + Traccar + Caddy HTTPS), scripts y guía de despliegue
 ```
@@ -63,6 +64,23 @@ nombres de canal.
 
 En el panel, el menú **Cámaras** muestra los eventos agrupados por alarma (miniatura, tipo, foto y video) y una
 cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/DEPLOY.md](infra/DEPLOY.md).
+
+## Alta de unidades y estado del servidor
+
+- **Agregar unidad** (botón ＋ de la lista): una sola ventana con pestañas *Principal / Usuarios / Icono / Cámara*.
+  Se elige el **modelo del equipo** de un catálogo (Concox, Jimi, Teltonika, Coban, Sinotrack, Queclink, Suntech,
+  Meitrack, Ruptela, MDVR JT808, app móvil…) y la plataforma muestra **servidor, puerto y SMS de configuración**
+  listos para copiar. Permite **agregar varias unidades a la vez** (una por línea: `IMEI, nombre`) y asignarlas a
+  usuarios en el mismo paso. El formulario completo de Traccar sigue disponible para la edición avanzada.
+- **Estado del sistema** (solo superadministrador, parche `0004`): tiempo activo, memoria, CPU, disco, latencia de la
+  base de datos, equipos conectados, mensajes por minuto y **monitoreo de los 295 puertos** (escuchando o con error,
+  conexiones, equipos y mensajes por minuto/hora). Muestra los **equipos desconocidos** que intentan conectarse
+  (IMEI no registrado, protocolo, puerto e IP) con un botón para darlos de alta con el IMEI y el modelo ya cargados.
+  Se actualiza cada 10 segundos.
+- El servidor que se muestra en las instrucciones es el atributo `deviceHost` de *Configuración del servidor*
+  (por defecto, el dominio del panel).
+- El **superadministrador es la raíz de la jerarquía** (parche `0005`): los usuarios que crea quedan bajo él, así
+  que ve todas las unidades en el mapa y en vivo, no solo en los listados de administración.
 
 ## Panel web
 
