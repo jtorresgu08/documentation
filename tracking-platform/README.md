@@ -107,10 +107,15 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   Una carga gradual en la bomba se cuenta como una sola, y el consumo en ralentí no se toma como robo. Las alertas en
   vivo usan los eventos *Carga de combustible* y *Descarga / robo de combustible*, así que se pueden notificar desde
   *Alertas* (web, correo, Telegram…), con litros antes, después y cantidad.
-- **Página Combustible** (menú lateral y Reportes): gráfica del nivel filtrado y de la lectura cruda, velocidad de
-  fondo, cargas (verde) y descargas (rojo) marcadas, resumen (inicial, final, cargado, descargado, consumido) y tabla
-  con hora, litros y lugar. Se recalcula desde los datos crudos (`GET /api/sensors/fuel`), así que un cambio de
-  calibración o de umbrales también se aplica al historial.
+- **Reportes de combustible** (menú lateral, Reportes y menú ⋮ de la unidad): periodo (hoy, ayer, 6/12/24 h, 7 días,
+  mes o personalizado) y unidad en la cabecera; tarjetas de nivel inicial, final, cargado, descargado/robado y
+  consumo total; gráfica del nivel filtrado con degradado, lectura cruda y velocidad de fondo, cargas y descargas
+  marcadas con su cantidad y vista en **litros o porcentaje** (con la capacidad del tanque); **resumen del periodo**
+  con distancia recorrida, consumo cada 100 km y **rendimiento estimado (km/L)**; tabla de eventos con búsqueda,
+  filtro por tipo, dirección (geocodificación bajo demanda), paginación y **estado de revisión** (*Pendiente*,
+  *Válido* o *Falsa alarma*, que se excluye de los totales; se guarda en la unidad); **mapa** con la ruta y los
+  eventos; exportación a **Excel (CSV)** e impresión a **PDF**. Se recalcula desde los datos crudos
+  (`GET /api/sensors/fuel`), así que un cambio de calibración o de umbrales también se aplica al historial.
 - **Información de la unidad estilo Wialon** (Editar unidad → *Información de la unidad*): número de SIM, ICCID,
   operador, placa, número económico, VIN, marca, modelo, año, color, tipo, número de motor, combustible, capacidad
   del tanque, rendimiento, fecha de instalación, instalador, póliza y notas (atributos `info.*`). Se consulta desde

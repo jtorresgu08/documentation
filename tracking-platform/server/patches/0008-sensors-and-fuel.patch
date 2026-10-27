@@ -36,10 +36,10 @@ index 26c0ad7..81e7081 100644
                  AlarmEventHandler.class,
 diff --git a/src/main/java/org/traccar/api/resource/SensorResource.java b/src/main/java/org/traccar/api/resource/SensorResource.java
 new file mode 100644
-index 0000000..895de9b
+index 0000000..4e5a1ed
 --- /dev/null
 +++ b/src/main/java/org/traccar/api/resource/SensorResource.java
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,149 @@
 +/*
 + * Licensed under the Apache License, Version 2.0 (the "License");
 + * you may not use this file except in compliance with the License.
@@ -121,7 +121,13 @@ index 0000000..895de9b
 +                .orElseThrow(() -> new BadRequestException("No fuel sensor"));
 +
 +        List<FuelAnalyzer.Sample> samples = new ArrayList<>();
++        Position first = null;
++        Position last = null;
 +        for (Position position : PositionUtil.getPositions(storage, deviceId, from, to)) {
++            if (first == null) {
++                first = position;
++            }
++            last = position;
 +            Double value = sensor.compute(position);
 +            if (value != null) {
 +                samples.add(new FuelAnalyzer.Sample(
@@ -140,6 +146,8 @@ index 0000000..895de9b
 +            point.put("value", round(sample.value()));
 +            point.put("level", round(analysis.smoothed()[i]));
 +            point.put("speed", Math.round(sample.speed()));
++            point.put("latitude", sample.latitude());
++            point.put("longitude", sample.longitude());
 +            points.add(point);
 +        }
 +
@@ -164,6 +172,11 @@ index 0000000..895de9b
 +        summary.put("filled", round(analysis.filled()));
 +        summary.put("drained", round(analysis.drained()));
 +        summary.put("consumed", round(analysis.consumed()));
++        summary.put("startTime", samples.isEmpty() ? null : samples.get(0).time());
++        summary.put("endTime", samples.isEmpty() ? null : samples.get(samples.size() - 1).time());
++        double distance = first != null ? (last.getDouble(Position.KEY_TOTAL_DISTANCE)
++                - first.getDouble(Position.KEY_TOTAL_DISTANCE)) / 1000 : 0;
++        summary.put("distance", round(Math.max(0, distance)));
 +        summary.put("fills", analysis.changes().stream().filter(c -> FuelAnalyzer.FILL.equals(c.type())).count());
 +        summary.put("drains", analysis.changes().stream().filter(c -> FuelAnalyzer.DRAIN.equals(c.type())).count());
 +

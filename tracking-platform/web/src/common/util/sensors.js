@@ -56,7 +56,7 @@ export const withSensors = (device, sensors) => {
 
 export const fuelSensors = (device) => parseSensors(device).filter((sensor) => sensor.type === 'fuel');
 
-export const isHiddenAttribute = (key) => key === SENSORS_ATTRIBUTE || key.startsWith(INFO_PREFIX) || key.startsWith('dashcam.');
+export const isHiddenAttribute = (key) => key === SENSORS_ATTRIBUTE || key.startsWith(INFO_PREFIX) || key.startsWith('dashcam.') || key.startsWith('fuel.');
 
 // same conversion as the server, for the live preview in the editor
 export const convertRaw = (sensor, raw) => {
