@@ -656,5 +656,6 @@
     "brandManagerHint": "Your users and all users below you see this appearance.",
     "brandEmbeddedImage": "Uploaded image",
     "brandLogoTooLarge": "The image must be smaller than 200 KB",
-    "brandSaved": "Appearance saved"
+    "brandSaved": "Appearance saved",
+    "dashboardUser": "User"
 }

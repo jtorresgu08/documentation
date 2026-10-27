@@ -656,5 +656,6 @@
     "brandManagerHint": "Tus usuarios y todos los que estén por debajo de ti verán esta apariencia.",
     "brandEmbeddedImage": "Imagen cargada",
     "brandLogoTooLarge": "La imagen debe pesar menos de 200 KB",
-    "brandSaved": "Apariencia guardada"
+    "brandSaved": "Apariencia guardada",
+    "dashboardUser": "Usuario"
 }

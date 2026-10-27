@@ -72,7 +72,7 @@ const AdminDashboardPage = () => {
   const expiring = [
     ...(users || []).filter((it) => isExpiring(it.expirationTime) || isExpired(it.expirationTime))
       .map((it) => ({
-        key: `user-${it.id}`, type: t('settingsUser'), name: it.email || it.name, time: it.expirationTime, link: `/settings/user/${it.id}`,
+        key: `user-${it.id}`, type: t('dashboardUser'), name: it.email || it.name, time: it.expirationTime, link: `/settings/user/${it.id}`,
       })),
     ...devices.filter((it) => isExpiring(it.expirationTime) || isExpired(it.expirationTime))
       .map((it) => ({
