@@ -26,7 +26,7 @@ import { useTranslation } from '../common/components/LocalizationProvider';
 import { useAdministrator, useDeviceReadonly, useRestriction } from '../common/util/permissions';
 import { useAttributePreference } from '../common/util/preferences';
 import { fuelSensors } from '../common/util/sensors';
-import UnitInfoDialog from './UnitInfoDialog';
+import { openUnitInfo } from '../common/util/unitInfo';
 
 export const GROUP_ROW_HEIGHT = 56;
 export const DEVICE_ROW_HEIGHT = 84;
@@ -168,7 +168,6 @@ export const DeviceRow = ({ row, data }) => {
   const devicePrimary = useAttributePreference('devicePrimary', 'name');
 
   const [anchor, setAnchor] = useState(null);
-  const [showInfo, setShowInfo] = useState(false);
 
   const status = statusOf(item, position);
   const statusText = status.since
@@ -240,7 +239,11 @@ export const DeviceRow = ({ row, data }) => {
           <ListItemIcon><MyLocationIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('deviceShowOnMap')}</ListItemText>
         </MenuItem>
-        <MenuItem onClick={action(() => setShowInfo(true))}>
+        <MenuItem onClick={action(() => {
+          dispatch(devicesActions.selectId(item.id));
+          openUnitInfo(item.id);
+        })}
+        >
           <ListItemIcon><InfoIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('unitInfoTitle')}</ListItemText>
         </MenuItem>
@@ -285,11 +288,6 @@ export const DeviceRow = ({ row, data }) => {
           </MenuItem>
         )}
       </Menu>
-      {showInfo && (
-        <div onClick={(event) => event.stopPropagation()} role="presentation">
-          <UnitInfoDialog deviceId={item.id} onClose={() => setShowInfo(false)} />
-        </div>
-      )}
     </div>
   );
 };

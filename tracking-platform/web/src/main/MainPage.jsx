@@ -11,6 +11,7 @@ import StatusCard from '../common/components/StatusCard';
 import { devicesActions } from '../store';
 import usePersistedState from '../common/util/usePersistedState';
 import EventsDrawer from './EventsDrawer';
+import UnitInfoPanel from './UnitInfoPanel';
 import useFilter from './useFilter';
 import MainToolbar from './MainToolbar';
 import MainMap from './MainMap';
@@ -141,6 +142,7 @@ const MainPage = () => {
         </div>
       </div>
       <EventsDrawer open={eventsOpen} onClose={() => setEventsOpen(false)} />
+      <UnitInfoPanel />
       {selectedDeviceId && (
         <StatusCard
           deviceId={selectedDeviceId}

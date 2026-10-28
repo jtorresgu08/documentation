@@ -118,9 +118,10 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   (`GET /api/sensors/fuel`), así que un cambio de calibración o de umbrales también se aplica al historial.
 - **Información de la unidad estilo Wialon** (Editar unidad → *Información de la unidad*): número de SIM, ICCID,
   operador, placa, número económico, VIN, marca, modelo, año, color, tipo, número de motor, combustible, capacidad
-  del tanque, rendimiento, fecha de instalación, instalador, póliza y notas (atributos `info.*`). Se consulta desde
-  el menú ⋮ de cada unidad → *Información de la unidad*, junto con los datos del equipo y los sensores en vivo, y se
-  puede copiar.
+  del tanque, rendimiento, fecha de instalación, instalador, póliza y notas (atributos `info.*`). Se consulta en una
+  **ventana flotante translúcida sobre el mapa** (menú ⋮ de la unidad → *Información de la unidad*, o el botón ⓘ de
+  la ventana del mapa): velocidad, encendido, última posición y sensores en vivo arriba, y debajo equipo, SIM,
+  vehículo e instalación en secciones plegables. Se puede arrastrar, minimizar, copiar y deja el mapa usable.
 
 ## Panel web
 

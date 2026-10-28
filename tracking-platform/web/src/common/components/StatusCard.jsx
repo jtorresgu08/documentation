@@ -21,6 +21,7 @@ import {
 } from '@mui/material';
 import { makeStyles } from 'tss-react/mui';
 import CloseIcon from '@mui/icons-material/Close';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ReplayIcon from '@mui/icons-material/Replay';
 import PublishIcon from '@mui/icons-material/Publish';
 import EditIcon from '@mui/icons-material/Edit';
@@ -37,6 +38,7 @@ import { useCatch, useCatchCallback } from '../../reactHelper';
 import { useAttributePreference } from '../util/preferences';
 import fetchOrThrow from '../util/fetchOrThrow';
 import { formatSensorValue, parseSensors, sensorValue } from '../util/sensors';
+import { openUnitInfo, useUnitInfo } from '../util/unitInfo';
 
 const useStyles = makeStyles()((theme, { desktopPadding }) => ({
   card: {
@@ -129,6 +131,7 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
   const shareDisabled = useSelector((state) => state.session.server.attributes.disableShare);
   const user = useSelector((state) => state.session.user);
   const device = useSelector((state) => state.devices.items[deviceId]);
+  const infoOpen = useUnitInfo() === deviceId;
 
   const deviceImage = device?.attributes?.deviceImage;
 
@@ -168,6 +171,11 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
     });
     navigate(`/settings/geofence/${item.id}`);
   }, [navigate, position]);
+
+  // the floating unit information panel already shows this unit
+  if (infoOpen) {
+    return null;
+  }
 
   return (
     <>
@@ -248,6 +256,11 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
                     disabled={!position}
                   >
                     <PendingIcon />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title={t('unitInfoTitle')}>
+                  <IconButton color="primary" onClick={() => openUnitInfo(deviceId)}>
+                    <InfoOutlinedIcon />
                   </IconButton>
                 </Tooltip>
                 <Tooltip title={t('reportReplay')}>
