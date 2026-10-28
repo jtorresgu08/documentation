@@ -23,6 +23,8 @@ import StopReportPage from './reports/StopReportPage';
 import SummaryReportPage from './reports/SummaryReportPage';
 import ChartReportPage from './reports/ChartReportPage';
 import FuelReportPage from './reports/FuelReportPage';
+import FuelEvidencePage from './reports/FuelEvidencePage';
+import TrackPage from './other/TrackPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -85,7 +87,10 @@ const Navigation = () => {
     if (query.get('token')) {
       const token = query.get('token');
       await fetch(`/api/session?token=${encodeURIComponent(token)}`);
-      navigate(pathname, { replace: true });
+      // keep the other parameters (tracking link destination)
+      const rest = new URLSearchParams(query);
+      rest.delete('token');
+      navigate(rest.toString() ? `${pathname}?${rest}` : pathname, { replace: true });
     } else if (pathname == '/' && query.get('deviceId')) {
       const deviceId = query.get('deviceId');
       const response = await fetchOrThrow(`/api/devices?uniqueId=${deviceId}`);
@@ -116,6 +121,7 @@ const Navigation = () => {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/change-server" element={<ChangeServerPage />} />
+      <Route path="/track" element={<TrackPage />} />
       <Route path="/" element={<App />}>
         <Route index element={<MainPage />} />
 
@@ -176,6 +182,7 @@ const Navigation = () => {
           <Route path="combined" element={<CombinedReportPage />} />
           <Route path="chart" element={<ChartReportPage />} />
           <Route path="fuel" element={<FuelReportPage />} />
+          <Route path="fuel/evidence" element={<FuelEvidencePage />} />
           <Route path="events" element={<EventReportPage />} />
           <Route path="route" element={<PositionsReportPage />} />
           <Route path="stops" element={<StopReportPage />} />

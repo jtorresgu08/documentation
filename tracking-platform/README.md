@@ -123,6 +123,24 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   la ventana del mapa): velocidad, encendido, última posición y sensores en vivo arriba, y debajo equipo, SIM,
   vehículo e instalación en secciones plegables. Se puede arrastrar, minimizar, copiar y deja el mapa usable.
 
+## Seguridad, WhatsApp y evidencia (parche `0009`)
+
+- **Corte de motor seguro**: el servidor solo envía el corte si la unidad va a la velocidad permitida o menos (20 km/h
+  por defecto, `engineStop.maxSpeed` por servidor o unidad). Si va más rápido lo rechaza, o lo deja **programado para
+  cuando se detenga** (se puede cancelar; vence a las 12 h y se pierde si el servidor reinicia, que es lo seguro).
+  Diálogo con la velocidad actual y confirmación explícita desde la tarjeta de la unidad o *Enviar comando*; queda
+  registrado quién lo ordenó y el resultado llega como alerta.
+- **Enlace de seguimiento para el cliente final**: en *Compartir ubicación* se puede indicar un destino (coordenadas y
+  nombre); el enlace abre una página simple con la marca, la unidad en vivo, el destino, la distancia y la **hora
+  estimada de llegada**, sin entrar a la plataforma.
+- **WhatsApp**: canal de alertas **WhatsApp** (Cloud API de Meta, plantilla aprobada) y **bot de consultas**: "ABC-123",
+  "dónde está la cisterna 7", "lista". Responde solo a números registrados y solo sobre sus unidades, con estado,
+  velocidad, combustible, dirección y enlace al mapa. Configuración en [infra/DEPLOY.md](infra/DEPLOY.md), sección 10.
+- **Evidencia de robo de combustible**: al confirmarse una descarga, la plataforma pide automáticamente una **foto por
+  cámara** a la dashcam / MDVR de la unidad (JT808 o Jimi; `fuel.drainPhotos=false` lo desactiva). Desde *Reportes de
+  combustible* → ⋯ → **Generar evidencia (PDF)** se obtiene un informe imprimible con datos de la unidad, litros, hora,
+  lugar, gráfica antes/después, mapa, fotos de la cámara del intervalo y espacio para firmas.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -193,6 +211,7 @@ python3 server/tests/test_jimi.py clip.mp4 cabina.jpg
 python3 server/tests/test_status.py
 SMS_CAPTURE_PORT=7620 python3 server/tests/test_teltonika_ft.py   # con sms.http.url=http://127.0.0.1:7620/sms
 python3 server/tests/test_fuel.py
+python3 server/tests/test_safety.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 ```
 
 ## Producción

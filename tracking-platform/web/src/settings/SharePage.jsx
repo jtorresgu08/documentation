@@ -30,6 +30,9 @@ const SharePage = () => {
 
   const [expiration, setExpiration] = useState(dayjs().add(1, 'week').locale('en').format('YYYY-MM-DD'));
   const [link, setLink] = useState();
+  const [destination, setDestination] = useState('');
+  const [label, setLabel] = useState('');
+  const [trackLink, setTrackLink] = useState();
 
   const handleShare = useCatchCallback(async () => {
     const expirationTime = dayjs(expiration).toISOString();
@@ -39,7 +42,16 @@ const SharePage = () => {
     });
     const token = await response.text();
     setLink(`${window.location.origin}?token=${token}`);
-  }, [id, expiration, setLink]);
+    const [lat, lon] = destination.split(',').map((value) => Number(value.trim()));
+    const params = new URLSearchParams({ token });
+    if (destination && Number.isFinite(lat) && Number.isFinite(lon)) {
+      params.append('dest', `${lat},${lon}`);
+      if (label.trim()) {
+        params.append('label', label.trim());
+      }
+    }
+    setTrackLink(`${window.location.origin}/track?${params}`);
+  }, [id, expiration, destination, label, setLink]);
 
   return (
     <PageLayout menu={<SettingsMenu />} breadcrumbs={['deviceShare']}>
@@ -52,7 +64,7 @@ const SharePage = () => {
           </AccordionSummary>
           <AccordionDetails className={classes.details}>
             <TextField
-              value={device.name}
+              value={device?.name || ''}
               label={t('sharedDevice')}
               disabled
             />
@@ -61,6 +73,18 @@ const SharePage = () => {
               type="date"
               value={expiration}
               onChange={(e) => setExpiration(e.target.value)}
+            />
+            <TextField
+              label={t('trackDestinationCoordinates')}
+              placeholder="-12.0464, -77.0428"
+              helperText={t('trackDestinationHelp')}
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+            />
+            <TextField
+              label={t('trackDestinationName')}
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
             />
             <Button
               variant="outlined"
@@ -77,6 +101,17 @@ const SharePage = () => {
                 readOnly: true,
               }}
             />
+            <TextField
+              value={trackLink || ''}
+              label={t('trackLink')}
+              helperText={t('trackLinkHelp')}
+              InputProps={{
+                readOnly: true,
+              }}
+            />
+            <Button variant="outlined" disabled={!trackLink} onClick={() => navigator.clipboard?.writeText(trackLink)}>
+              {t('trackCopy')}
+            </Button>
           </AccordionDetails>
         </Accordion>
         <div className={classes.buttons}>

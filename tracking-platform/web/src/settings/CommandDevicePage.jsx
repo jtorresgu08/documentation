@@ -18,6 +18,7 @@ import { useCatch } from '../reactHelper';
 import { useRestriction } from '../common/util/permissions';
 import useSettingsStyles from './common/useSettingsStyles';
 import fetchOrThrow from '../common/util/fetchOrThrow';
+import EngineCutDialog from '../common/components/EngineCutDialog';
 
 const CommandDevicePage = () => {
   const navigate = useNavigate();
@@ -27,6 +28,7 @@ const CommandDevicePage = () => {
   const { id } = useParams();
 
   const [savedId, setSavedId] = useState(0);
+  const [engineMode, setEngineMode] = useState(null);
   const [item, setItem] = useState({});
 
   const limitCommands = useRestriction('limitCommands');
@@ -41,6 +43,12 @@ const CommandDevicePage = () => {
     }
 
     command.deviceId = parseInt(id, 10);
+
+    // engine stop goes through the safe cut dialog: speed check, confirmation, cut when stopped
+    if (command.type === 'engineStop') {
+      setEngineMode('stop');
+      return;
+    }
 
     await fetchOrThrow('/api/commands/send', {
       method: 'POST',
@@ -96,6 +104,7 @@ const CommandDevicePage = () => {
           </Button>
         </div>
       </Container>
+      <EngineCutDialog deviceId={engineMode ? parseInt(id, 10) : null} mode={engineMode} onClose={() => setEngineMode(null)} />
     </PageLayout>
   );
 };

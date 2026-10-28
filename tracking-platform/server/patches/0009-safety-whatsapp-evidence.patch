@@ -1,0 +1,1178 @@
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index 81e7081..9a721a8 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -50,6 +50,7 @@ import org.traccar.handler.events.CommandResultEventHandler;
+ import org.traccar.handler.events.DriverEventHandler;
+ import org.traccar.handler.events.FuelEventHandler;
+ import org.traccar.handler.events.FuelSensorEventHandler;
++import org.traccar.handler.events.EngineStopEventHandler;
+ import org.traccar.handler.events.GeofenceEventHandler;
+ import org.traccar.handler.events.IgnitionEventHandler;
+ import org.traccar.handler.events.MaintenanceEventHandler;
+@@ -126,6 +127,7 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 BehaviorEventHandler.class,
+                 FuelEventHandler.class,
+                 FuelSensorEventHandler.class,
++                EngineStopEventHandler.class,
+                 MotionEventHandler.class,
+                 GeofenceEventHandler.class,
+                 AlarmEventHandler.class,
+diff --git a/src/main/java/org/traccar/api/resource/CommandResource.java b/src/main/java/org/traccar/api/resource/CommandResource.java
+index 4845738..35466f0 100644
+--- a/src/main/java/org/traccar/api/resource/CommandResource.java
++++ b/src/main/java/org/traccar/api/resource/CommandResource.java
+@@ -28,6 +28,7 @@ import org.traccar.command.CommandSenderManager;
+ import org.traccar.config.Keys;
+ import org.traccar.database.CommandsManager;
+ import org.traccar.helper.LogAction;
++import org.traccar.safety.EngineStopGuard;
+ import org.traccar.helper.model.DeviceUtil;
+ import org.traccar.model.Command;
+ import org.traccar.model.Device;
+@@ -56,7 +57,9 @@ import java.lang.reflect.Modifier;
+ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.Collections;
++import java.util.LinkedHashMap;
+ import java.util.List;
++import java.util.Map;
+ 
+ @Path("commands")
+ @Produces(MediaType.APPLICATION_JSON)
+@@ -74,6 +77,9 @@ public class CommandResource extends ExtendedObjectResource<Command> {
+     @Inject
+     private LogAction actionLogger;
+ 
++    @Inject
++    private EngineStopGuard engineStopGuard;
++
+     @Inject
+     private CommandSenderManager commandSenderManager;
+ 
+@@ -138,6 +144,13 @@ public class CommandResource extends ExtendedObjectResource<Command> {
+             for (Device device : devices) {
+                 Command command = QueuedCommand.fromCommand(entity).toCommand();
+                 command.setDeviceId(device.getId());
++                if (Command.TYPE_ENGINE_STOP.equals(command.getType())
++                        && !engineStopGuard.check(device.getId()).allowed()) {
++                    if (entity.getBoolean(EngineStopGuard.KEY_WHEN_STOPPED)) {
++                        engineStopGuard.addPending(command, getUserId());
++                    }
++                    continue;
++                }
+                 QueuedCommand queuedCommand = commandsManager.sendCommand(command);
+                 if (queuedCommand != null) {
+                     queuedCommands.add(queuedCommand);
+@@ -148,6 +161,22 @@ public class CommandResource extends ExtendedObjectResource<Command> {
+             }
+         } else {
+             permissionsService.checkPermission(Device.class, getUserId(), entity.getDeviceId());
++            if (Command.TYPE_ENGINE_STOP.equals(entity.getType())) {
++                EngineStopGuard.Check check = engineStopGuard.check(entity.getDeviceId());
++                if (!check.allowed()) {
++                    Map<String, Object> result = new LinkedHashMap<>();
++                    result.put("speed", Math.round(check.speed()));
++                    result.put("limit", check.limit());
++                    if (entity.getBoolean(EngineStopGuard.KEY_WHEN_STOPPED)) {
++                        engineStopGuard.addPending(entity, getUserId());
++                        actionLogger.command(request, getUserId(), 0, entity.getDeviceId(), "engineStopPending");
++                        result.put("pending", true);
++                        return Response.accepted(result).build();
++                    }
++                    result.put("error", "moving");
++                    return Response.status(Response.Status.CONFLICT).entity(result).build();
++                }
++            }
+             QueuedCommand queuedCommand = commandsManager.sendCommand(entity);
+             if (queuedCommand != null) {
+                 return Response.accepted(queuedCommand).build();
+diff --git a/src/main/java/org/traccar/api/resource/SafetyResource.java b/src/main/java/org/traccar/api/resource/SafetyResource.java
+new file mode 100644
+index 0000000..9490219
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/SafetyResource.java
+@@ -0,0 +1,79 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.servlet.http.HttpServletRequest;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.core.Context;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.LogAction;
++import org.traccar.model.Device;
++import org.traccar.model.UserRestrictions;
++import org.traccar.safety.EngineStopGuard;
++import org.traccar.storage.StorageException;
++
++import java.util.LinkedHashMap;
++import java.util.Map;
++
++/**
++ * Safe engine stop state of a unit: current speed, allowed limit and the pending "cut when stopped" request.
++ */
++@Path("safety")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class SafetyResource extends BaseResource {
++
++    @Inject
++    private EngineStopGuard engineStopGuard;
++
++    @Inject
++    private LogAction actionLogger;
++
++    @Context
++    private HttpServletRequest request;
++
++    @GET
++    @Path("engine/{deviceId}")
++    public Map<String, Object> engine(@PathParam("deviceId") long deviceId) throws StorageException {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        EngineStopGuard.Check check = engineStopGuard.check(deviceId);
++        EngineStopGuard.Pending pending = engineStopGuard.getPending(deviceId);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("speed", Math.round(check.speed()));
++        result.put("limit", check.limit());
++        result.put("allowed", check.allowed());
++        result.put("pending", pending != null ? Map.of("time", pending.time(), "userId", pending.userId()) : null);
++        return result;
++    }
++
++    @DELETE
++    @Path("engine/{deviceId}/pending")
++    public Response cancel(@PathParam("deviceId") long deviceId) throws StorageException {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getLimitCommands);
++        if (engineStopGuard.takePending(deviceId) != null) {
++            actionLogger.command(request, getUserId(), 0, deviceId, "engineStopCancel");
++        }
++        return Response.noContent().build();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/WhatsappResource.java b/src/main/java/org/traccar/api/resource/WhatsappResource.java
+new file mode 100644
+index 0000000..ad7ac36
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/WhatsappResource.java
+@@ -0,0 +1,126 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.annotation.security.PermitAll;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.HeaderParam;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.api.BaseResource;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.model.User;
++import org.traccar.whatsapp.WhatsappBot;
++import org.traccar.whatsapp.WhatsappClient;
++
++import javax.crypto.Mac;
++import javax.crypto.spec.SecretKeySpec;
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.util.HexFormat;
++
++/**
++ * WhatsApp Cloud API webhook: registration check and incoming messages, answered by the unit query bot. Messages
++ * must carry a valid Meta signature (app secret), otherwise they are rejected.
++ */
++@Path("whatsapp")
++public class WhatsappResource extends BaseResource {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(WhatsappResource.class);
++
++    @Inject
++    private Config config;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    @Inject
++    private WhatsappBot bot;
++
++    @Inject
++    private WhatsappClient whatsappClient;
++
++    static boolean validSignature(String secret, String body, String signature) {
++        if (secret == null || secret.isBlank() || signature == null || !signature.startsWith("sha256=")) {
++            return false;
++        }
++        try {
++            Mac mac = Mac.getInstance("HmacSHA256");
++            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
++            byte[] expected = mac.doFinal(body.getBytes(StandardCharsets.UTF_8));
++            byte[] received = HexFormat.of().parseHex(signature.substring(7));
++            return MessageDigest.isEqual(expected, received);
++        } catch (Exception e) {
++            return false;
++        }
++    }
++
++    @PermitAll
++    @GET
++    @Path("webhook")
++    @Produces(MediaType.TEXT_PLAIN)
++    public Response verify(
++            @QueryParam("hub.mode") String mode, @QueryParam("hub.verify_token") String token,
++            @QueryParam("hub.challenge") String challenge) {
++        String expected = config.getString(Keys.WHATSAPP_VERIFY_TOKEN);
++        if ("subscribe".equals(mode) && expected != null && !expected.isBlank() && expected.equals(token)) {
++            return Response.ok(challenge).build();
++        }
++        return Response.status(Response.Status.FORBIDDEN).build();
++    }
++
++    @PermitAll
++    @POST
++    @Path("webhook")
++    @Consumes(MediaType.WILDCARD)
++    public Response receive(String body, @HeaderParam("X-Hub-Signature-256") String signature) {
++        if (!validSignature(config.getString(Keys.WHATSAPP_APP_SECRET), body, signature)) {
++            return Response.status(Response.Status.FORBIDDEN).build();
++        }
++        try {
++            for (JsonNode entry : objectMapper.readTree(body).path("entry")) {
++                for (JsonNode change : entry.path("changes")) {
++                    for (JsonNode message : change.path("value").path("messages")) {
++                        if (!"text".equals(message.path("type").asText())) {
++                            continue;
++                        }
++                        String from = message.path("from").asText();
++                        User user = bot.findUser(from);
++                        String reply = user != null
++                                ? bot.answer(user, message.path("text").path("body").asText())
++                                : "Este número no está registrado en la plataforma. Pide a tu administrador que lo "
++                                        + "agregue a tu usuario.";
++                        whatsappClient.sendText(from, reply);
++                    }
++                }
++            }
++        } catch (Exception e) {
++            LOGGER.warn("WhatsApp message failed", e);
++        }
++        // always acknowledge, Meta retries otherwise
++        return Response.ok().build();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/config/Keys.java b/src/main/java/org/traccar/config/Keys.java
+index 2bff6e5..8c0622a 100644
+--- a/src/main/java/org/traccar/config/Keys.java
++++ b/src/main/java/org/traccar/config/Keys.java
+@@ -2040,4 +2040,79 @@ public final class Keys {
+             "broadcast.secondary",
+             List.of(KeyType.CONFIG));
+ 
++    /**
++     * Engine stop is only sent while the unit goes at or below this speed (km/h); 0 disables the check.
++     */
++    public static final ConfigKey<Double> ENGINE_STOP_MAX_SPEED = new DoubleConfigKey(
++            "engineStop.maxSpeed",
++            List.of(KeyType.SERVER, KeyType.DEVICE),
++            20.0);
++
++    /**
++     * Hours a "cut when stopped" request waits for the unit to stop before it is dropped.
++     */
++    public static final ConfigKey<Integer> ENGINE_STOP_PENDING_HOURS = new IntegerConfigKey(
++            "engineStop.pendingHours",
++            List.of(KeyType.CONFIG),
++            12);
++
++    /**
++     * WhatsApp Cloud API access token (Meta).
++     */
++    public static final ConfigKey<String> NOTIFICATOR_WHATSAPP_TOKEN = new StringConfigKey(
++            "notificator.whatsapp.token",
++            List.of(KeyType.CONFIG));
++
++    /**
++     * WhatsApp Cloud API phone number id that sends the messages.
++     */
++    public static final ConfigKey<String> NOTIFICATOR_WHATSAPP_PHONE_NUMBER_ID = new StringConfigKey(
++            "notificator.whatsapp.phoneNumberId",
++            List.of(KeyType.CONFIG));
++
++    /**
++     * Approved message template with one body parameter, needed for alerts outside the 24 hour chat window.
++     */
++    public static final ConfigKey<String> NOTIFICATOR_WHATSAPP_TEMPLATE = new StringConfigKey(
++            "notificator.whatsapp.template",
++            List.of(KeyType.CONFIG));
++
++    /**
++     * Template language code.
++     */
++    public static final ConfigKey<String> NOTIFICATOR_WHATSAPP_LANGUAGE = new StringConfigKey(
++            "notificator.whatsapp.language",
++            List.of(KeyType.CONFIG),
++            "es");
++
++    /**
++     * Graph API base URL (Meta by default; a provider proxy can be used instead).
++     */
++    public static final ConfigKey<String> NOTIFICATOR_WHATSAPP_URL = new StringConfigKey(
++            "notificator.whatsapp.url",
++            List.of(KeyType.CONFIG),
++            "https://graph.facebook.com");
++
++    /**
++     * Graph API version.
++     */
++    public static final ConfigKey<String> NOTIFICATOR_WHATSAPP_API_VERSION = new StringConfigKey(
++            "notificator.whatsapp.apiVersion",
++            List.of(KeyType.CONFIG),
++            "v21.0");
++
++    /**
++     * Token Meta sends when the webhook is registered.
++     */
++    public static final ConfigKey<String> WHATSAPP_VERIFY_TOKEN = new StringConfigKey(
++            "whatsapp.verifyToken",
++            List.of(KeyType.CONFIG));
++
++    /**
++     * App secret used to check the signature of incoming WhatsApp messages; without it the bot is off.
++     */
++    public static final ConfigKey<String> WHATSAPP_APP_SECRET = new StringConfigKey(
++            "whatsapp.appSecret",
++            List.of(KeyType.CONFIG));
++
+ }
+diff --git a/src/main/java/org/traccar/handler/events/EngineStopEventHandler.java b/src/main/java/org/traccar/handler/events/EngineStopEventHandler.java
+new file mode 100644
+index 0000000..b69356d
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/EngineStopEventHandler.java
+@@ -0,0 +1,73 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.database.CommandsManager;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.safety.EngineStopGuard;
++
++/**
++ * Sends a pending "cut when stopped" engine stop as soon as the unit reports a speed at or below the limit, and
++ * reports it (or its expiry) as a command result event.
++ */
++public class EngineStopEventHandler extends BaseEventHandler {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(EngineStopEventHandler.class);
++
++    private final EngineStopGuard guard;
++    private final CommandsManager commandsManager;
++
++    @Inject
++    public EngineStopEventHandler(EngineStopGuard guard, CommandsManager commandsManager) {
++        this.guard = guard;
++        this.commandsManager = commandsManager;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        long deviceId = position.getDeviceId();
++        if (!guard.hasPending(deviceId)) {
++            return;
++        }
++        try {
++            EngineStopGuard.Pending pending = guard.getPending(deviceId);
++            if (pending == null) {
++                // the command result notification template reads the result from the position
++                position.set(Position.KEY_RESULT, "engineStop: pending cut expired, not sent");
++                Event event = new Event(Event.TYPE_COMMAND_RESULT, position);
++                event.set(Position.KEY_RESULT, position.getString(Position.KEY_RESULT));
++                callback.eventDetected(event);
++                return;
++            }
++            if (guard.allowedNow(position, guard.limit(deviceId))) {
++                guard.takePending(deviceId);
++                commandsManager.sendCommand(pending.command());
++                long speed = Math.round(UnitsConverter.kphFromKnots(position.getSpeed()));
++                position.set(Position.KEY_RESULT, String.format("engineStop: sent when stopped (%d km/h)", speed));
++                Event event = new Event(Event.TYPE_COMMAND_RESULT, position);
++                event.set(Position.KEY_RESULT, position.getString(Position.KEY_RESULT));
++                event.set("userId", pending.userId());
++                callback.eventDetected(event);
++            }
++        } catch (Exception e) {
++            LOGGER.warn("Pending engine stop failed", e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/events/FuelSensorEventHandler.java b/src/main/java/org/traccar/handler/events/FuelSensorEventHandler.java
+index 32ab8c5..b689ff4 100644
+--- a/src/main/java/org/traccar/handler/events/FuelSensorEventHandler.java
++++ b/src/main/java/org/traccar/handler/events/FuelSensorEventHandler.java
+@@ -15,8 +15,12 @@ package org.traccar.handler.events;
+ 
+ import com.fasterxml.jackson.databind.ObjectMapper;
+ import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.database.CommandsManager;
+ import org.traccar.helper.UnitsConverter;
+ import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Command;
+ import org.traccar.model.Device;
+ import org.traccar.model.Event;
+ import org.traccar.model.Position;
+@@ -41,8 +45,13 @@ public class FuelSensorEventHandler extends BaseEventHandler {
+     static final int MAX_SAMPLES = 2000;
+     static final long MAX_AGE = 24 * 60 * 60 * 1000L;
+ 
++    private static final Logger LOGGER = LoggerFactory.getLogger(FuelSensorEventHandler.class);
++
++    static final int MAX_PHOTO_CHANNELS = 4;
++
+     private final CacheManager cacheManager;
+     private final ObjectMapper objectMapper;
++    private final CommandsManager commandsManager;
+ 
+     private final Map<String, State> states = new ConcurrentHashMap<>();
+ 
+@@ -52,9 +61,51 @@ public class FuelSensorEventHandler extends BaseEventHandler {
+     }
+ 
+     @Inject
+-    public FuelSensorEventHandler(CacheManager cacheManager, ObjectMapper objectMapper) {
++    public FuelSensorEventHandler(
++            CacheManager cacheManager, ObjectMapper objectMapper, CommandsManager commandsManager) {
+         this.cacheManager = cacheManager;
+         this.objectMapper = objectMapper;
++        this.commandsManager = commandsManager;
++    }
++
++    // evidence for a drain: one photo per camera channel from the dashcam / MDVR of the unit, when it has one
++    static List<Command> photoCommands(Device device, String protocol) {
++        List<Command> commands = new ArrayList<>();
++        if (device.getString("dashcam.kind") == null || "false".equals(device.getString("fuel.drainPhotos"))) {
++            return commands;
++        }
++        String cameraProtocol = device.getString("dashcam.protocol");
++        if (cameraProtocol == null) {
++            cameraProtocol = "gt06".equals(protocol) ? "jimi" : "jt808";
++        }
++        int channels = device.getInteger("dashcam.channels");
++        boolean jimi = "jimi".equals(cameraProtocol);
++        channels = Math.min(channels > 0 ? channels : jimi ? 2 : 4, jimi ? 2 : MAX_PHOTO_CHANNELS);
++        for (int channel = 1; channel <= channels; channel++) {
++            Command command = new Command();
++            command.setDeviceId(device.getId());
++            if (jimi) {
++                String template = device.getString("dashcam.photoCommand");
++                command.setType(Command.TYPE_CUSTOM);
++                command.set(Command.KEY_DATA, (template != null ? template : "PICTURE,{camera}")
++                        .replace("{camera}", channel == 1 ? "OUT" : "IN"));
++            } else {
++                command.setType(Command.TYPE_REQUEST_PHOTO);
++                command.set(Command.KEY_INDEX, channel);
++            }
++            commands.add(command);
++        }
++        return commands;
++    }
++
++    private void requestPhotos(Device device, Position position) {
++        for (Command command : photoCommands(device, position.getProtocol())) {
++            try {
++                commandsManager.sendCommand(command);
++            } catch (Exception e) {
++                LOGGER.warn("Drain photo request failed", e);
++            }
++        }
+     }
+ 
+     @Override
+@@ -70,6 +121,9 @@ public class FuelSensorEventHandler extends BaseEventHandler {
+             }
+             for (Event event : update(device.getId(), sensor, position, value)) {
+                 callback.eventDetected(event);
++                if (Event.TYPE_DEVICE_FUEL_DROP.equals(event.getType())) {
++                    requestPhotos(device, position);
++                }
+             }
+         }
+     }
+diff --git a/src/main/java/org/traccar/notification/NotificatorManager.java b/src/main/java/org/traccar/notification/NotificatorManager.java
+index 8d41ee3..a37b465 100644
+--- a/src/main/java/org/traccar/notification/NotificatorManager.java
++++ b/src/main/java/org/traccar/notification/NotificatorManager.java
+@@ -27,6 +27,7 @@ import org.traccar.notificators.NotificatorMail;
+ import org.traccar.notificators.NotificatorPushover;
+ import org.traccar.notificators.NotificatorSms;
+ import org.traccar.notificators.NotificatorTelegram;
++import org.traccar.notificators.NotificatorWhatsapp;
+ import org.traccar.notificators.NotificatorTraccar;
+ import org.traccar.notificators.NotificatorWeb;
+ 
+@@ -49,7 +50,8 @@ public class NotificatorManager {
+             "firebase", NotificatorFirebase.class,
+             "traccar", NotificatorTraccar.class,
+             "telegram", NotificatorTelegram.class,
+-            "pushover", NotificatorPushover.class);
++            "pushover", NotificatorPushover.class,
++            "whatsapp", NotificatorWhatsapp.class);
+ 
+     private final Injector injector;
+ 
+diff --git a/src/main/java/org/traccar/notificators/NotificatorWhatsapp.java b/src/main/java/org/traccar/notificators/NotificatorWhatsapp.java
+new file mode 100644
+index 0000000..e6b3231
+--- /dev/null
++++ b/src/main/java/org/traccar/notificators/NotificatorWhatsapp.java
+@@ -0,0 +1,55 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.notificators;
++
++import jakarta.inject.Inject;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.notification.MessageException;
++import org.traccar.notification.NotificationFormatter;
++import org.traccar.notification.NotificationMessage;
++import org.traccar.whatsapp.WhatsappClient;
++
++/**
++ * WhatsApp alerts to the user's "whatsapp" attribute, or to the user phone when it is not set.
++ */
++public class NotificatorWhatsapp extends Notificator {
++
++    private final WhatsappClient whatsappClient;
++
++    @Inject
++    public NotificatorWhatsapp(NotificationFormatter notificationFormatter, WhatsappClient whatsappClient) {
++        super(notificationFormatter);
++        this.whatsappClient = whatsappClient;
++    }
++
++    @Override
++    public void send(User user, NotificationMessage message, Event event, Position position) throws MessageException {
++        String phone = user.getString("whatsapp");
++        if (phone == null || phone.isBlank()) {
++            phone = user.getPhone();
++        }
++        if (phone == null || WhatsappClient.normalize(phone).isEmpty()) {
++            throw new MessageException("User has no WhatsApp number");
++        }
++        String text = message.digest();
++        if (position != null) {
++            text += String.format(
++                    "%nhttps://maps.google.com/?q=%.6f,%.6f", position.getLatitude(), position.getLongitude());
++        }
++        whatsappClient.sendAlert(phone, text);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/safety/EngineStopGuard.java b/src/main/java/org/traccar/safety/EngineStopGuard.java
+new file mode 100644
+index 0000000..6319b84
+--- /dev/null
++++ b/src/main/java/org/traccar/safety/EngineStopGuard.java
+@@ -0,0 +1,122 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.safety;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Command;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Safe engine stop: the cut is only sent while the unit goes at or below the configured speed. Above it the request
++ * is refused, or kept until the unit stops when the user asks for it. Pending cuts live in memory, so a restart
++ * drops them (the safe outcome: no cut).
++ */
++@Singleton
++public class EngineStopGuard {
++
++    public static final String KEY_WHEN_STOPPED = "whenStopped";
++
++    public record Pending(Command command, long userId, long time) {
++    }
++
++    public record Check(boolean allowed, double speed, double limit, boolean known) {
++    }
++
++    private final Config config;
++    private final Storage storage;
++    private final CacheManager cacheManager;
++
++    private final Map<Long, Pending> pending = new ConcurrentHashMap<>();
++
++    @Inject
++    public EngineStopGuard(Config config, Storage storage, CacheManager cacheManager) {
++        this.config = config;
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++    }
++
++    // device attribute first, then the server attribute, then the default
++    public double limit(long deviceId) throws StorageException {
++        String key = Keys.ENGINE_STOP_MAX_SPEED.getKey();
++        Device device = storage.getObject(Device.class, new Request(
++                new Columns.All(), new Condition.Equals("id", deviceId)));
++        if (device != null && device.hasAttribute(key)) {
++            return device.getDouble(key);
++        }
++        if (cacheManager.getServer() != null && cacheManager.getServer().hasAttribute(key)) {
++            return cacheManager.getServer().getDouble(key);
++        }
++        return Keys.ENGINE_STOP_MAX_SPEED.getDefaultValue();
++    }
++
++    public Position latest(long deviceId) throws StorageException {
++        Position position = cacheManager.getPosition(deviceId);
++        if (position == null) {
++            position = storage.getObject(Position.class, new Request(
++                    new Columns.All(), new Condition.LatestPositions(deviceId)));
++        }
++        return position;
++    }
++
++    public Check check(long deviceId) throws StorageException {
++        double limit = limit(deviceId);
++        Position position = latest(deviceId);
++        double speed = position != null ? UnitsConverter.kphFromKnots(position.getSpeed()) : 0;
++        return new Check(limit <= 0 || speed <= limit, speed, limit, position != null);
++    }
++
++    public boolean allowedNow(Position position, double limit) {
++        return limit <= 0 || UnitsConverter.kphFromKnots(position.getSpeed()) <= limit;
++    }
++
++    public void addPending(Command command, long userId) {
++        pending.put(command.getDeviceId(), new Pending(command, userId, System.currentTimeMillis()));
++    }
++
++    public Pending getPending(long deviceId) {
++        Pending item = pending.get(deviceId);
++        if (item != null && System.currentTimeMillis() - item.time() > maxAge()) {
++            pending.remove(deviceId);
++            return null;
++        }
++        return item;
++    }
++
++    public Pending takePending(long deviceId) {
++        return pending.remove(deviceId);
++    }
++
++    public boolean hasPending(long deviceId) {
++        return pending.containsKey(deviceId);
++    }
++
++    public long maxAge() {
++        return config.getInteger(Keys.ENGINE_STOP_PENDING_HOURS) * 3600_000L;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/whatsapp/WhatsappBot.java b/src/main/java/org/traccar/whatsapp/WhatsappBot.java
+new file mode 100644
+index 0000000..5ee331f
+--- /dev/null
++++ b/src/main/java/org/traccar/whatsapp/WhatsappBot.java
+@@ -0,0 +1,195 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.whatsapp;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.sensor.Sensor;
++import org.traccar.sensor.SensorConfig;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.text.Normalizer;
++import java.util.Collection;
++import java.util.Date;
++import java.util.List;
++import java.util.Locale;
++import java.util.stream.Collectors;
++
++/**
++ * Answers WhatsApp questions from registered users about their own units: "ABC-123", "dónde está la cisterna 7",
++ * "lista" or "ayuda". Only users whose "whatsapp" attribute or phone matches the sender get an answer, and only
++ * about the units they can see on the platform.
++ */
++@Singleton
++public class WhatsappBot {
++
++    static final int MAX_RESULTS = 3;
++
++    private final Storage storage;
++    private final ObjectMapper objectMapper;
++
++    @Inject
++    public WhatsappBot(Storage storage, ObjectMapper objectMapper) {
++        this.storage = storage;
++        this.objectMapper = objectMapper;
++    }
++
++    static String simplify(String text) {
++        String plain = Normalizer.normalize(text == null ? "" : text, Normalizer.Form.NFD).replaceAll("\\p{M}", "");
++        return plain.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim();
++    }
++
++    static String searchTerm(String text) {
++        String term = " " + simplify(text) + " ";
++        for (String word : List.of("donde esta", "donde", "ubicacion de", "ubicacion", "ubica", "esta", "el", "la",
++                "los", "las", "mi", "unidad", "camion", "vehiculo", "por favor", "hola")) {
++            term = term.replace(" " + word + " ", " ");
++        }
++        return term.trim();
++    }
++
++    public User findUser(String phone) throws StorageException {
++        String sender = WhatsappClient.normalize(phone);
++        if (sender.length() < 7) {
++            return null;
++        }
++        for (User user : storage.getObjects(User.class, new Request(new Columns.All()))) {
++            if (user.getDisabled() || user.getTemporary()
++                    || user.getExpirationTime() != null && user.getExpirationTime().before(new Date())) {
++                continue;
++            }
++            for (String number : new String[] {user.getString("whatsapp"), user.getPhone()}) {
++                String candidate = WhatsappClient.normalize(number);
++                // numbers may be saved with or without the country code
++                if (candidate.length() >= 7 && (sender.endsWith(candidate) || candidate.endsWith(sender))) {
++                    return user;
++                }
++            }
++        }
++        return null;
++    }
++
++    private Collection<Device> devices(User user) throws StorageException {
++        if (user.getAdministrator()) {
++            return storage.getObjects(Device.class, new Request(new Columns.All()));
++        }
++        return storage.getObjects(Device.class, new Request(
++                new Columns.All(), new Condition.Permission(User.class, user.getId(), Device.class)));
++    }
++
++    private Position position(Device device) throws StorageException {
++        return device.getPositionId() > 0 ? storage.getObject(Position.class, new Request(
++                new Columns.All(), new Condition.Equals("id", device.getPositionId()))) : null;
++    }
++
++    static String ago(Date time) {
++        long minutes = Math.max(0, (System.currentTimeMillis() - time.getTime()) / 60000);
++        if (minutes < 1) {
++            return "hace instantes";
++        }
++        if (minutes < 60) {
++            return "hace " + minutes + " min";
++        }
++        long hours = minutes / 60;
++        return hours < 48 ? "hace " + hours + " h " + minutes % 60 + " min" : "hace " + hours / 24 + " días";
++    }
++
++    String describe(Device device, Position position) {
++        StringBuilder text = new StringBuilder("*").append(device.getName()).append("*");
++        String plate = device.getString("info.plate");
++        if (plate != null && !plate.equals(device.getName())) {
++            text.append(" (").append(plate).append(")");
++        }
++        if (position == null) {
++            return text.append("\nSin posición todavía.").toString();
++        }
++        boolean offline = "offline".equals(device.getStatus());
++        boolean moving = position.getBoolean(Position.KEY_MOTION);
++        long speed = Math.round(UnitsConverter.kphFromKnots(position.getSpeed()));
++        text.append("\n").append(offline ? "🔴 Sin conexión" : moving ? "🟢 En movimiento" : "🟡 Detenido");
++        text.append(" · ").append(speed).append(" km/h");
++        if (position.hasAttribute(Position.KEY_IGNITION)) {
++            text.append(" · motor ").append(position.getBoolean(Position.KEY_IGNITION) ? "encendido" : "apagado");
++        }
++        for (Sensor sensor : SensorConfig.fuelSensors(objectMapper, device)) {
++            if (position.hasAttribute(sensor.getKey())) {
++                text.append(String.format(Locale.ROOT, "%n⛽ %s: %.1f %s", sensor.getName(),
++                        position.getDouble(sensor.getKey()), sensor.getUnit() != null ? sensor.getUnit() : "L"));
++            }
++        }
++        text.append("\n🕒 ").append(ago(position.getFixTime()));
++        if (position.getAddress() != null) {
++            text.append("\n📍 ").append(position.getAddress());
++        }
++        text.append(String.format(Locale.ROOT, "%nhttps://maps.google.com/?q=%.6f,%.6f",
++                position.getLatitude(), position.getLongitude()));
++        return text.toString();
++    }
++
++    public String answer(User user, String message) throws StorageException {
++        String simple = simplify(message);
++        if (simple.isEmpty() || List.of("ayuda", "menu", "hola", "help", "inicio").contains(simple)) {
++            return "Hola " + user.getName() + " 👋\nEscribe la placa o el nombre de la unidad para ver dónde está "
++                    + "(por ejemplo: *ABC-123* o *dónde está la cisterna 7*).\nEscribe *lista* para ver tus unidades.";
++        }
++        Collection<Device> devices = devices(user);
++        if (List.of("lista", "unidades", "flota", "todas").contains(simple)) {
++            if (devices.isEmpty()) {
++                return "No tienes unidades asignadas.";
++            }
++            String list = devices.stream().limit(30).map(device -> {
++                String status = device.getStatus();
++                String icon = "offline".equals(status) ? "🔴" : "online".equals(status) ? "🟢" : "⚪";
++                return icon + " " + device.getName();
++            }).collect(Collectors.joining("\n"));
++            return "Tus unidades (" + devices.size() + "):\n" + list
++                    + (devices.size() > 30 ? "\n…" : "") + "\n\nEscribe el nombre o la placa para ver su ubicación.";
++        }
++        String term = searchTerm(message);
++        if (term.isEmpty()) {
++            return "¿Qué unidad buscas? Escribe su placa o nombre.";
++        }
++        List<Device> matches = devices.stream().filter(device -> {
++            String name = simplify(device.getName());
++            String plate = simplify(device.getString("info.plate"));
++            String compactTerm = term.replace(" ", "");
++            return name.contains(term) || name.replace(" ", "").contains(compactTerm)
++                    || !plate.isEmpty() && plate.replace(" ", "").contains(compactTerm);
++        }).toList();
++        if (matches.isEmpty()) {
++            return "No encontré una unidad con \"" + term + "\". Escribe *lista* para ver tus unidades.";
++        }
++        StringBuilder text = new StringBuilder();
++        for (Device device : matches.stream().limit(MAX_RESULTS).toList()) {
++            if (!text.isEmpty()) {
++                text.append("\n\n");
++            }
++            text.append(describe(device, position(device)));
++        }
++        if (matches.size() > MAX_RESULTS) {
++            text.append("\n\n…y ").append(matches.size() - MAX_RESULTS).append(" más. Sé más específico.");
++        }
++        return text.toString();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/whatsapp/WhatsappClient.java b/src/main/java/org/traccar/whatsapp/WhatsappClient.java
+new file mode 100644
+index 0000000..f5f6acd
+--- /dev/null
++++ b/src/main/java/org/traccar/whatsapp/WhatsappClient.java
+@@ -0,0 +1,104 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.whatsapp;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import jakarta.ws.rs.client.Client;
++import jakarta.ws.rs.client.Entity;
++import jakarta.ws.rs.core.Response;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Sends WhatsApp messages through the Meta Cloud API. Free text only reaches users who wrote in the last 24 hours;
++ * alerts use the approved template when one is configured.
++ */
++@Singleton
++public class WhatsappClient {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(WhatsappClient.class);
++
++    private final Client client;
++    private final String url;
++    private final String token;
++    private final String template;
++    private final String language;
++
++    @Inject
++    public WhatsappClient(Config config, Client client) {
++        this.client = client;
++        this.url = String.format("%s/%s/%s/messages",
++                config.getString(Keys.NOTIFICATOR_WHATSAPP_URL),
++                config.getString(Keys.NOTIFICATOR_WHATSAPP_API_VERSION),
++                config.getString(Keys.NOTIFICATOR_WHATSAPP_PHONE_NUMBER_ID));
++        this.token = config.getString(Keys.NOTIFICATOR_WHATSAPP_TOKEN);
++        this.template = config.getString(Keys.NOTIFICATOR_WHATSAPP_TEMPLATE);
++        this.language = config.getString(Keys.NOTIFICATOR_WHATSAPP_LANGUAGE);
++    }
++
++    public static String normalize(String phone) {
++        return phone != null ? phone.replaceAll("[^0-9]", "") : "";
++    }
++
++    public boolean configured() {
++        return token != null && !token.isBlank();
++    }
++
++    public void sendText(String to, String text) {
++        post(Map.of(
++                "messaging_product", "whatsapp",
++                "to", normalize(to),
++                "type", "text",
++                "text", Map.of("preview_url", true, "body", text)));
++    }
++
++    public void sendAlert(String to, String text) {
++        if (template == null || template.isBlank()) {
++            sendText(to, text);
++            return;
++        }
++        // template variables cannot contain new lines or more than four spaces in a row
++        String parameter = text.replaceAll("\\s*\\n\\s*", " · ").replaceAll(" {4,}", " ");
++        post(Map.of(
++                "messaging_product", "whatsapp",
++                "to", normalize(to),
++                "type", "template",
++                "template", Map.of(
++                        "name", template,
++                        "language", Map.of("code", language),
++                        "components", List.of(Map.of(
++                                "type", "body",
++                                "parameters", List.of(Map.of("type", "text", "text", parameter)))))));
++    }
++
++    private void post(Map<String, Object> message) {
++        if (!configured()) {
++            throw new IllegalStateException("WhatsApp is not configured");
++        }
++        try (Response response = client.target(url).request()
++                .header("Authorization", "Bearer " + token)
++                .post(Entity.json(message))) {
++            if (response.getStatus() >= 300) {
++                LOGGER.warn("WhatsApp send failed: {} {}", response.getStatus(), response.readEntity(String.class));
++            }
++        }
++    }
++
++}
+diff --git a/src/test/java/org/traccar/api/resource/WhatsappResourceTest.java b/src/test/java/org/traccar/api/resource/WhatsappResourceTest.java
+new file mode 100644
+index 0000000..912115d
+--- /dev/null
++++ b/src/test/java/org/traccar/api/resource/WhatsappResourceTest.java
+@@ -0,0 +1,22 @@
++package org.traccar.api.resource;
++
++import org.apache.commons.codec.digest.HmacUtils;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class WhatsappResourceTest {
++
++    @Test
++    public void testSignature() {
++        String body = "{\"entry\":[]}";
++        String signature = "sha256=" + new HmacUtils("HmacSHA256", "secret").hmacHex(body);
++        assertTrue(WhatsappResource.validSignature("secret", body, signature));
++        assertFalse(WhatsappResource.validSignature("other", body, signature));
++        assertFalse(WhatsappResource.validSignature("secret", body + " ", signature));
++        assertFalse(WhatsappResource.validSignature(null, body, signature));
++        assertFalse(WhatsappResource.validSignature("secret", body, null));
++    }
++
++}
+diff --git a/src/test/java/org/traccar/handler/events/FuelSensorPhotoTest.java b/src/test/java/org/traccar/handler/events/FuelSensorPhotoTest.java
+new file mode 100644
+index 0000000..83ab82a
+--- /dev/null
++++ b/src/test/java/org/traccar/handler/events/FuelSensorPhotoTest.java
+@@ -0,0 +1,36 @@
++package org.traccar.handler.events;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Command;
++import org.traccar.model.Device;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class FuelSensorPhotoTest {
++
++    @Test
++    public void testPhotoCommands() {
++        Device device = new Device();
++        device.setId(7);
++        assertTrue(FuelSensorEventHandler.photoCommands(device, "huabao").isEmpty());
++
++        device.set("dashcam.kind", "mdvr");
++        device.set("dashcam.channels", 8);
++        var commands = FuelSensorEventHandler.photoCommands(device, "huabao");
++        assertEquals(4, commands.size());
++        assertEquals(Command.TYPE_REQUEST_PHOTO, commands.get(0).getType());
++        assertEquals(3, commands.get(2).getInteger(Command.KEY_INDEX));
++
++        device.set("dashcam.kind", "dashcam");
++        device.set("dashcam.channels", 2);
++        commands = FuelSensorEventHandler.photoCommands(device, "gt06");
++        assertEquals(2, commands.size());
++        assertEquals("PICTURE,OUT", commands.get(0).getString(Command.KEY_DATA));
++        assertEquals("PICTURE,IN", commands.get(1).getString(Command.KEY_DATA));
++
++        device.set("fuel.drainPhotos", false);
++        assertTrue(FuelSensorEventHandler.photoCommands(device, "gt06").isEmpty());
++    }
++
++}
+diff --git a/src/test/java/org/traccar/whatsapp/WhatsappBotTest.java b/src/test/java/org/traccar/whatsapp/WhatsappBotTest.java
+new file mode 100644
+index 0000000..2d8f21c
+--- /dev/null
++++ b/src/test/java/org/traccar/whatsapp/WhatsappBotTest.java
+@@ -0,0 +1,17 @@
++package org.traccar.whatsapp;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++public class WhatsappBotTest {
++
++    @Test
++    public void testSearchTerm() {
++        assertEquals("abc 123", WhatsappBot.searchTerm("¿Dónde está ABC-123?"));
++        assertEquals("cisterna 7", WhatsappBot.searchTerm("donde esta la cisterna 7"));
++        assertEquals("c7q 302", WhatsappBot.searchTerm("Ubicación de mi unidad C7Q-302 por favor"));
++        assertEquals("51987654321", WhatsappClient.normalize("+51 987 654 321"));
++    }
++
++}

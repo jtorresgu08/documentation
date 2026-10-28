@@ -28,6 +28,7 @@ import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import TuneIcon from '@mui/icons-material/Tune';
 import SpeedIcon from '@mui/icons-material/Speed';
+import GavelIcon from '@mui/icons-material/Gavel';
 import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useCatch } from '../reactHelper';
@@ -587,6 +588,12 @@ const FuelReportPage = () => {
             <ListItemText>{t('fuelMarkPending')}</ListItemText>
           </MenuItem>,
         ]}
+        {menu && menu.event.kind === 'drain' && (
+          <MenuItem onClick={() => { setMenu(null); navigate(`/reports/fuel/evidence?deviceId=${deviceId}&time=${menu.event.time}&sensorId=${sensorId}`); }}>
+            <ListItemIcon><GavelIcon fontSize="small" color="error" /></ListItemIcon>
+            <ListItemText>{t('evidenceGenerate')}</ListItemText>
+          </MenuItem>
+        )}
         {menu && (
           <MenuItem component="a" href={`https://www.google.com/maps?q=${menu.event.latitude},${menu.event.longitude}`} target="_blank" rel="noreferrer" onClick={() => setMenu(null)}>
             <ListItemIcon><MapIcon fontSize="small" /></ListItemIcon>

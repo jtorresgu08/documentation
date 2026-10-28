@@ -39,6 +39,13 @@ services:
       HUABAO_ATTACHMENT_SERVER: ${PUBLIC_HOST:-${DOMAIN}}:5261
       HUABAO_VIDEO_SERVER: ${PUBLIC_HOST:-${DOMAIN}}:${VIDEO_PORT:-7611}
       JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx2g}
+      # Canales de notificación y WhatsApp Cloud API (ver DEPLOY.md, sección 10); vacío = desactivado
+      NOTIFICATOR_TYPES: ${NOTIFICATOR_TYPES:-web,mail}
+      NOTIFICATOR_WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      NOTIFICATOR_WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      NOTIFICATOR_WHATSAPP_TEMPLATE: ${WHATSAPP_TEMPLATE:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
     volumes:
       - traccar-logs:/opt/traccar/logs
       - traccar-media:/opt/traccar/media

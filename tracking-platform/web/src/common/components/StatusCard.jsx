@@ -40,6 +40,7 @@ import EditIcon from '@mui/icons-material/Edit';
 
 import { useTranslation } from './LocalizationProvider';
 import RemoveDialog from './RemoveDialog';
+import EngineCutDialog from './EngineCutDialog';
 import AddressValue from './AddressValue';
 import { useDeviceReadonly, useRestriction } from '../util/permissions';
 import { devicesActions } from '../../store';
@@ -199,6 +200,8 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
   const t = useTranslation();
 
   const readonly = useRestriction('readonly');
+  const limitCommands = useRestriction('limitCommands');
+  const [engineMode, setEngineMode] = useState(null);
   const deviceReadonly = useDeviceReadonly();
 
   const shareDisabled = useSelector((state) => state.session.server.attributes.disableShare);
@@ -405,6 +408,12 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
           <MenuItem onClick={() => openUnitInfo(deviceId)}>{t('unitInfoTitle')}</MenuItem>
           {position && <MenuItem component={RouterLink} to={`/position/${position.id}`}>{t('sharedShowDetails')}</MenuItem>}
           {!disableActions && <MenuItem onClick={() => navigate(`/settings/device/${deviceId}/command`)}>{t('commandTitle')}</MenuItem>}
+          {!disableActions && !readonly && !limitCommands && (
+            <MenuItem onClick={() => setEngineMode('stop')}><Typography color="error">{t('engineCutTitle')}</Typography></MenuItem>
+          )}
+          {!disableActions && !readonly && !limitCommands && (
+            <MenuItem onClick={() => setEngineMode('resume')}>{t('engineResumeTitle')}</MenuItem>
+          )}
           {position && !readonly && <MenuItem onClick={handleGeofence}>{t('sharedCreateGeofence')}</MenuItem>}
           {position && <MenuItem component="a" target="_blank" href={`https://www.google.com/maps/search/?api=1&query=${position.latitude}%2C${position.longitude}`}>{t('linkGoogleMaps')}</MenuItem>}
           {position && <MenuItem component="a" target="_blank" href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${position.latitude}%2C${position.longitude}&heading=${position.course}`}>{t('linkStreetView')}</MenuItem>}
@@ -417,6 +426,7 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
           )}
         </Menu>
       )}
+      <EngineCutDialog deviceId={engineMode ? deviceId : null} mode={engineMode} onClose={() => setEngineMode(null)} />
       <RemoveDialog
         open={removing}
         endpoint="devices"

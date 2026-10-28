@@ -5,6 +5,10 @@ export default (t) => useMemo(() => ({
     name: t('attributeTelegramChatId'),
     type: 'string',
   },
+  whatsapp: {
+    name: t('attributeWhatsapp'),
+    type: 'string',
+  },
   pushoverUserKey: {
     name: t('attributePushoverUserKey'),
     type: 'string',

@@ -201,3 +201,29 @@ Para restaurar: `./scripts/restore.sh backups/traccar-AAAAMMDD-HHMMSS.dump`.
 3. En *Administración > Apariencia > Dominios de marca blanca* añade `gps.cliente.com=ID_DEL_GERENTE`.
 
 La pantalla de inicio de sesión de ese dominio mostrará el logo y los colores del gerente.
+
+## 10. WhatsApp: alertas y consultas
+
+La plataforma usa la **WhatsApp Cloud API de Meta**. Meta cobra por conversación; revisa su tarifa para Perú.
+
+1. En [developers.facebook.com](https://developers.facebook.com) crea una app de tipo *Business*, agrega el producto
+   **WhatsApp** y registra tu número. Copia el **Phone number ID**, genera un **token permanente** (usuario del
+   sistema con permiso `whatsapp_business_messaging`) y copia el **App secret** (Configuración → Básica).
+2. Crea y aprueba una **plantilla** de categoría *Utilidad* con un solo parámetro en el cuerpo, por ejemplo
+   `alerta_gps`: «Alerta de tu flota: {{1}}». Sin plantilla, las alertas solo llegan a quien escribió al número en las
+   últimas 24 horas.
+3. En `infra/.env` completa `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE`, un
+   `WHATSAPP_VERIFY_TOKEN` inventado por ti y `WHATSAPP_APP_SECRET`, y agrega `whatsapp` a `NOTIFICATOR_TYPES`.
+   Reinicia: `docker compose up -d`.
+4. En Meta → WhatsApp → Configuración, registra el webhook `https://TU_DOMINIO/api/whatsapp/webhook` con el mismo
+   token de verificación y suscríbete al campo **messages**.
+5. A cada usuario que quiera alertas o consultas, ponle su número en *Cuenta → Atributos → WhatsApp* (con código de
+   país, p. ej. +51 987 654 321) y crea la alerta en *Alertas* con el canal **WhatsApp**.
+
+Consultas: el usuario escribe la placa o el nombre ("ABC-123", "dónde está la cisterna 7"), `lista` o `ayuda`, y
+recibe estado, velocidad, combustible, dirección y enlace al mapa **solo de sus propias unidades**. Los números que no
+están registrados no reciben datos, y los mensajes sin la firma de Meta se rechazan.
+
+**Corte de motor seguro**: por defecto el corte solo se envía a 20 km/h o menos. Cámbialo en *Configuración del
+servidor → Atributos* (o por unidad) con `engineStop.maxSpeed` (km/h; 0 = sin límite).
+
