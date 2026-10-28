@@ -119,7 +119,7 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
         <MapNotification enabled={eventsAvailable} onClick={onEventsClick} />
       )}
       {desktop && (
-        <MapPadding start={parseInt(theme.dimensions.drawerWidthDesktop, 10) + parseInt(theme.spacing(1.5), 10)} />
+        <MapPadding start={parseInt(theme.dimensions.deviceListWidth, 10) + parseInt(theme.spacing(1.5), 10)} />
       )}
     </>
   );

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { makeStyles } from 'tss-react/mui';
+import { alpha } from '@mui/material/styles';
 import {
   Checkbox, Chip, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Tooltip, Typography,
 } from '@mui/material';
@@ -39,8 +40,8 @@ const useStyles = makeStyles()((theme) => ({
     height: GROUP_ROW_HEIGHT - 8,
     margin: theme.spacing(0.5, 1),
     paddingRight: theme.spacing(0.5),
-    borderRadius: theme.shape.borderRadius * 3,
-    backgroundColor: theme.palette.action.hover,
+    borderRadius: theme.spacing(1.5),
+    backgroundColor: alpha(theme.palette.text.primary, 0.04),
   },
   groupName: {
     flexGrow: 1,
@@ -50,16 +51,21 @@ const useStyles = makeStyles()((theme) => ({
   device: {
     display: 'flex',
     alignItems: 'center',
-    height: DEVICE_ROW_HEIGHT,
-    padding: theme.spacing(0, 0.5, 0, 1.5),
+    height: DEVICE_ROW_HEIGHT - 4,
+    margin: theme.spacing(0.25, 1),
+    padding: theme.spacing(0, 0.25, 0, 0.75),
     cursor: 'pointer',
-    borderBottom: `1px solid ${theme.palette.divider}`,
+    borderRadius: theme.spacing(1.5),
+    transition: 'background-color 0.15s',
     '&:hover': {
-      backgroundColor: theme.palette.action.hover,
+      backgroundColor: alpha(theme.palette.primary.main, 0.06),
     },
   },
   selected: {
-    backgroundColor: theme.palette.action.selected,
+    backgroundColor: alpha(theme.palette.primary.main, 0.12),
+    '&:hover': {
+      backgroundColor: alpha(theme.palette.primary.main, 0.14),
+    },
   },
   disabled: {
     opacity: 0.5,
@@ -218,6 +224,7 @@ export const DeviceRow = ({ row, data }) => {
       {data.setHidden && (
         <Checkbox
           size="small"
+          sx={{ p: 0.5, mr: 0.5 }}
           checked={!data.hidden.has(item.id)}
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => data.setHidden([item.id], !event.target.checked)}

@@ -33,11 +33,12 @@ const useStyles = makeStyles()((theme) => ({
     display: 'flex',
     flexDirection: 'column',
     [theme.breakpoints.up('md')]: {
+
       position: 'fixed',
       left: 0,
       top: 0,
       height: `calc(100% - ${theme.spacing(3)})`,
-      width: theme.dimensions.drawerWidthDesktop,
+      width: theme.dimensions.deviceListWidth,
       margin: theme.spacing(1.5),
       zIndex: 3,
     },
@@ -49,6 +50,22 @@ const useStyles = makeStyles()((theme) => ({
   header: {
     pointerEvents: 'auto',
     zIndex: 6,
+    [theme.breakpoints.up('md')]: {
+      borderRadius: `${theme.spacing(2)} ${theme.spacing(2)} 0 0`,
+      backgroundColor: alpha(theme.palette.background.paper, 0.86),
+      backdropFilter: 'blur(14px) saturate(160%)',
+      boxShadow: `0 4px 24px ${alpha(theme.palette.common.black, 0.1)}`,
+      borderBottom: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+    },
+  },
+  glass: {
+    [theme.breakpoints.up('md')]: {
+      borderRadius: `0 0 ${theme.spacing(2)} ${theme.spacing(2)}`,
+      backgroundColor: alpha(theme.palette.background.paper, 0.8),
+      backdropFilter: 'blur(14px) saturate(160%)',
+      boxShadow: `0 12px 32px ${alpha(theme.palette.common.black, 0.14)}`,
+      overflow: 'hidden',
+    },
   },
   middle: {
     flex: 1,
@@ -86,7 +103,7 @@ const useStyles = makeStyles()((theme) => ({
   counters: {
     position: 'fixed',
     top: theme.spacing(1.5),
-    left: `calc(${theme.dimensions.drawerWidthDesktop} + ${theme.spacing(4)})`,
+    left: `calc(${theme.dimensions.deviceListWidth} + ${theme.spacing(4)})`,
     zIndex: 3,
     display: 'flex',
     gap: theme.spacing(1),
@@ -197,7 +214,7 @@ const MainPage = () => {
               />
             </div>
           )}
-          <Paper square className={classes.contentList} style={devicesOpen ? {} : { visibility: 'hidden' }}>
+          <Paper square elevation={0} className={`${classes.contentList} ${classes.glass}`} style={devicesOpen ? {} : { visibility: 'hidden' }}>
             <div className={classes.quickFilters}>
               {quickOptions.map(([key, label, count, color]) => (
                 <Chip
@@ -250,7 +267,7 @@ const MainPage = () => {
           deviceId={selectedDeviceId}
           position={selectedPosition}
           onClose={() => dispatch(devicesActions.selectId(null))}
-          desktopPadding={theme.dimensions.drawerWidthDesktop}
+          desktopPadding={theme.dimensions.deviceListWidth}
         />
       )}
     </div>

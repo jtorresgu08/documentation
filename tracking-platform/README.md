@@ -133,7 +133,7 @@ Basado en tus capturas de referencia:
 - Menú de **Administración** (gerentes y superadministrador): Descripción general con contadores, Usuarios (con
   contador y columna *Gerente*), Dispositivos (en línea/total), Métricas, Configuración del servidor, Apariencia,
   Anuncios, Calendarios, Atributos calculados, Comandos guardados, Registros y Auditoría.
-- **Mapa en vivo** (diseño actualizado): filtros rápidos con contador sobre la lista (*Todos*, *En movimiento*,
+- **Mapa en vivo** (diseño actualizado): lista en un panel flotante translúcido con esquinas redondeadas y filas tipo tarjeta; filtros rápidos con contador sobre la lista (*Todos*, *En movimiento*,
   *Detenidos*, *Sin conexión*), que filtran también el mapa; resumen flotante "N vehículos · N en movimiento"; filas
   compactas con el icono del vehículo en el color de su estado (verde en movimiento, ámbar detenido, rojo sin
   conexión), estado con duración, encendido y velocidad; **marcadores rellenos con el mismo color** y la velocidad

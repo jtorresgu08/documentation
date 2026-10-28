@@ -2,6 +2,7 @@ export default {
   sidebarWidth: '28%',
   sidebarWidthTablet: '52px',
   drawerWidthDesktop: '360px',
+  deviceListWidth: '400px',
   drawerWidthTablet: '320px',
   drawerHeightPhone: '250px',
   filterFormWidth: '160px',
