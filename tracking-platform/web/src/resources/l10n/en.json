@@ -918,5 +918,18 @@
     "fuelMarkValid": "Mark as valid",
     "fuelMarkFalse": "Mark as false alarm",
     "fuelMarkPending": "Back to pending",
-    "fuelGoogleMaps": "Open in Google Maps"
+    "fuelGoogleMaps": "Open in Google Maps",
+    "quickAll": "All",
+    "quickMoving": "Moving",
+    "quickStopped": "Stopped",
+    "quickOffline": "Offline",
+    "quickVehicles": "vehicles",
+    "quickInMotion": "moving",
+    "cardConnected": "Connected",
+    "cardDisconnected": "Disconnected",
+    "cardAgo": "{time} ago",
+    "cardLastUpdate": "Last update",
+    "cardHistory": "View history",
+    "cardCenter": "Center",
+    "cardFollow": "Follow"
 }

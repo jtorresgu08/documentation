@@ -1,7 +1,12 @@
 import {
   useState, useCallback, useEffect, useMemo,
 } from 'react';
-import { Paper } from '@mui/material';
+import {
+  Box, Chip, Paper, Stack, Typography,
+} from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
+import NavigationIcon from '@mui/icons-material/Navigation';
 import { makeStyles } from 'tss-react/mui';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -16,6 +21,8 @@ import useFilter from './useFilter';
 import MainToolbar from './MainToolbar';
 import MainMap from './MainMap';
 import { useAttributePreference } from '../common/util/preferences';
+import { useTranslation } from '../common/components/LocalizationProvider';
+import { statusCategory } from './DeviceRow';
 
 const useStyles = makeStyles()((theme) => ({
   root: {
@@ -46,6 +53,9 @@ const useStyles = makeStyles()((theme) => ({
   middle: {
     flex: 1,
     display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gridTemplateRows: 'minmax(0, 1fr)',
+    minHeight: 0,
   },
   contentMap: {
     pointerEvents: 'auto',
@@ -55,6 +65,36 @@ const useStyles = makeStyles()((theme) => ({
     pointerEvents: 'auto',
     gridArea: '1 / 1',
     zIndex: 4,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+    minWidth: 0,
+  },
+  quickFilters: {
+    display: 'flex',
+    gap: theme.spacing(0.75),
+    padding: theme.spacing(1.25, 1.5, 0.5),
+    overflowX: 'auto',
+    flexShrink: 0,
+  },
+  listBox: {
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  counters: {
+    position: 'fixed',
+    top: theme.spacing(1.5),
+    left: `calc(${theme.dimensions.drawerWidthDesktop} + ${theme.spacing(4)})`,
+    zIndex: 3,
+    display: 'flex',
+    gap: theme.spacing(1),
+    padding: theme.spacing(0.75),
+    borderRadius: theme.spacing(1.5),
+    backgroundColor: alpha(theme.palette.background.paper, 0.85),
+    backdropFilter: 'blur(8px)',
+    boxShadow: theme.shadows[3],
   },
 }));
 
@@ -96,10 +136,31 @@ const MainPage = () => {
 
   useFilter(keyword, filter, filterSort, filterMap, positions, setFilteredDevices, setFilteredPositions);
 
+  const t = useTranslation();
+  const [quickStatus, setQuickStatus] = usePersistedState('quickStatus', 'all');
+  const categories = useMemo(
+    () => Object.fromEntries(filteredDevices.map((device) => [device.id, statusCategory(device, positions[device.id])])),
+    [filteredDevices, positions],
+  );
+  const counts = useMemo(() => Object.values(categories).reduce((result, category) => {
+    result[category] += 1;
+    return result;
+  }, { moving: 0, stopped: 0, offline: 0 }), [categories]);
+  const listDevices = quickStatus === 'all'
+    ? filteredDevices : filteredDevices.filter((device) => categories[device.id] === quickStatus);
+
   const mapPositions = useMemo(() => {
     const hidden = new Set(hiddenDevices);
-    return filteredPositions.filter((position) => !hidden.has(position.deviceId));
-  }, [filteredPositions, hiddenDevices]);
+    return filteredPositions.filter((position) => !hidden.has(position.deviceId)
+      && (quickStatus === 'all' || categories[position.deviceId] === quickStatus));
+  }, [filteredPositions, hiddenDevices, quickStatus, categories]);
+
+  const quickOptions = [
+    ['all', t('quickAll'), filteredDevices.length, 'primary'],
+    ['moving', t('quickMoving'), counts.moving, 'success'],
+    ['stopped', t('quickStopped'), counts.stopped, 'warning'],
+    ['offline', t('quickOffline'), counts.offline, 'error'],
+  ];
 
   return (
     <div className={classes.root}>
@@ -137,10 +198,51 @@ const MainPage = () => {
             </div>
           )}
           <Paper square className={classes.contentList} style={devicesOpen ? {} : { visibility: 'hidden' }}>
-            <DeviceList devices={filteredDevices} hiddenDevices={hiddenDevices} setHiddenDevices={setHiddenDevices} />
+            <div className={classes.quickFilters}>
+              {quickOptions.map(([key, label, count, color]) => (
+                <Chip
+                  key={key}
+                  size="small"
+                  clickable
+                  color={quickStatus === key ? color : 'default'}
+                  variant={quickStatus === key ? 'filled' : 'outlined'}
+                  onClick={() => setQuickStatus(key)}
+                  label={(
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <span>{label}</span>
+                      <Box component="span" sx={{ fontWeight: 700, opacity: 0.85 }}>{count}</Box>
+                    </Stack>
+                  )}
+                  sx={{ flexShrink: 0 }}
+                />
+              ))}
+            </div>
+            <div className={classes.listBox}>
+              <DeviceList devices={listDevices} hiddenDevices={hiddenDevices} setHiddenDevices={setHiddenDevices} />
+            </div>
           </Paper>
         </div>
       </div>
+      {desktop && (
+        <div className={classes.counters}>
+          {[['all', DirectionsCarIcon, t('quickVehicles'), filteredDevices.length, theme.palette.success.main],
+            ['moving', NavigationIcon, t('quickInMotion'), counts.moving, theme.palette.info.main]].map(([key, Icon, label, count, color]) => (
+              <Stack
+                key={key}
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                onClick={() => setQuickStatus(quickStatus === key ? 'all' : key)}
+                sx={{
+                  px: 1.5, py: 0.75, borderRadius: 1, cursor: 'pointer', bgcolor: alpha(color, quickStatus === key ? 0.22 : 0.1), color,
+                }}
+              >
+                <Icon fontSize="small" />
+                <Typography variant="body2" fontWeight={600}>{`${count} ${label}`}</Typography>
+              </Stack>
+          ))}
+        </div>
+      )}
       <EventsDrawer open={eventsOpen} onClose={() => setEventsOpen(false)} />
       <UnitInfoPanel />
       {selectedDeviceId && (

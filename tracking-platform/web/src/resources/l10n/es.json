@@ -918,5 +918,18 @@
     "fuelMarkValid": "Marcar como válido",
     "fuelMarkFalse": "Marcar como falsa alarma",
     "fuelMarkPending": "Volver a pendiente",
-    "fuelGoogleMaps": "Abrir en Google Maps"
+    "fuelGoogleMaps": "Abrir en Google Maps",
+    "quickAll": "Todos",
+    "quickMoving": "En movimiento",
+    "quickStopped": "Detenidos",
+    "quickOffline": "Sin conexión",
+    "quickVehicles": "vehículos",
+    "quickInMotion": "en movimiento",
+    "cardConnected": "Conectado",
+    "cardDisconnected": "Desconectado",
+    "cardAgo": "Hace {time}",
+    "cardLastUpdate": "Última actualización",
+    "cardHistory": "Ver historial",
+    "cardCenter": "Centrar",
+    "cardFollow": "Seguir"
 }

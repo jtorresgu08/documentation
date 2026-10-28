@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useDispatch, useSelector } from 'react-redux';
@@ -10,6 +10,7 @@ import MapCurrentLocation from '../map/MapCurrentLocation';
 import PoiMap from '../map/main/PoiMap';
 import MapPadding from '../map/MapPadding';
 import { devicesActions } from '../store';
+import { publishMapFollow } from '../common/util/mapFollow';
 import MapDefaultCamera from '../map/main/MapDefaultCamera';
 import MapLiveRoutes from '../map/main/MapLiveRoutes';
 import MapPositions from '../map/MapPositions';
@@ -64,6 +65,11 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
     }
   };
 
+  useEffect(() => {
+    publishMapFollow(values.follow, () => setToolValues((current) => ({ ...current, follow: !values.follow })));
+    return () => publishMapFollow(false, null);
+  }, [values.follow]);
+
   const tools = {
     values,
     toggle: (key) => {
@@ -95,6 +101,8 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
           onMarkerClick={onMarkerClick}
           selectedPosition={selectedPosition}
           showStatus
+          liveStatus
+          titleField="label"
           cluster={values.cluster}
           showTitles={values.labels}
         />

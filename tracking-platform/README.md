@@ -133,6 +133,13 @@ Basado en tus capturas de referencia:
 - Menú de **Administración** (gerentes y superadministrador): Descripción general con contadores, Usuarios (con
   contador y columna *Gerente*), Dispositivos (en línea/total), Métricas, Configuración del servidor, Apariencia,
   Anuncios, Calendarios, Atributos calculados, Comandos guardados, Registros y Auditoría.
+- **Mapa en vivo** (diseño actualizado): filtros rápidos con contador sobre la lista (*Todos*, *En movimiento*,
+  *Detenidos*, *Sin conexión*), que filtran también el mapa; resumen flotante "N vehículos · N en movimiento"; filas
+  compactas con el icono del vehículo en el color de su estado (verde en movimiento, ámbar detenido, rojo sin
+  conexión), estado con duración, encendido y velocidad; **marcadores rellenos con el mismo color** y la velocidad
+  en la etiqueta cuando se mueve; tarjeta de la unidad seleccionada con estado, velocidad, "hace X", dirección,
+  mosaicos de sensores (o encendido, combustible, voltaje y distancia), *Ver historial*, *Reportes*, *Centrar*,
+  *Seguir*, *Editar* y el menú ⋯ (ficha, comando, geocerca, mapas externos, compartir, eliminar).
 - Lista de dispositivos al estilo de tus capturas: agrupada por grupo con contador, casillas para mostrar u ocultar
   en el mapa (por vehículo o por grupo), hora del último reporte, "Detenido 5h 20min" / "En movimiento" /
   "Desconectado" / "Vencido", velocidad con punto de color y menú por vehículo (mapa, historial, cámaras, comando,

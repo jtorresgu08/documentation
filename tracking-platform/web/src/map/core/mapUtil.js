@@ -28,7 +28,8 @@ const canvasTintImage = (image, color) => {
   return canvas;
 };
 
-export const prepareIcon = (background, icon, color) => {
+// filled: the circle takes the status color and the icon turns white
+export const prepareIcon = (background, icon, color, filled) => {
   const canvas = document.createElement('canvas');
   canvas.width = background.width * devicePixelRatio;
   canvas.height = background.height * devicePixelRatio;
@@ -36,13 +37,13 @@ export const prepareIcon = (background, icon, color) => {
   canvas.style.height = `${background.height}px`;
 
   const context = canvas.getContext('2d');
-  context.drawImage(background, 0, 0, canvas.width, canvas.height);
+  context.drawImage(filled && color ? canvasTintImage(background, color) : background, 0, 0, canvas.width, canvas.height);
 
   if (icon) {
     const iconRatio = 0.5;
     const imageWidth = canvas.width * iconRatio;
     const imageHeight = canvas.height * iconRatio;
-    context.drawImage(canvasTintImage(icon, color), (canvas.width - imageWidth) / 2, (canvas.height - imageHeight) / 2, imageWidth, imageHeight);
+    context.drawImage(canvasTintImage(icon, filled ? '#ffffff' : color), (canvas.width - imageWidth) / 2, (canvas.height - imageHeight) / 2, imageWidth, imageHeight);
   }
 
   return context.getImageData(0, 0, canvas.width, canvas.height);

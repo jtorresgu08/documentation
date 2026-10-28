@@ -8,9 +8,19 @@ import { mapIconKey } from './core/preloadImages';
 import { useAttributePreference } from '../common/util/preferences';
 import { useCatchCallback } from '../reactHelper';
 import { findFonts } from './core/mapUtil';
+import { speedFromKnots, speedUnitString } from '../common/util/converter';
+import { useTranslation } from '../common/components/LocalizationProvider';
+
+// same colors as the device list: green moving, amber stopped, red offline
+const liveColor = (device, position) => {
+  if (device.status === 'offline' || (device.expirationTime && new Date(device.expirationTime) < new Date())) {
+    return 'error';
+  }
+  return position.attributes.motion ? 'success' : 'warning';
+};
 
 const MapPositions = ({
-  positions, onMapClick, onMarkerClick, showStatus, selectedPosition, titleField, cluster, showTitles = true,
+  positions, onMapClick, onMarkerClick, showStatus, selectedPosition, titleField, cluster, showTitles = true, liveStatus,
 }) => {
   const id = useId();
   const clusters = `${id}-clusters`;
@@ -26,6 +36,8 @@ const MapPositions = ({
   const clusterPreference = useAttributePreference('mapCluster', true);
   const mapCluster = cluster ?? clusterPreference;
   const directionType = useAttributePreference('mapDirection', 'selected');
+  const speedUnit = useAttributePreference('speedUnit', 'kmh');
+  const t = useTranslation();
 
   const createFeature = (devices, position, selectedPositionId) => {
     const device = devices[position.deviceId];
@@ -47,7 +59,10 @@ const MapPositions = ({
       name: device.name,
       fixTime: formatTime(position.fixTime, 'seconds'),
       category: mapIconKey(device.category),
-      color: showStatus ? position.attributes.color || getStatusColor(device.status) : 'neutral',
+      color: showStatus ? position.attributes.color || (liveStatus ? liveColor(device, position) : getStatusColor(device.status)) : 'neutral',
+      label: liveStatus && liveColor(device, position) === 'success'
+        ? `${device.name}\n${Math.round(speedFromKnots(position.speed, speedUnit))} ${speedUnitString(speedUnit, t)}`
+        : device.name,
       rotation: position.course,
       direction: showDirection,
     };

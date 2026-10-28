@@ -26,10 +26,11 @@ import { useTranslation } from '../common/components/LocalizationProvider';
 import { useAdministrator, useDeviceReadonly, useRestriction } from '../common/util/permissions';
 import { useAttributePreference } from '../common/util/preferences';
 import { fuelSensors } from '../common/util/sensors';
+import { mapIconKey, mapIcons } from '../map/core/preloadImages';
 import { openUnitInfo } from '../common/util/unitInfo';
 
 export const GROUP_ROW_HEIGHT = 56;
-export const DEVICE_ROW_HEIGHT = 84;
+export const DEVICE_ROW_HEIGHT = 68;
 
 const useStyles = makeStyles()((theme) => ({
   group: {
@@ -80,10 +81,27 @@ const useStyles = makeStyles()((theme) => ({
     marginLeft: theme.spacing(0.5),
   },
   dot: {
-    width: 12,
-    height: 12,
+    width: 8,
+    height: 8,
     borderRadius: '50%',
     flexShrink: 0,
+    display: 'inline-block',
+    marginRight: theme.spacing(0.75),
+  },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: '50%',
+    flexShrink: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: theme.spacing(1),
+  },
+  avatarIcon: {
+    width: 20,
+    height: 20,
+    filter: 'brightness(0) invert(1)',
   },
 }));
 
@@ -104,7 +122,7 @@ export const formatPeriod = (milliseconds) => {
 const isExpired = (device) => device.expirationTime && dayjs(device.expirationTime).isBefore(dayjs());
 
 // green moving, yellow online but stopped, red offline or expired, grey without data
-const statusOf = (device, position) => {
+export const statusOf = (device, position) => {
   if (isExpired(device)) {
     return { color: 'error', key: 'deviceExpired' };
   }
@@ -123,6 +141,14 @@ const statusOf = (device, position) => {
     key: moving ? 'deviceMoving' : 'deviceStopped',
     since: position.attributes.motionTime || position.fixTime,
   };
+};
+
+export const statusCategory = (device, position) => {
+  const { key } = statusOf(device, position);
+  if (key === 'deviceMoving') {
+    return 'moving';
+  }
+  return key === 'deviceStopped' ? 'stopped' : 'offline';
 };
 
 export const GroupRow = ({ row, data }) => {
@@ -197,13 +223,18 @@ export const DeviceRow = ({ row, data }) => {
           onChange={(event) => data.setHidden([item.id], !event.target.checked)}
         />
       )}
-      <div className={classes.texts}>
-        <Typography variant="subtitle1" noWrap sx={{ lineHeight: 1.3 }}>{item[devicePrimary]}</Typography>
-        <Typography variant="body2" color="text.secondary" noWrap>{time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '—'}</Typography>
-        <Typography variant="body2" noWrap sx={{ color: status.color === 'error' ? 'error.main' : 'text.secondary' }}>
-          {statusText}
-        </Typography>
+      <div className={classes.avatar} style={{ backgroundColor: theme.palette[status.color].main }}>
+        <img className={classes.avatarIcon} src={mapIcons[mapIconKey(item.category)]} alt="" />
       </div>
+      <Tooltip title={time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : ''} placement="top-start" enterDelay={600}>
+        <div className={classes.texts}>
+          <Typography variant="subtitle2" fontWeight={600} noWrap>{item[devicePrimary]}</Typography>
+          <Typography variant="body2" noWrap sx={{ color: status.color === 'error' ? 'error.main' : 'text.secondary', display: 'flex', alignItems: 'center' }}>
+            <span className={classes.dot} style={{ backgroundColor: theme.palette[status.color].main }} />
+            {statusText}
+          </Typography>
+        </div>
+      </Tooltip>
       {position?.attributes.alarm && (
         <Tooltip title={`${t('eventAlarm')}: ${formatAlarm(position.attributes.alarm, t)}`}>
           <ErrorIcon fontSize="small" color="error" />
@@ -220,8 +251,7 @@ export const DeviceRow = ({ row, data }) => {
         </Tooltip>
       )}
       <div className={classes.speed}>
-        <span className={classes.dot} style={{ backgroundColor: theme.palette[status.color].main }} />
-        <Typography variant="body1">
+        <Typography variant="body2" fontWeight={600}>
           {`${Math.round(speedFromKnots(position?.speed || 0, speedUnit))} ${speedUnitString(speedUnit, t)}`}
         </Typography>
       </div>
