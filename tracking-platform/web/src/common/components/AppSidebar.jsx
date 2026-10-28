@@ -39,6 +39,8 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import PaymentsIcon from '@mui/icons-material/Payments';
 import { useLocalization, useTranslation } from './LocalizationProvider';
 import { useAdministrator, useManager, useRestriction } from '../util/permissions';
 import useFeatures from '../util/useFeatures';
@@ -290,7 +292,13 @@ const AppSidebar = () => {
       match: /\/settings\/device\/\d+\/command/,
     },
     !disableReports && {
-      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel)/,
+      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel|driving|expenses)/,
+    },
+    !disableReports && {
+      key: 'expenses', title: t('expensesTitle'), icon: <PaymentsIcon />, href: '/reports/expenses', match: /^\/reports\/expenses/,
+    },
+    !disableReports && {
+      key: 'driving', title: t('drivingTitle'), icon: <EmojiEventsIcon />, href: '/reports/driving', match: /^\/reports\/driving/,
     },
     !disableReports && {
       key: 'fuel',

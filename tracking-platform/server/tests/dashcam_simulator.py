@@ -8,6 +8,7 @@ Sirve para probar el servidor sin cámaras reales:
   - subida de adjuntos al servidor de adjuntos (0x1210, 0x1211, flujo 0x30316364, 0x1212)
   - foto bajo demanda (0x8801 -> 0x0801 en varios paquetes)
   - solicitud de video en vivo (0x9101 / 0x9102)
+  - grabaciones de la memoria (0x9205 -> 0x1205) y su reproducción (0x9201 / 0x9202)
 
 Uso:
   python3 dashcam_simulator.py --host 127.0.0.1 --port 5015 --phone 013912345678 \
@@ -28,6 +29,13 @@ def bcd(value: str) -> bytes:
 
 def bcd_time(moment: datetime) -> bytes:
     return bytes.fromhex(moment.strftime('%y%m%d%H%M%S'))
+
+
+def parse_bcd_time(data: bytes):
+    text = data.hex()
+    if text == '000000000000':
+        return None
+    return datetime.strptime(text, '%y%m%d%H%M%S')
 
 
 def escape(data: bytes) -> bytes:
@@ -149,11 +157,19 @@ class Dashcam:
         self.photo = None
         self.live_requests = []
         self.photo_requests = 0
+        self.playback_requests = []
+        self.playback_controls = []
         self.log = print
         # JT808 devices report local time; Traccar assumes GMT+8 unless the device has a timezone attribute
         self.tz_offset = timezone_offset
         self.conn = Jt808Connection(host, port, phone)
         self.commands = threading.Thread(target=self._commands, daemon=True)
+        # recordings on the memory card (device local time): two per channel in the last hours, one with an alarm
+        now = self._device_time().replace(microsecond=0)
+        self.recordings = []
+        for channel in (1, 2, 3, 4):
+            self.recordings.append((channel, now - _hours(3), now - _hours(2), 0))
+            self.recordings.append((channel, now - _hours(1.5), now - _hours(0.5), 1 << 32 if channel == 2 else 0))
 
     def _device_time(self):
         return datetime.now(timezone.utc).replace(tzinfo=None) + _hours(self.tz_offset)
@@ -258,6 +274,28 @@ class Dashcam:
                 self.log(f'[{self.phone}] fin del video en vivo, canal {body[0]}')
                 self.live_requests.append(('stop', 0, body[0]))
                 self.conn.send(0x0001, struct.pack('>HHB', 0, 0x9102, 0))
+            elif msg_id == 0x9205:
+                channel = body[0]
+                start, end = parse_bcd_time(body[1:7]), parse_bcd_time(body[7:13])
+                self.log(f'[{self.phone}] consulta de grabaciones: canal {channel} {start} - {end}')
+                self.send_recordings(channel, start, end)
+            elif msg_id == 0x9201:
+                ip_len = body[0]
+                ip = body[1:1 + ip_len].decode()
+                offset = 1 + ip_len
+                tcp_port, _ = struct.unpack('>HH', body[offset:offset + 4])
+                channel, _, _, _, mode, speed = body[offset + 4:offset + 10]
+                start, end = parse_bcd_time(body[offset + 10:offset + 16]), parse_bcd_time(body[offset + 16:offset + 22])
+                self.playback_requests.append({'ip': ip, 'port': tcp_port, 'channel': channel, 'mode': mode,
+                                               'speed': speed, 'start': start, 'end': end})
+                self.log(f'[{self.phone}] reproducción: canal {channel} {start} - {end} hacia {ip}:{tcp_port}')
+                self.send_recordings(channel, start, end)
+            elif msg_id == 0x9202:
+                channel, control, speed = body[0], body[1], body[2]
+                self.playback_controls.append({'channel': channel, 'control': control, 'speed': speed,
+                                               'seek': parse_bcd_time(body[3:9])})
+                self.log(f'[{self.phone}] control de reproducción: canal {channel} acción {control}')
+                self.conn.send(0x0001, struct.pack('>HHB', 0, 0x9202, 0))
             elif msg_id == 0x8800:
                 self.log(f'[{self.phone}] el servidor confirmó la foto')
             else:
@@ -274,6 +312,16 @@ class Dashcam:
         for index, packet in enumerate(packets, 1):
             self.conn.send(0x0801, packet, packet=(index, len(packets)))
         self.log(f'[{self.phone}] foto enviada en {len(packets)} paquetes')
+
+    def send_recordings(self, channel, start, end):
+        items = [item for item in self.recordings
+                 if (channel == 0 or item[0] == channel)
+                 and (start is None or item[2] > start) and (end is None or item[1] < end)]
+        body = struct.pack('>HI', 0, len(items))
+        for item_channel, item_start, item_end, alarm in items:
+            body += bytes([item_channel]) + bcd_time(item_start) + bcd_time(item_end) + struct.pack('>Q', alarm)
+            body += bytes([0, 1, 1]) + struct.pack('>I', 512 * 1024 * 1024)
+        self.conn.send(0x1205, body)
 
     def close(self):
         self.conn.close()

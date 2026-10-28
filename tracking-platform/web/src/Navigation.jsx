@@ -23,6 +23,8 @@ import StopReportPage from './reports/StopReportPage';
 import SummaryReportPage from './reports/SummaryReportPage';
 import ChartReportPage from './reports/ChartReportPage';
 import FuelReportPage from './reports/FuelReportPage';
+import ExpensesPage from './reports/ExpensesPage';
+import DrivingScorePage from './reports/DrivingScorePage';
 import FuelEvidencePage from './reports/FuelEvidencePage';
 import TrackPage from './other/TrackPage';
 import DriversPage from './settings/DriversPage';
@@ -183,6 +185,8 @@ const Navigation = () => {
           <Route path="chart" element={<ChartReportPage />} />
           <Route path="fuel" element={<FuelReportPage />} />
           <Route path="fuel/evidence" element={<FuelEvidencePage />} />
+          <Route path="driving" element={<DrivingScorePage />} />
+          <Route path="expenses" element={<ExpensesPage />} />
           <Route path="events" element={<EventReportPage />} />
           <Route path="route" element={<PositionsReportPage />} />
           <Route path="stops" element={<StopReportPage />} />

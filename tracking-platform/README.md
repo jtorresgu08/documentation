@@ -141,6 +141,28 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   combustible* → ⋯ → **Generar evidencia (PDF)** se obtiene un informe imprimible con datos de la unidad, litros, hora,
   lugar, gráfica antes/después, mapa, fotos de la cámara del intervalo y espacio para firmas.
 
+## Grabaciones, puntaje de conducción y gastos (parche `0010`)
+
+- **Reproducción de grabaciones de la MDVR a pedido (JT/T 1078)**: pestaña *Grabaciones* en la página de cámaras.
+  Se elige el día y el canal, la plataforma consulta al equipo lo guardado en su tarjeta o disco (0x9205 → 0x1205) y
+  muestra una **línea de tiempo de 24 h por canal** (los tramos con alarma, en rojo) y la lista con duración y tamaño.
+  Un clic en la línea de tiempo reproduce desde ese minuto (0x9201) con **pausa, avance x2/x4/x8, salto a un minuto y
+  detener** (0x9202). Requiere el equipo en línea y el servidor de video (el mismo del video en vivo); la dirección
+  de reproducción sale de `dashcam.playbackUrl` (unidad o servidor) y, si no existe, de `dashcam.playUrl`.
+- **Puntaje de conducción** (*Reportes → Puntaje de conducción*): 0–100 por unidad y por **conductor** (iButton /
+  RFID), con frenadas, aceleraciones y curvas bruscas, excesos de velocidad sostenidos (20 s o más), alertas ADAS y de
+  fatiga/distracción. Los eventos bruscos se toman de las alarmas del equipo o se calculan del GPS. Penalidad por cada
+  100 km (mínimo 10 km), clasificación *Excelente / Bueno / Regular / Riesgoso*, ranking, y detalle con cada
+  incidente, hora, velocidad y lugar. Límite: el de la unidad (`speedLimit`), si no `driving.speedLimit` del
+  servidor (km/h), si no 90 km/h.
+- **Gastos y mantenimiento** (*Reportes → Gastos y mantenimiento*): registro por unidad de combustible (con litros),
+  peajes, mantenimiento, reparaciones, llantas, seguro/SOAT, multas, estacionamiento, lavado y otros, con proveedor,
+  comprobante y odómetro. Indicadores de **gasto total, costo por km** (con el recorrido GPS del periodo), precio
+  promedio por litro, taller y peajes; gráficas por mes y por tipo; costo por unidad; exportación CSV; y
+  **próximos mantenimientos** (los de *Mantenimiento*, propios o heredados del grupo) con barra de avance y botón
+  *Registrar servicio*. La moneda se toma del atributo de servidor `currencySymbol` (por defecto `S/`). Los usuarios
+  de solo lectura pueden ver pero no registrar.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -212,6 +234,7 @@ python3 server/tests/test_status.py
 SMS_CAPTURE_PORT=7620 python3 server/tests/test_teltonika_ft.py   # con sms.http.url=http://127.0.0.1:7620/sms
 python3 server/tests/test_fuel.py
 python3 server/tests/test_safety.py   # con la configuración de WhatsApp de prueba indicada en el archivo
+python3 server/tests/test_video_driving_expenses.py
 ```
 
 ## Producción

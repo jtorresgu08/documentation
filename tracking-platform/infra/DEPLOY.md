@@ -148,6 +148,11 @@ Pasos:
 Al pulsar *Iniciar* en un canal, la plataforma envía el comando 0x9101 a la cámara con la dirección de
 `HUABAO_VIDEO_SERVER` y empieza a reproducir el FLV.
 
+**Grabaciones (reproducción remota)**: la pestaña *Grabaciones* usa el mismo servidor de video. Si tu servidor publica
+la reproducción con otra dirección que el vivo, añade `dashcam.playbackUrl` (mismos marcadores) en el servidor o en
+la unidad. La hora de las grabaciones se convierte con la zona del equipo (`decoder.timezone`, por defecto GMT+8 en
+JT808; ajústala por unidad si tus MDVR están en hora de Perú).
+
 ### Probar sin cámara
 
 `server/tests/dashcam_simulator.py` simula una dashcam completa (alarmas, adjuntos, fotos y peticiones de video):
@@ -227,3 +232,10 @@ están registrados no reciben datos, y los mensajes sin la firma de Meta se rech
 **Corte de motor seguro**: por defecto el corte solo se envía a 20 km/h o menos. Cámbialo en *Configuración del
 servidor → Atributos* (o por unidad) con `engineStop.maxSpeed` (km/h; 0 = sin límite).
 
+## 11. Puntaje de conducción y gastos
+
+- **Puntaje**: el límite de velocidad para los excesos es el de la unidad (*Velocidad límite*), si no el atributo de
+  servidor `driving.speedLimit` (km/h), si no 90 km/h. Para calcular frenadas y curvas del GPS conviene que el equipo
+  reporte cada 1–2 s en movimiento; si el equipo envía sus propias alarmas de conducción brusca, se usan esas.
+- **Gastos**: la moneda se muestra con el atributo de servidor `currencySymbol` (por defecto `S/`). Los gastos se
+  guardan en la tabla `tc_expenses`, creada automáticamente al actualizar y respaldada junto con la base de datos.

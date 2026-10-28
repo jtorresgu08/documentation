@@ -1,0 +1,1375 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+new file mode 100644
+index 0000000..17bbcf8
+--- /dev/null
++++ b/schema/changelog-6.10-platform.xml
+@@ -0,0 +1,52 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<databaseChangeLog
++        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
++        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
++                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.4.xsd"
++        logicalFilePath="changelog-6.10-platform">
++
++  <changeSet author="platform" id="changelog-6.10-platform-expenses">
++
++    <createTable tableName="tc_expenses">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="deviceid" type="INT">
++        <constraints nullable="false" />
++      </column>
++      <column name="type" type="VARCHAR(64)">
++        <constraints nullable="false" />
++      </column>
++      <column name="expensetime" type="TIMESTAMP">
++        <constraints nullable="false" />
++      </column>
++      <column name="amount" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="quantity" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="odometer" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="vendor" type="VARCHAR(512)" />
++      <column name="reference" type="VARCHAR(256)" />
++      <column name="description" type="VARCHAR(4000)" />
++      <column name="maintenanceid" type="INT" />
++      <column name="userid" type="INT" />
++      <column name="attributes" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++
++    <addForeignKeyConstraint baseTableName="tc_expenses" baseColumnNames="deviceid" constraintName="fk_expenses_deviceid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_devices" />
++
++    <createIndex tableName="tc_expenses" indexName="idx_expenses_deviceid_time">
++      <column name="deviceid" />
++      <column name="expensetime" />
++    </createIndex>
++
++  </changeSet>
++
++</databaseChangeLog>
+diff --git a/schema/changelog-master.xml b/schema/changelog-master.xml
+index 69cd2cd..009141a 100644
+--- a/schema/changelog-master.xml
++++ b/schema/changelog-master.xml
+@@ -34,5 +34,6 @@
+   <include file="changelog-6.7.0.xml" relativeToChangelogFile="true" />
+   <include file="changelog-6.8.0.xml" relativeToChangelogFile="true" />
+   <include file="changelog-6.9.0.xml" relativeToChangelogFile="true" />
++  <include file="changelog-6.10-platform.xml" relativeToChangelogFile="true" />
+ 
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/api/resource/DrivingResource.java b/src/main/java/org/traccar/api/resource/DrivingResource.java
+new file mode 100644
+index 0000000..3891764
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/DrivingResource.java
+@@ -0,0 +1,151 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.driving.DrivingScore;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.helper.model.DeviceUtil;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Driver;
++import org.traccar.model.Position;
++import org.traccar.model.Server;
++import org.traccar.model.UserRestrictions;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++
++/**
++ * Driving score ranking per unit and per driver (when the units identify the driver) for a period.
++ */
++@Path("driving")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class DrivingResource extends BaseResource {
++
++    private static final long MAX_PERIOD = 31L * 24 * 3600 * 1000;
++    private static final double DEFAULT_SPEED_LIMIT = 90;
++
++    private static Map<String, Object> summary(DrivingScore.Result result, boolean details) {
++        Map<String, Object> item = new LinkedHashMap<>();
++        item.put("score", result.getScore());
++        item.put("rating", result.getRating());
++        item.put("distance", Math.round(result.getDistance() * 10) / 10.0);
++        item.put("drivingTime", result.getDrivingTime());
++        item.put("speedingTime", result.getSpeedingTime());
++        item.put("maxSpeed", Math.round(result.getMaxSpeed()));
++        item.put("counts", result.getCounts());
++        if (details) {
++            item.put("incidents", result.getIncidents());
++        }
++        return item;
++    }
++
++    private double speedLimit(Device device, Server server) {
++        if (device.hasAttribute(Position.KEY_SPEED_LIMIT)) {
++            return UnitsConverter.kphFromKnots(device.getDouble(Position.KEY_SPEED_LIMIT));
++        }
++        return server.hasAttribute("driving.speedLimit")
++                ? server.getDouble("driving.speedLimit") : DEFAULT_SPEED_LIMIT;
++    }
++
++    // units or drivers that did not drive in the period are left out instead of ranking as a perfect 100
++    private static boolean idle(DrivingScore.Result result) {
++        return result.getDrivingTime() == 0 && result.getIncidents().isEmpty();
++    }
++
++    @GET
++    @Path("score")
++    public Map<String, Object> score(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to,
++            @QueryParam("details") boolean details) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > MAX_PERIOD) {
++            throw new BadRequestException("Invalid period");
++        }
++        Server server = permissionsService.getServer();
++        List<Map<String, Object>> devices = new ArrayList<>();
++        Map<String, DrivingScore.Result> drivers = new LinkedHashMap<>();
++        for (Device device : DeviceUtil.getAccessibleDevices(storage, getUserId(), deviceIds, groupIds)) {
++            List<Position> positions = PositionUtil.getPositions(storage, device.getId(), from, to);
++            double limit = speedLimit(device, server);
++            DrivingScore.Result result = DrivingScore.compute(positions, limit);
++            if (!idle(result)) {
++                Map<String, Object> item = summary(result, details);
++                item.put("deviceId", device.getId());
++                item.put("name", device.getName());
++                devices.add(item);
++            }
++
++            // per driver: split the positions where the identified driver changes
++            List<Position> segment = new ArrayList<>();
++            String current = null;
++            for (Position position : positions) {
++                String driver = position.getString(Position.KEY_DRIVER_UNIQUE_ID);
++                if (segment.isEmpty() || Objects.equals(driver, current)) {
++                    segment.add(position);
++                } else {
++                    if (current != null) {
++                        drivers.computeIfAbsent(current, key -> DrivingScore.compute(List.of(), 0))
++                                .merge(DrivingScore.compute(segment, limit));
++                    }
++                    segment = new ArrayList<>(List.of(position));
++                }
++                current = driver;
++            }
++            if (current != null && !segment.isEmpty()) {
++                drivers.computeIfAbsent(current, key -> DrivingScore.compute(List.of(), 0))
++                        .merge(DrivingScore.compute(segment, limit));
++            }
++        }
++        devices.sort((a, b) -> Double.compare((Double) b.get("score"), (Double) a.get("score")));
++
++        List<Map<String, Object>> driverItems = new ArrayList<>();
++        for (var entry : drivers.entrySet()) {
++            if (idle(entry.getValue())) {
++                continue;
++            }
++            Driver driver = storage.getObject(Driver.class, new Request(
++                    new Columns.All(), new Condition.Equals("uniqueId", entry.getKey())));
++            Map<String, Object> item = summary(entry.getValue(), false);
++            item.put("driverUniqueId", entry.getKey());
++            item.put("name", driver != null ? driver.getName() : entry.getKey());
++            driverItems.add(item);
++        }
++        driverItems.sort((a, b) -> Double.compare((Double) b.get("score"), (Double) a.get("score")));
++
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("devices", devices);
++        result.put("drivers", driverItems);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/ExpenseResource.java b/src/main/java/org/traccar/api/resource/ExpenseResource.java
+new file mode 100644
+index 0000000..363e781
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/ExpenseResource.java
+@@ -0,0 +1,285 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.NotFoundException;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.model.DeviceUtil;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Expense;
++import org.traccar.model.Group;
++import org.traccar.model.Maintenance;
++import org.traccar.model.Permission;
++import org.traccar.model.Position;
++import org.traccar.model.UserRestrictions;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.text.SimpleDateFormat;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Date;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.TreeMap;
++
++/**
++ * Unit expenses (fuel, tolls, workshop...) with the cost summary per unit and the upcoming maintenance services.
++ * Access follows the unit: whoever sees a unit sees its expenses; read-only users cannot change them.
++ */
++@Path("expenses")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class ExpenseResource extends BaseResource {
++
++    private static final long MAX_PERIOD = 400L * 24 * 3600 * 1000;
++
++    private Collection<Device> devices(List<Long> deviceIds, List<Long> groupIds) throws StorageException {
++        return DeviceUtil.getAccessibleDevices(storage, getUserId(), deviceIds, groupIds);
++    }
++
++    private static void checkPeriod(Date from, Date to) {
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > MAX_PERIOD) {
++            throw new BadRequestException("Invalid period");
++        }
++    }
++
++    private List<Expense> expenses(long deviceId, Date from, Date to) throws StorageException {
++        return storage.getObjects(Expense.class, new Request(
++                new Columns.All(),
++                new Condition.And(
++                        new Condition.Equals("deviceId", deviceId),
++                        new Condition.Between("expenseTime", from, to)),
++                new Order("expenseTime", true, 0)));
++    }
++
++    private Expense find(long id) throws StorageException {
++        Expense expense = storage.getObject(Expense.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (expense == null) {
++            throw new NotFoundException();
++        }
++        permissionsService.checkPermission(Device.class, getUserId(), expense.getDeviceId());
++        return expense;
++    }
++
++    private void validate(Expense expense) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        permissionsService.checkPermission(Device.class, getUserId(), expense.getDeviceId());
++        if (expense.getType() == null || expense.getType().isBlank() || expense.getExpenseTime() == null
++                || expense.getAmount() < 0) {
++            throw new BadRequestException("Invalid expense");
++        }
++    }
++
++    @GET
++    public List<Expense> get(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        checkPeriod(from, to);
++        List<Expense> result = new ArrayList<>();
++        for (Device device : devices(deviceIds, groupIds)) {
++            result.addAll(expenses(device.getId(), from, to));
++        }
++        result.sort((a, b) -> b.getExpenseTime().compareTo(a.getExpenseTime()));
++        return result;
++    }
++
++    @POST
++    public Expense add(Expense expense) throws StorageException {
++        validate(expense);
++        expense.setUserId(getUserId());
++        expense.setId(storage.addObject(expense, new Request(new Columns.Exclude("id"))));
++        return expense;
++    }
++
++    @PUT
++    @Path("{id}")
++    public Expense update(@PathParam("id") long id, Expense expense) throws StorageException {
++        Expense existing = find(id);
++        validate(expense);
++        expense.setId(existing.getId());
++        expense.setUserId(existing.getUserId());
++        storage.updateObject(expense, new Request(
++                new Columns.Exclude("id"), new Condition.Equals("id", id)));
++        return expense;
++    }
++
++    @DELETE
++    @Path("{id}")
++    public Response remove(@PathParam("id") long id) throws StorageException {
++        find(id);
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        storage.removeObject(Expense.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    @GET
++    @Path("summary")
++    public Map<String, Object> summary(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        checkPeriod(from, to);
++        SimpleDateFormat month = new SimpleDateFormat("yyyy-MM");
++        Map<String, Double> byType = new TreeMap<>();
++        Map<String, Map<String, Double>> byMonth = new TreeMap<>();
++        List<Map<String, Object>> units = new ArrayList<>();
++        double total = 0;
++        double distance = 0;
++        double fuelLitres = 0;
++        double fuelCost = 0;
++        for (Device device : devices(deviceIds, groupIds)) {
++            Map<String, Double> unitByType = new TreeMap<>();
++            double unitTotal = 0;
++            for (Expense expense : expenses(device.getId(), from, to)) {
++                unitByType.merge(expense.getType(), expense.getAmount(), Double::sum);
++                byType.merge(expense.getType(), expense.getAmount(), Double::sum);
++                byMonth.computeIfAbsent(month.format(expense.getExpenseTime()), key -> new TreeMap<>())
++                        .merge(expense.getType(), expense.getAmount(), Double::sum);
++                unitTotal += expense.getAmount();
++                if ("fuel".equals(expense.getType())) {
++                    fuelLitres += expense.getQuantity();
++                    fuelCost += expense.getAmount();
++                }
++            }
++            Position first = PositionUtil.getEdgePosition(storage, device.getId(), from, to, false);
++            Position last = PositionUtil.getEdgePosition(storage, device.getId(), from, to, true);
++            double unitDistance = first != null && last != null
++                    ? Math.max(0, last.getDouble(Position.KEY_TOTAL_DISTANCE)
++                            - first.getDouble(Position.KEY_TOTAL_DISTANCE)) / 1000 : 0;
++            total += unitTotal;
++            distance += unitDistance;
++            if (unitTotal > 0 || unitDistance > 0) {
++                Map<String, Object> unit = new LinkedHashMap<>();
++                unit.put("deviceId", device.getId());
++                unit.put("name", device.getName());
++                unit.put("total", unitTotal);
++                unit.put("distance", Math.round(unitDistance * 10) / 10.0);
++                unit.put("costPerKm", unitDistance > 0 ? unitTotal / unitDistance : null);
++                unit.put("byType", unitByType);
++                units.add(unit);
++            }
++        }
++        units.sort((a, b) -> Double.compare((Double) b.get("total"), (Double) a.get("total")));
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("total", total);
++        result.put("distance", Math.round(distance * 10) / 10.0);
++        result.put("costPerKm", distance > 0 ? total / distance : null);
++        result.put("fuelLitres", fuelLitres);
++        result.put("fuelPricePerLitre", fuelLitres > 0 ? fuelCost / fuelLitres : null);
++        result.put("byType", byType);
++        result.put("byMonth", byMonth);
++        result.put("units", units);
++        return result;
++    }
++
++    static double currentValue(Maintenance maintenance, Position position) {
++        String type = maintenance.getType();
++        if (type.endsWith("Time")) {
++            return switch (type) {
++                case "serverTime" -> position.getServerTime().getTime();
++                case "deviceTime" -> position.getDeviceTime().getTime();
++                default -> position.getFixTime().getTime();
++            };
++        }
++        return position.getDouble(type);
++    }
++
++    static double nextDue(double start, double period, double current) {
++        if (current < start || period <= 0) {
++            return start;
++        }
++        return start + period * (Math.floor((current - start) / period) + 1);
++    }
++
++    // maintenance linked to the unit or inherited from its group and parent groups
++    private Collection<Maintenance> maintenances(Device device) throws StorageException {
++        Map<Long, Maintenance> result = new LinkedHashMap<>();
++        for (Maintenance maintenance : storage.getObjects(Maintenance.class, new Request(
++                new Columns.All(), new Condition.Permission(Device.class, device.getId(), Maintenance.class)))) {
++            result.put(maintenance.getId(), maintenance);
++        }
++        Set<Long> visited = new HashSet<>();
++        long groupId = device.getGroupId();
++        while (groupId > 0 && visited.add(groupId)) {
++            for (Permission permission : storage.getPermissions(Group.class, groupId, Maintenance.class, 0)) {
++                if (!result.containsKey(permission.getPropertyId())) {
++                    Maintenance maintenance = storage.getObject(Maintenance.class, new Request(
++                            new Columns.All(), new Condition.Equals("id", permission.getPropertyId())));
++                    if (maintenance != null) {
++                        result.put(maintenance.getId(), maintenance);
++                    }
++                }
++            }
++            Group group = storage.getObject(Group.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", groupId)));
++            groupId = group != null ? group.getGroupId() : 0;
++        }
++        return result.values();
++    }
++
++    @GET
++    @Path("maintenance")
++    public List<Map<String, Object>> maintenance(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds)
++            throws StorageException {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : devices(deviceIds, groupIds)) {
++            Position position = device.getPositionId() > 0 ? storage.getObject(Position.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", device.getPositionId()))) : null;
++            if (position == null) {
++                continue;
++            }
++            for (Maintenance maintenance : maintenances(device)) {
++                double current = currentValue(maintenance, position);
++                double next = nextDue(maintenance.getStart(), maintenance.getPeriod(), current);
++                Map<String, Object> item = new LinkedHashMap<>();
++                item.put("deviceId", device.getId());
++                item.put("deviceName", device.getName());
++                item.put("maintenanceId", maintenance.getId());
++                item.put("name", maintenance.getName());
++                item.put("type", maintenance.getType());
++                item.put("period", maintenance.getPeriod());
++                item.put("current", current);
++                item.put("next", next);
++                item.put("remaining", next - current);
++                result.add(item);
++            }
++        }
++        result.sort((a, b) -> Double.compare(
++                (Double) a.get("remaining") / Math.max(1, (Double) a.get("period")),
++                (Double) b.get("remaining") / Math.max(1, (Double) b.get("period"))));
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/VideoResource.java b/src/main/java/org/traccar/api/resource/VideoResource.java
+new file mode 100644
+index 0000000..a1c16e5
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/VideoResource.java
+@@ -0,0 +1,85 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.database.CommandsManager;
++import org.traccar.model.Command;
++import org.traccar.model.Device;
++import org.traccar.protocol.HuabaoProtocol;
++import org.traccar.protocol.VideoRecordings;
++import org.traccar.session.ConnectionManager;
++import org.traccar.session.DeviceSession;
++
++import java.util.Date;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.TimeoutException;
++
++/**
++ * Recordings stored on a JT/T 1078 MDVR: asks the connected device for its resource list and waits for the answer.
++ * Playback itself is started with the videoPlayback / videoPlaybackControl commands.
++ */
++@Path("video")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class VideoResource extends BaseResource {
++
++    private static final long TIMEOUT = 20;
++
++    @Inject
++    private CommandsManager commandsManager;
++
++    @Inject
++    private ConnectionManager connectionManager;
++
++    @GET
++    @Path("recordings")
++    public Response recordings(
++            @QueryParam("deviceId") long deviceId, @QueryParam("channel") int channel,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws Exception {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        DeviceSession session = connectionManager.getDeviceSession(deviceId);
++        if (session == null || !session.supportsLiveCommands()) {
++            return Response.status(Response.Status.CONFLICT).entity(Map.of("error", "offline")).build();
++        }
++        CompletableFuture<List<VideoRecordings.Recording>> future = VideoRecordings.expect(deviceId);
++        Command command = new Command();
++        command.setDeviceId(deviceId);
++        command.setType(HuabaoProtocol.TYPE_VIDEO_RECORDINGS);
++        command.set(Command.KEY_INDEX, Math.max(0, channel));
++        command.set("from", from != null ? from.getTime() : 0);
++        command.set("to", to != null ? to.getTime() : 0);
++        command.set(Command.KEY_NO_QUEUE, true);
++        try {
++            commandsManager.sendCommand(command);
++            return Response.ok(future.get(TIMEOUT, TimeUnit.SECONDS)).build();
++        } catch (TimeoutException e) {
++            return Response.status(Response.Status.GATEWAY_TIMEOUT).entity(Map.of("error", "timeout")).build();
++        } finally {
++            VideoRecordings.cancel(deviceId, future);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/driving/DrivingScore.java b/src/main/java/org/traccar/driving/DrivingScore.java
+new file mode 100644
+index 0000000..d6bc1e2
+--- /dev/null
++++ b/src/main/java/org/traccar/driving/DrivingScore.java
+@@ -0,0 +1,257 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.driving;
++
++import org.traccar.helper.DistanceCalculator;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Driving behaviour score of a set of positions. Counts harsh braking, acceleration and cornering (device alarms, or
++ * derived from GPS speed and course changes when the device reports none), sustained speeding above the limit and
++ * camera ADAS / DMS alarms, then scores 0-100 from the penalties per 100 km.
++ */
++public final class DrivingScore {
++
++    public static final String BRAKING = "braking";
++    public static final String ACCELERATION = "acceleration";
++    public static final String CORNERING = "cornering";
++    public static final String SPEEDING = "speeding";
++    public static final String ADAS = "adas";
++    public static final String DMS = "dms";
++
++    static final Map<String, Double> WEIGHTS = Map.of(
++            BRAKING, 2.5, ACCELERATION, 2.0, CORNERING, 2.0, SPEEDING, 3.0, ADAS, 2.0, DMS, 4.0);
++
++    static final double HARSH_ACCELERATION = 3.0; // m/s²
++    static final double HARSH_BRAKING = -3.5; // m/s²
++    static final double HARSH_CORNERING = 3.0; // m/s² lateral
++    static final long MAX_SAMPLE_GAP = 5000;
++    static final long REFRACTORY = 10000;
++    static final long MIN_SPEEDING = 20000;
++    static final long SPEEDING_MERGE = 30000; // dips under the limit shorter than this continue the same episode
++    static final double MAX_SEGMENT_SPEED = 300; // km/h, longer jumps between fixes are GPS errors
++    static final double MIN_DISTANCE = 10; // km, avoids huge rates on very short trips
++
++    private static final Set<String> ADAS_ALARMS = Set.of(
++            "forwardCollision", "laneDeparture", "vehicleDistance", "pedestrianCollision", "frequentLaneChange",
++            "roadSignOverLimit", Position.ALARM_LANE_CHANGE);
++    private static final Set<String> DMS_ALARMS = Set.of(
++            Position.ALARM_FATIGUE_DRIVING, "phoneCall", "smoking", "distraction", "driverAbnormal");
++
++    private DrivingScore() {
++    }
++
++    public record Incident(String type, String detail, long time, double speed, double latitude, double longitude) {
++    }
++
++    public static final class Result {
++        private final Map<String, Integer> counts = new LinkedHashMap<>();
++        private final List<Incident> incidents = new ArrayList<>();
++        private double distance;
++        private long drivingTime;
++        private long speedingTime;
++        private double maxSpeed;
++
++        Result() {
++            for (String type : List.of(BRAKING, ACCELERATION, CORNERING, SPEEDING, ADAS, DMS)) {
++                counts.put(type, 0);
++            }
++        }
++
++        void add(Incident incident) {
++            counts.merge(incident.type(), 1, Integer::sum);
++            incidents.add(incident);
++        }
++
++        public Map<String, Integer> getCounts() {
++            return counts;
++        }
++
++        public List<Incident> getIncidents() {
++            return incidents;
++        }
++
++        public double getDistance() {
++            return distance;
++        }
++
++        public long getDrivingTime() {
++            return drivingTime;
++        }
++
++        public long getSpeedingTime() {
++            return speedingTime;
++        }
++
++        public double getMaxSpeed() {
++            return maxSpeed;
++        }
++
++        public void merge(Result other) {
++            other.counts.forEach((key, value) -> counts.merge(key, value, Integer::sum));
++            incidents.addAll(other.incidents);
++            distance += other.distance;
++            drivingTime += other.drivingTime;
++            speedingTime += other.speedingTime;
++            maxSpeed = Math.max(maxSpeed, other.maxSpeed);
++        }
++
++        public double getScore() {
++            double rate = 100 / Math.max(distance, MIN_DISTANCE);
++            double penalty = counts.entrySet().stream()
++                    .mapToDouble(entry -> WEIGHTS.get(entry.getKey()) * entry.getValue() * rate).sum();
++            return distance > 0 || penalty > 0 ? Math.max(0, Math.round((100 - penalty) * 10) / 10.0) : 100;
++        }
++
++        public String getRating() {
++            double score = getScore();
++            return score >= 90 ? "excellent" : score >= 75 ? "good" : score >= 60 ? "regular" : "risky";
++        }
++    }
++
++    private static Incident incident(String type, String detail, Position position) {
++        return new Incident(type, detail, position.getFixTime().getTime(),
++                Math.round(UnitsConverter.kphFromKnots(position.getSpeed())),
++                position.getLatitude(), position.getLongitude());
++    }
++
++    private static Set<String> alarms(Position position) {
++        String alarm = position.getString(Position.KEY_ALARM);
++        return alarm != null ? Set.of(alarm.split(",")) : Set.of();
++    }
++
++    /**
++     * @param speedLimit default limit in km/h; a position speedLimit attribute (knots) takes precedence
++     */
++    private static void closeSpeeding(
++            Result result, long start, long end, double max, double limit, Position position) {
++        if (end - start >= MIN_SPEEDING) {
++            result.speedingTime += end - start;
++            result.add(incident(SPEEDING, String.format("%.0f/%.0f km/h", max, limit), position));
++        }
++    }
++
++    public static Result compute(List<Position> positions, double speedLimit) {
++        Result result = new Result();
++        if (positions.isEmpty()) {
++            return result;
++        }
++        boolean deviceHarsh = positions.stream().anyMatch(position -> {
++            Set<String> alarms = alarms(position);
++            return alarms.contains(Position.ALARM_BRAKING) || alarms.contains(Position.ALARM_ACCELERATION)
++                    || alarms.contains(Position.ALARM_CORNERING);
++        });
++
++        Set<String> previousAlarms = Set.of();
++        long lastHarsh = 0;
++        long speedingStart = -1;
++        long speedingLast = -1;
++        double speedingLimit = speedLimit;
++        double speedingMax = 0;
++        Position speedingPosition = null;
++        Position previous = null;
++        double odometer = 0;
++
++        for (Position position : positions) {
++            long time = position.getFixTime().getTime();
++            double speed = UnitsConverter.kphFromKnots(position.getSpeed());
++            result.maxSpeed = Math.max(result.maxSpeed, speed);
++            if (previous != null) {
++                double meters = DistanceCalculator.distance(
++                        previous.getLatitude(), previous.getLongitude(),
++                        position.getLatitude(), position.getLongitude());
++                long elapsed = time - previous.getFixTime().getTime();
++                if (elapsed > 0 && meters / elapsed * 3600 <= MAX_SEGMENT_SPEED) {
++                    odometer += meters;
++                }
++            }
++
++            Set<String> alarms = alarms(position);
++            for (String alarm : alarms) {
++                if (previousAlarms.contains(alarm)) {
++                    continue;
++                }
++                if (Position.ALARM_BRAKING.equals(alarm)) {
++                    result.add(incident(BRAKING, alarm, position));
++                } else if (Position.ALARM_ACCELERATION.equals(alarm)) {
++                    result.add(incident(ACCELERATION, alarm, position));
++                } else if (Position.ALARM_CORNERING.equals(alarm)) {
++                    result.add(incident(CORNERING, alarm, position));
++                } else if (ADAS_ALARMS.contains(alarm)) {
++                    result.add(incident(ADAS, alarm, position));
++                } else if (DMS_ALARMS.contains(alarm)) {
++                    result.add(incident(DMS, alarm, position));
++                }
++            }
++            previousAlarms = alarms;
++
++            double limit = position.hasAttribute(Position.KEY_SPEED_LIMIT)
++                    ? UnitsConverter.kphFromKnots(position.getDouble(Position.KEY_SPEED_LIMIT)) : speedLimit;
++            if (limit > 0 && speed > limit) {
++                if (speedingStart < 0) {
++                    speedingStart = time;
++                    speedingPosition = position;
++                    speedingMax = speed;
++                }
++                speedingLast = time;
++                speedingLimit = limit;
++                speedingMax = Math.max(speedingMax, speed);
++            } else if (speedingStart >= 0 && time - speedingLast >= SPEEDING_MERGE) {
++                closeSpeeding(result, speedingStart, speedingLast, speedingMax, speedingLimit, speedingPosition);
++                speedingStart = -1;
++            }
++
++            if (previous != null) {
++                long gap = time - previous.getFixTime().getTime();
++                double previousSpeed = UnitsConverter.kphFromKnots(previous.getSpeed());
++                if (gap > 0 && gap <= 300_000 && (speed > 5 || previousSpeed > 5)) {
++                    result.drivingTime += gap;
++                }
++                if (!deviceHarsh && gap > 0 && gap <= MAX_SAMPLE_GAP && time - lastHarsh > REFRACTORY) {
++                    double seconds = gap / 1000.0;
++                    double acceleration = (speed - previousSpeed) / 3.6 / seconds;
++                    double turn = Math.abs(((position.getCourse() - previous.getCourse() + 540) % 360) - 180);
++                    double lateral = speed / 3.6 * Math.toRadians(turn) / seconds;
++                    String type = null;
++                    if (acceleration >= HARSH_ACCELERATION) {
++                        type = ACCELERATION;
++                    } else if (acceleration <= HARSH_BRAKING) {
++                        type = BRAKING;
++                    } else if (speed > 20 && lateral >= HARSH_CORNERING) {
++                        type = CORNERING;
++                    }
++                    if (type != null) {
++                        result.add(incident(type, "gps", position));
++                        lastHarsh = time;
++                    }
++                }
++            }
++            previous = position;
++        }
++        if (speedingStart >= 0) {
++            closeSpeeding(result, speedingStart, speedingLast, speedingMax, speedingLimit, speedingPosition);
++        }
++        result.distance = odometer / 1000;
++        result.incidents.sort((a, b) -> Long.compare(a.time(), b.time()));
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Expense.java b/src/main/java/org/traccar/model/Expense.java
+new file mode 100644
+index 0000000..3a4ddb7
+--- /dev/null
++++ b/src/main/java/org/traccar/model/Expense.java
+@@ -0,0 +1,145 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Cost of a unit: fuel, tolls, workshop, tires, insurance, fines and others, optionally tied to a maintenance item.
++ */
++@StorageName("tc_expenses")
++public class Expense extends ExtendedModel {
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private String type;
++
++    public String getType() {
++        return type;
++    }
++
++    public void setType(String type) {
++        this.type = type;
++    }
++
++    private Date expenseTime;
++
++    public Date getExpenseTime() {
++        return expenseTime;
++    }
++
++    public void setExpenseTime(Date expenseTime) {
++        this.expenseTime = expenseTime;
++    }
++
++    private double amount;
++
++    public double getAmount() {
++        return amount;
++    }
++
++    public void setAmount(double amount) {
++        this.amount = amount;
++    }
++
++    private double quantity;
++
++    /**
++     * Litres for fuel, units for parts.
++     */
++    public double getQuantity() {
++        return quantity;
++    }
++
++    public void setQuantity(double quantity) {
++        this.quantity = quantity;
++    }
++
++    private double odometer;
++
++    /**
++     * Odometer in kilometres when the expense happened.
++     */
++    public double getOdometer() {
++        return odometer;
++    }
++
++    public void setOdometer(double odometer) {
++        this.odometer = odometer;
++    }
++
++    private String vendor;
++
++    public String getVendor() {
++        return vendor;
++    }
++
++    public void setVendor(String vendor) {
++        this.vendor = vendor;
++    }
++
++    private String reference;
++
++    /**
++     * Invoice or receipt number.
++     */
++    public String getReference() {
++        return reference;
++    }
++
++    public void setReference(String reference) {
++        this.reference = reference;
++    }
++
++    private String description;
++
++    public String getDescription() {
++        return description;
++    }
++
++    public void setDescription(String description) {
++        this.description = description;
++    }
++
++    private long maintenanceId;
++
++    public long getMaintenanceId() {
++        return maintenanceId;
++    }
++
++    public void setMaintenanceId(long maintenanceId) {
++        this.maintenanceId = maintenanceId;
++    }
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocol.java b/src/main/java/org/traccar/protocol/HuabaoProtocol.java
+index 2a7ff50..edb2b83 100644
+--- a/src/main/java/org/traccar/protocol/HuabaoProtocol.java
++++ b/src/main/java/org/traccar/protocol/HuabaoProtocol.java
+@@ -27,6 +27,9 @@ public class HuabaoProtocol extends BaseProtocol {
+ 
+     public static final String TYPE_LIVE_VIDEO = "liveVideo";
+     public static final String TYPE_LIVE_VIDEO_STOP = "liveVideoStop";
++    public static final String TYPE_VIDEO_RECORDINGS = "videoRecordings";
++    public static final String TYPE_VIDEO_PLAYBACK = "videoPlayback";
++    public static final String TYPE_VIDEO_PLAYBACK_CONTROL = "videoPlaybackControl";
+ 
+     private final String videoServer;
+ 
+@@ -45,6 +48,9 @@ public class HuabaoProtocol extends BaseProtocol {
+                 Command.TYPE_REQUEST_PHOTO,
+                 TYPE_LIVE_VIDEO,
+                 TYPE_LIVE_VIDEO_STOP,
++                TYPE_VIDEO_RECORDINGS,
++                TYPE_VIDEO_PLAYBACK,
++                TYPE_VIDEO_PLAYBACK_CONTROL,
+                 Command.TYPE_REBOOT_DEVICE,
+                 Command.TYPE_POSITION_PERIODIC,
+                 Command.TYPE_ALARM_ARM,
+diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java b/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java
+index fbc175e..b371c3d 100644
+--- a/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java
++++ b/src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java
+@@ -46,6 +46,7 @@ import java.util.Date;
+ import java.util.LinkedList;
+ import java.util.List;
+ import java.util.Map;
++import java.util.ArrayList;
+ import java.util.Set;
+ import java.util.TimeZone;
+ import java.util.UUID;
+@@ -89,6 +90,10 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+     public static final int MSG_ALARM_ATTACHMENT_REQUEST = 0x9208;
+     public static final int MSG_LIVE_VIDEO = 0x9101;
+     public static final int MSG_LIVE_VIDEO_CONTROL = 0x9102;
++    public static final int MSG_VIDEO_PLAYBACK = 0x9201;
++    public static final int MSG_VIDEO_PLAYBACK_CONTROL = 0x9202;
++    public static final int MSG_VIDEO_RESOURCES_QUERY = 0x9205;
++    public static final int MSG_VIDEO_RESOURCES = 0x1205;
+ 
+     public static final int RESULT_SUCCESS = 0;
+ 
+@@ -429,6 +434,12 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+ 
+             return decodeTransparent(deviceSession, buf);
+ 
++        } else if (type == MSG_VIDEO_RESOURCES) {
++
++            sendGeneralResponse(channel, remoteAddress, id, type, index);
++            decodeVideoResources(deviceSession, buf);
++            return null;
++
+         } else if (type == MSG_COMMAND_RESPONSE) {
+ 
+             Position position = new Position(getProtocolName());
+@@ -446,6 +457,27 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
+         return null;
+     }
+ 
++    // JT/T 1078 recordings stored on the MDVR (answer to a resource query or to a playback request)
++    private void decodeVideoResources(DeviceSession deviceSession, ByteBuf buf) {
++        buf.readUnsignedShort(); // serial number of the request
++        long count = buf.readUnsignedInt();
++        TimeZone timeZone = deviceSession.get(DeviceSession.KEY_TIMEZONE);
++        List<VideoRecordings.Recording> recordings = new ArrayList<>();
++        for (long i = 0; i < count && buf.readableBytes() >= 28; i++) {
++            int recordingChannel = buf.readUnsignedByte();
++            Date start = readDate(buf, timeZone);
++            Date end = readDate(buf, timeZone);
++            long alarm = buf.readLong();
++            int mediaType = buf.readUnsignedByte();
++            int streamType = buf.readUnsignedByte();
++            int storageType = buf.readUnsignedByte();
++            long size = buf.readUnsignedInt();
++            recordings.add(new VideoRecordings.Recording(
++                    recordingChannel, start.getTime(), end.getTime(), alarm, mediaType, streamType, storageType, size));
++        }
++        VideoRecordings.complete(deviceSession.getDeviceId(), recordings);
++    }
++
+     private Position decodeResult(Channel channel, SocketAddress remoteAddress, String sentence) {
+         DeviceSession deviceSession = getDeviceSession(channel, remoteAddress);
+         if (deviceSession != null) {
+diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java b/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
+index f80371d..5d0eebc 100644
+--- a/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
++++ b/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
+@@ -29,6 +29,7 @@ import java.nio.charset.StandardCharsets;
+ import java.text.SimpleDateFormat;
+ import java.util.Date;
+ import java.util.Set;
++import java.util.TimeZone;
+ 
+ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+ 
+@@ -39,6 +40,18 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+         videoServer = protocol instanceof HuabaoProtocol huabaoProtocol ? huabaoProtocol.getVideoServer() : null;
+     }
+ 
++    // JT/T 1078 times are BCD yyMMddHHmmss in the device time zone; zero means no limit
++    private void writeTime(ByteBuf data, long time, long deviceId) {
++        if (time <= 0) {
++            data.writeZero(6);
++            return;
++        }
++        String zone = AttributeUtil.lookup(getCacheManager(), Keys.DECODER_TIMEZONE, deviceId);
++        SimpleDateFormat format = new SimpleDateFormat("yyMMddHHmmss");
++        format.setTimeZone(TimeZone.getTimeZone(zone != null ? zone : "GMT+8"));
++        data.writeBytes(DataConverter.parseHex(format.format(new Date(time))));
++    }
++
+     private static int cameraChannel(Command command) {
+         int channel = command.getInteger(Command.KEY_INDEX);
+         return channel > 0 ? channel : 1;
+@@ -130,6 +143,48 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+                     data.writeByte(1); // sub stream, less bandwidth
+                     return HuabaoProtocolDecoder.formatMessage(
+                             0x7e, HuabaoProtocolDecoder.MSG_LIVE_VIDEO, id, false, data);
++                case HuabaoProtocol.TYPE_VIDEO_RECORDINGS:
++                    data.writeByte(command.getInteger(Command.KEY_INDEX)); // 0 = all channels
++                    writeTime(data, command.getLong("from"), command.getDeviceId());
++                    writeTime(data, command.getLong("to"), command.getDeviceId());
++                    data.writeLong(0); // any alarm
++                    data.writeByte(0); // audio and video
++                    data.writeByte(0); // main or sub stream
++                    data.writeByte(0); // main or backup storage
++                    return HuabaoProtocolDecoder.formatMessage(
++                            0x7e, HuabaoProtocolDecoder.MSG_VIDEO_RESOURCES_QUERY, id, false, data);
++                case HuabaoProtocol.TYPE_VIDEO_PLAYBACK:
++                    String playbackServer = command.getString(Command.KEY_SERVER, videoServer);
++                    if (playbackServer == null || !playbackServer.contains(":")) {
++                        data.release();
++                        return null;
++                    }
++                    String playbackHost = playbackServer.substring(0, playbackServer.lastIndexOf(':'));
++                    data.writeByte(playbackHost.length());
++                    data.writeCharSequence(playbackHost, StandardCharsets.US_ASCII);
++                    data.writeShort(Integer.parseInt(playbackServer.substring(playbackServer.lastIndexOf(':') + 1)));
++                    data.writeShort(0); // udp
++                    data.writeByte(cameraChannel(command));
++                    data.writeByte(0); // audio and video
++                    data.writeByte(0); // main or sub stream
++                    data.writeByte(0); // main or backup storage
++                    int speed = Math.max(1, command.getInteger("speed"));
++                    data.writeByte(speed > 1 ? 1 : 0); // normal or fast forward
++                    data.writeByte(speed > 1 ? Math.min(5, Integer.numberOfTrailingZeros(speed) + 1) : 0);
++                    writeTime(data, command.getLong("from"), command.getDeviceId());
++                    writeTime(data, command.getLong("to"), command.getDeviceId());
++                    return HuabaoProtocolDecoder.formatMessage(
++                            0x7e, HuabaoProtocolDecoder.MSG_VIDEO_PLAYBACK, id, false, data);
++                case HuabaoProtocol.TYPE_VIDEO_PLAYBACK_CONTROL:
++                    // 0 resume, 1 pause, 2 stop, 3 fast forward, 5 seek
++                    int control = command.getInteger("control");
++                    int controlSpeed = Math.max(1, command.getInteger("speed"));
++                    data.writeByte(cameraChannel(command));
++                    data.writeByte(control);
++                    data.writeByte(control == 3 ? Math.min(5, Integer.numberOfTrailingZeros(controlSpeed) + 1) : 0);
++                    writeTime(data, control == 5 ? command.getLong("seek") : 0, command.getDeviceId());
++                    return HuabaoProtocolDecoder.formatMessage(
++                            0x7e, HuabaoProtocolDecoder.MSG_VIDEO_PLAYBACK_CONTROL, id, false, data);
+                 case HuabaoProtocol.TYPE_LIVE_VIDEO_STOP:
+                     data.writeByte(cameraChannel(command));
+                     data.writeByte(0); // close transmission
+diff --git a/src/main/java/org/traccar/protocol/VideoRecordings.java b/src/main/java/org/traccar/protocol/VideoRecordings.java
+new file mode 100644
+index 0000000..ab0c5dd
+--- /dev/null
++++ b/src/main/java/org/traccar/protocol/VideoRecordings.java
+@@ -0,0 +1,53 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.protocol;
++
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Pending JT/T 1078 recording queries: the API waits on a future that the decoder completes when the MDVR answers
++ * with its resource list (0x1205).
++ */
++public final class VideoRecordings {
++
++    public record Recording(
++            int channel, long start, long end, long alarm, int mediaType, int streamType, int storageType, long size) {
++    }
++
++    private static final Map<Long, CompletableFuture<List<Recording>>> PENDING = new ConcurrentHashMap<>();
++
++    private VideoRecordings() {
++    }
++
++    public static CompletableFuture<List<Recording>> expect(long deviceId) {
++        CompletableFuture<List<Recording>> future = new CompletableFuture<>();
++        PENDING.put(deviceId, future);
++        return future;
++    }
++
++    public static void cancel(long deviceId, CompletableFuture<List<Recording>> future) {
++        PENDING.remove(deviceId, future);
++    }
++
++    static void complete(long deviceId, List<Recording> recordings) {
++        CompletableFuture<List<Recording>> future = PENDING.remove(deviceId);
++        if (future != null) {
++            future.complete(recordings);
++        }
++    }
++
++}
+diff --git a/src/test/java/org/traccar/driving/DrivingScoreTest.java b/src/test/java/org/traccar/driving/DrivingScoreTest.java
+new file mode 100644
+index 0000000..bef51c2
+--- /dev/null
++++ b/src/test/java/org/traccar/driving/DrivingScoreTest.java
+@@ -0,0 +1,120 @@
++package org.traccar.driving;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class DrivingScoreTest {
++
++    private final List<Position> positions = new ArrayList<>();
++    private long time = 1_700_000_000_000L;
++    private double total;
++    private double latitude = -12;
++
++    private void add(double speed, double course, String alarm) {
++        Position position = new Position();
++        time += 1000;
++        double meters = speed / 3.6;
++        total += meters;
++        position.setTime(new Date(time));
++        position.setSpeed(UnitsConverter.knotsFromKph(speed));
++        position.setCourse(course);
++        latitude += meters / 111320;
++        position.setLatitude(latitude);
++        position.setLongitude(-77);
++        position.set(Position.KEY_DISTANCE, meters);
++        position.set(Position.KEY_TOTAL_DISTANCE, total);
++        if (alarm != null) {
++            position.set(Position.KEY_ALARM, alarm);
++        }
++        positions.add(position);
++    }
++
++    @Test
++    public void testGpsDerivedEventsAndSpeeding() {
++        for (int i = 0; i < 20; i++) {
++            add(50, 0, null);
++        }
++        add(70, 0, null); // +20 km/h in 1 s = 5.6 m/s²
++        for (int i = 0; i < 20; i++) {
++            add(70, 0, null);
++        }
++        add(50, 0, null); // -20 km/h in 1 s
++        for (int i = 0; i < 40; i++) {
++            add(100, 0, null); // 40 s above 90 km/h
++        }
++        for (int i = 0; i < 20; i++) {
++            add(60, 0, null);
++        }
++        var result = DrivingScore.compute(positions, 90);
++        // 50 -> 100 comes 1 s after the braking, inside the 10 s refractory window
++        assertEquals(1, result.getCounts().get(DrivingScore.ACCELERATION));
++        assertEquals(2, result.getCounts().get(DrivingScore.BRAKING)); // 70 -> 50 and 100 -> 60
++        assertEquals(1, result.getCounts().get(DrivingScore.SPEEDING));
++        assertTrue(result.getSpeedingTime() >= 39000);
++        assertTrue(result.getScore() < 100);
++    }
++
++    @Test
++    public void testDeviceAlarmsTakePrecedence() {
++        for (int i = 0; i < 10; i++) {
++            add(50, 0, null);
++        }
++        add(20, 0, Position.ALARM_BRAKING);
++        add(20, 0, Position.ALARM_BRAKING); // same alarm still active, counted once
++        add(80, 0, null); // big jump, but the device reports harsh events itself
++        add(80, 0, "phoneCall,laneDeparture");
++        var result = DrivingScore.compute(positions, 0);
++        assertEquals(1, result.getCounts().get(DrivingScore.BRAKING));
++        assertEquals(0, result.getCounts().get(DrivingScore.ACCELERATION));
++        assertEquals(1, result.getCounts().get(DrivingScore.DMS));
++        assertEquals(1, result.getCounts().get(DrivingScore.ADAS));
++    }
++
++    @Test
++    public void testSpeedingAroundLimitIsOneEpisode() {
++        for (int k = 0; k < 6; k++) {
++            for (int i = 0; i < 15; i++) {
++                add(96, 0, null);
++            }
++            for (int i = 0; i < 10; i++) {
++                add(88, 0, null); // short dips under the limit continue the same episode
++            }
++        }
++        for (int i = 0; i < 40; i++) {
++            add(70, 0, null);
++        }
++        var result = DrivingScore.compute(positions, 90);
++        assertEquals(1, result.getCounts().get(DrivingScore.SPEEDING));
++    }
++
++    @Test
++    public void testGpsJumpIgnoredInDistance() {
++        for (int i = 0; i < 600; i++) {
++            add(60, 0, null);
++        }
++        latitude += 1; // 111 km jump in one second
++        add(60, 0, null);
++        var result = DrivingScore.compute(positions, 90);
++        assertEquals(10, result.getDistance(), 0.1);
++    }
++
++    @Test
++    public void testCleanDrive() {
++        for (int i = 0; i < 600; i++) {
++            add(60, 0, null);
++        }
++        var result = DrivingScore.compute(positions, 90);
++        assertEquals(100, result.getScore());
++        assertEquals("excellent", result.getRating());
++        assertEquals(10, result.getDistance(), 0.1);
++    }
++
++}

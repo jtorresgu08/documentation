@@ -18,6 +18,7 @@ import { formatAlarm, formatTime } from '../common/util/formatter';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import usePersistedState from '../common/util/usePersistedState';
 import LivePlayer from './LivePlayer';
+import PlaybackPanel from './PlaybackPanel';
 import { buildCameraCommand, getCameraConfig } from '../common/util/dashcam';
 const PERIODS = { day: 1, week: 7, month: 30 };
 const DMS_ALARMS = ['fatigueDriving', 'phoneCall', 'smoking', 'distraction', 'driverAbnormal'];
@@ -102,6 +103,7 @@ const DashcamPage = () => {
   const selectedId = useSelector((state) => state.devices.selectedId);
   const serverPlayUrl = useSelector((state) => state.session.server.attributes['dashcam.playUrl']);
   const serverJimiPlayUrl = useSelector((state) => state.session.server.attributes['dashcam.playUrlJimi']);
+  const serverPlaybackUrl = useSelector((state) => state.session.server.attributes['dashcam.playbackUrl']);
 
   const [storedDeviceId, setDeviceId] = usePersistedState('dashcamDevice', null);
   const deviceId = storedDeviceId ?? selectedId;
@@ -206,6 +208,7 @@ const DashcamPage = () => {
       <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}>
         <Tab value="events" label={t('dashcamEvents')} />
         <Tab value="live" label={t('dashcamLive')} />
+        <Tab value="playback" label={t('playbackTitle')} />
       </Tabs>
 
       {!device && <Alert severity="info">{t('dashcamSelectDevice')}</Alert>}
@@ -228,6 +231,21 @@ const DashcamPage = () => {
           </Grid>
         </>
       )}
+
+      {device && tab === 'playback' && (config.protocol === 'jt808' ? (
+        <PlaybackPanel
+          device={device}
+          channels={channels}
+          channelLabel={channelLabel}
+          resolveUrl={(channel) => {
+            const template = device.attributes?.['dashcam.playbackUrl'] || serverPlaybackUrl;
+            return template ? template
+              .replaceAll('{uniqueId}', device.uniqueId)
+              .replaceAll('{deviceId}', device.id)
+              .replaceAll('{channel}', channel) : resolveUrl(channel);
+          }}
+        />
+      ) : <Alert severity="info">{t('playbackJt808Only')}</Alert>)}
 
       {device && tab === 'events' && (
         <>
