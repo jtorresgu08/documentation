@@ -166,6 +166,14 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   *Registrar servicio*. La moneda se toma del atributo de servidor `currencySymbol` (por defecto `S/`). Los usuarios
   de solo lectura pueden ver pero no registrar.
 
+## Almacenamiento con historial de 1 año (parche `0012`)
+
+Tarea nocturna que mantiene el disco acotado sin perder lo que se muestra: borra lo mayor a **365 días** (posiciones,
+eventos, fotos y videos), **compacta** el recorrido de más de 30 días (−90 % o más, conservando curvas, paradas,
+alarmas, eventos y distancias), **recomprime** fotos y videos de más de 7 días (JPEG / H.264 con ffmpeg) y, si se fija
+un tope en GB, **sobrescribe lo más antiguo**. Resultado y botón *Ejecutar ahora* en *Estado del servidor*.
+Configuración en [infra/DEPLOY.md](infra/DEPLOY.md), sección 12.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -239,6 +247,7 @@ python3 server/tests/test_fuel.py
 python3 server/tests/test_safety.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_video_driving_expenses.py
 python3 server/tests/test_jimi_playback.py clip.mp4
+python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```
 
 ## Producción

@@ -205,11 +205,7 @@ Para restaurar: `./scripts/restore.sh backups/traccar-AAAAMMDD-HHMMSS.dump`.
 ## 8. Mantenimiento
 
 - Actualizar la plataforma: `git pull && docker compose up -d --build`.
-- Limpieza de posiciones antiguas (ejemplo: más de 180 días):
-  ```bash
-  docker compose exec db psql -U traccar -d traccar -c \
-    "DELETE FROM tc_positions WHERE fixtime < now() - interval '180 days' AND id NOT IN (SELECT positionid FROM tc_devices WHERE positionid IS NOT NULL);"
-  ```
+- Limpieza de posiciones antiguas: automática, ver la sección 12.
 - Si importas usuarios o cambias la jerarquía directamente en la base de datos, reconstruye los permisos heredados:
   `POST /api/hierarchy/sync` (como administrador).
 - Monitorización: `docker compose ps`, `docker stats`, y un servicio externo (UptimeRobot, BetterStack) contra
@@ -255,3 +251,29 @@ servidor → Atributos* (o por unidad) con `engineStop.maxSpeed` (km/h; 0 = sin 
   reporte cada 1–2 s en movimiento; si el equipo envía sus propias alarmas de conducción brusca, se usan esas.
 - **Gastos**: la moneda se muestra con el atributo de servidor `currencySymbol` (por defecto `S/`). Los gastos se
   guardan en la tabla `tc_expenses`, creada automáticamente al actualizar y respaldada junto con la base de datos.
+
+## 12. Almacenamiento: historial de 1 año que se sobrescribe
+
+Cada noche (`RETENTION_HOUR`, por defecto 8 = 08:00 UTC = 03:00 en Perú, porque el contenedor usa UTC) la plataforma mantiene el espacio acotado. Los
+valores se definen en `infra/.env`:
+
+| Variable | Por defecto | Qué hace |
+|---|---|---|
+| `RETENTION_DAYS` | 365 | Borra posiciones, eventos, fotos y videos más antiguos; lo nuevo va ocupando ese espacio. |
+| `RETENTION_COMPACT_DAYS` | 30 | Compacta el recorrido de más de 30 días: quita puntos redundantes y conserva inicio y fin, curvas, paradas, cambios de encendido, alarmas, eventos, fotos y la posición actual. Un día típico baja más del 90 %. |
+| `RETENTION_COMPACT_INTERVAL` | 30 | En el historial compactado queda un punto cada 30 s en movimiento (y uno cada 30 min detenido). |
+| `RETENTION_MEDIA_COMPRESS_DAYS` | 7 | Recomprime fotos (JPEG calidad 70, máx. 1280 px) y videos (H.264, máx. 720p/1280 px) con más de 7 días; mantiene el nombre y la fecha, así siguen apareciendo en los eventos. |
+| `MEDIA_MAX_GB` | 0 | Tope de la carpeta de fotos y videos. Al superarlo borra lo más antiguo hasta quedar en el 90 %. |
+
+Así el historial, los reportes, las rutas y los eventos se pueden consultar durante todo el año; las distancias de
+los reportes no cambian porque se conservan los odómetros. El puntaje de conducción calculado por GPS necesita los
+puntos de cada segundo, así que para periodos ya compactados solo cuenta las alarmas del equipo y los excesos;
+sube `RETENTION_COMPACT_DAYS` (p. ej. 90) si quieres más margen.
+
+En *Administración → Estado del servidor* se ven la política, el resultado de la última ejecución (posiciones
+compactadas y vencidas, archivos comprimidos, espacio ahorrado, archivos sobrescritos) y el botón *Ejecutar ahora*.
+La primera ejecución sobre una base grande avanza hasta 62 días de historial por noche.
+
+PostgreSQL reutiliza el espacio de lo borrado (autovacuum), así que la base deja de crecer; para devolver espacio
+al disco de una sola vez después de la primera limpieza: `docker compose exec db vacuumdb -U traccar -d traccar --full`
+(bloquea las tablas unos minutos; hazlo de madrugada).

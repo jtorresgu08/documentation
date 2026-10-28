@@ -1,0 +1,810 @@
+diff --git a/src/main/java/org/traccar/api/resource/SystemResource.java b/src/main/java/org/traccar/api/resource/SystemResource.java
+index d1674fe..1d48ed7 100644
+--- a/src/main/java/org/traccar/api/resource/SystemResource.java
++++ b/src/main/java/org/traccar/api/resource/SystemResource.java
+@@ -16,6 +16,7 @@ package org.traccar.api.resource;
+ import jakarta.inject.Inject;
+ import jakarta.ws.rs.Consumes;
+ import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
+ import jakarta.ws.rs.Path;
+ import jakarta.ws.rs.Produces;
+ import jakarta.ws.rs.core.MediaType;
+@@ -28,6 +29,7 @@ import org.traccar.config.Config;
+ import org.traccar.config.Keys;
+ import org.traccar.model.Device;
+ import org.traccar.model.Server;
++import org.traccar.retention.StorageRetention;
+ import org.traccar.session.ConnectionManager;
+ import org.traccar.session.ProtocolStatistics;
+ import org.traccar.storage.StorageException;
+@@ -52,6 +54,9 @@ import java.util.Set;
+ @Consumes(MediaType.APPLICATION_JSON)
+ public class SystemResource extends BaseResource {
+ 
++    @Inject
++    private StorageRetention retention;
++
+     @Inject
+     private ServerManager serverManager;
+ 
+@@ -160,7 +165,19 @@ public class SystemResource extends BaseResource {
+         }
+         result.put("unknownDevices", unknown);
+ 
++        Map<String, Object> retentionInfo = new LinkedHashMap<>(retention.getSettings());
++        retentionInfo.put("running", retention.isRunning());
++        retentionInfo.put("last", retention.getLastReport());
++        result.put("retention", retentionInfo);
++
+         return result;
+     }
+ 
++    @POST
++    @Path("retention")
++    public Map<String, Object> runRetention() throws StorageException {
++        permissionsService.checkAdmin(getUserId());
++        return retention.run();
++    }
++
+ }
+diff --git a/src/main/java/org/traccar/config/Keys.java b/src/main/java/org/traccar/config/Keys.java
+index c8d2d9f..3f7937b 100644
+--- a/src/main/java/org/traccar/config/Keys.java
++++ b/src/main/java/org/traccar/config/Keys.java
+@@ -2040,6 +2040,63 @@ public final class Keys {
+             "broadcast.secondary",
+             List.of(KeyType.CONFIG));
+ 
++    /**
++     * Days of history kept: older positions, events and media files are deleted every night (0 keeps everything).
++     */
++    public static final ConfigKey<Integer> RETENTION_DAYS = new IntegerConfigKey(
++            "retention.days",
++            List.of(KeyType.CONFIG),
++            0);
++
++    /**
++     * Positions older than this many days are thinned: redundant points are removed while routes, stops, events,
++     * alarms and media keep their positions (0 disables).
++     */
++    public static final ConfigKey<Integer> RETENTION_COMPACT_DAYS = new IntegerConfigKey(
++            "retention.compactDays",
++            List.of(KeyType.CONFIG),
++            0);
++
++    /**
++     * Minimum seconds between kept positions while moving in compacted history.
++     */
++    public static final ConfigKey<Integer> RETENTION_COMPACT_INTERVAL = new IntegerConfigKey(
++            "retention.compactInterval",
++            List.of(KeyType.CONFIG),
++            30);
++
++    /**
++     * Photos and videos older than this many days are recompressed (JPEG quality / H.264 with ffmpeg; 0 disables).
++     */
++    public static final ConfigKey<Integer> RETENTION_MEDIA_COMPRESS_DAYS = new IntegerConfigKey(
++            "retention.media.compressDays",
++            List.of(KeyType.CONFIG),
++            0);
++
++    /**
++     * Maximum size of the media folder in GB; when exceeded the oldest files are overwritten (0 = no limit).
++     */
++    public static final ConfigKey<Double> RETENTION_MEDIA_MAX_SIZE = new DoubleConfigKey(
++            "retention.media.maxSize",
++            List.of(KeyType.CONFIG),
++            0.0);
++
++    /**
++     * ffmpeg executable used to recompress videos.
++     */
++    public static final ConfigKey<String> RETENTION_FFMPEG = new StringConfigKey(
++            "retention.ffmpeg",
++            List.of(KeyType.CONFIG),
++            "ffmpeg");
++
++    /**
++     * Hour of the day (server time) when the nightly retention runs.
++     */
++    public static final ConfigKey<Integer> RETENTION_HOUR = new IntegerConfigKey(
++            "retention.hour",
++            List.of(KeyType.CONFIG),
++            3);
++
+     /**
+      * Address where Jimi GT06 dashcams upload the list of recordings stored on their card (FILELIST). The device IMEI
+      * is appended as the last path segment, e.g. http://203.0.113.10:5262/filelist.
+diff --git a/src/main/java/org/traccar/retention/HistoryCompactor.java b/src/main/java/org/traccar/retention/HistoryCompactor.java
+new file mode 100644
+index 0000000..9c2ec5e
+--- /dev/null
++++ b/src/main/java/org/traccar/retention/HistoryCompactor.java
+@@ -0,0 +1,86 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.retention;
++
++import org.traccar.helper.DistanceCalculator;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Objects;
++import java.util.Set;
++
++/**
++ * Chooses the redundant positions of old history. Kept: the first and last point, positions referenced by events or
++ * the current position, alarms, media, ignition / motion / driver changes, one point per interval while moving (plus
++ * turns and long jumps, so the route keeps its shape) and one point every half hour while stopped.
++ */
++public final class HistoryCompactor {
++
++    static final double MOVING_SPEED = 3; // km/h
++    static final double TURN = 30; // degrees
++    static final double MAX_DISTANCE = 1000; // meters between kept points
++    static final long STOP_INTERVAL = 30 * 60 * 1000;
++
++    private static final List<String> KEEP_KEYS = List.of(
++            Position.KEY_ALARM, Position.KEY_IMAGE, Position.KEY_VIDEO, Position.KEY_AUDIO, Position.KEY_RESULT);
++
++    private HistoryCompactor() {
++    }
++
++    private static boolean moving(Position position) {
++        return position.getBoolean(Position.KEY_MOTION)
++                || UnitsConverter.kphFromKnots(position.getSpeed()) > MOVING_SPEED;
++    }
++
++    private static boolean changed(Position kept, Position position, String key) {
++        return !Objects.equals(kept.getAttributes().get(key), position.getAttributes().get(key));
++    }
++
++    /**
++     * Returns the ids to delete from positions of one device sorted by time.
++     */
++    public static List<Long> redundant(List<Position> positions, Set<Long> protectedIds, long interval) {
++        List<Long> result = new ArrayList<>();
++        Position kept = null;
++        for (int i = 0; i < positions.size(); i++) {
++            Position position = positions.get(i);
++            boolean keep = kept == null || i == positions.size() - 1
++                    || protectedIds.contains(position.getId())
++                    || KEEP_KEYS.stream().anyMatch(position::hasAttribute)
++                    || changed(kept, position, Position.KEY_IGNITION)
++                    || changed(kept, position, Position.KEY_DRIVER_UNIQUE_ID)
++                    || moving(kept) != moving(position);
++            if (!keep) {
++                long elapsed = position.getFixTime().getTime() - kept.getFixTime().getTime();
++                if (moving(position)) {
++                    double turn = Math.abs(((position.getCourse() - kept.getCourse() + 540) % 360) - 180);
++                    double distance = DistanceCalculator.distance(
++                            kept.getLatitude(), kept.getLongitude(), position.getLatitude(), position.getLongitude());
++                    keep = elapsed >= interval || turn >= TURN || distance >= MAX_DISTANCE;
++                } else {
++                    keep = elapsed >= STOP_INTERVAL;
++                }
++            }
++            if (keep) {
++                kept = position;
++            } else {
++                result.add(position.getId());
++            }
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/retention/StorageRetention.java b/src/main/java/org/traccar/retention/StorageRetention.java
+new file mode 100644
+index 0000000..215e875
+--- /dev/null
++++ b/src/main/java/org/traccar/retention/StorageRetention.java
+@@ -0,0 +1,445 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.retention;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import javax.imageio.IIOImage;
++import javax.imageio.ImageIO;
++import javax.imageio.ImageWriteParam;
++import javax.imageio.ImageWriter;
++import javax.imageio.stream.ImageOutputStream;
++import javax.sql.DataSource;
++import java.awt.Graphics2D;
++import java.awt.RenderingHints;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardCopyOption;
++import java.sql.Connection;
++import java.sql.PreparedStatement;
++import java.sql.ResultSet;
++import java.sql.SQLException;
++import java.sql.Timestamp;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.TimeUnit;
++import java.util.stream.Stream;
++
++/**
++ * Keeps the server storage bounded: deletes history older than retention.days, thins old positions, recompresses
++ * photos and videos and overwrites the oldest media when the media folder reaches its size limit. Runs every night
++ * (TaskStorageRetention) or on demand from the status page.
++ */
++@Singleton
++public class StorageRetention {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(StorageRetention.class);
++
++    private static final long DAY = 24L * 3600 * 1000;
++    private static final int MAX_COMPACT_DAYS_PER_RUN = 62;
++    private static final long MEDIA_BUDGET = 2 * 3600 * 1000L;
++    private static final long MIN_COMPRESS_SIZE = 50 * 1024;
++    private static final int MAX_IMAGE_WIDTH = 1280;
++    private static final String STATE_FILE = ".retention-state";
++    private static final String COMPRESSED_FILE = ".retention-compressed";
++
++    private final Config config;
++    private final Storage storage;
++    private final DataSource dataSource;
++
++    private volatile Map<String, Object> lastReport;
++    private volatile boolean running;
++
++    @Inject
++    public StorageRetention(Config config, Storage storage, DataSource dataSource) {
++        this.config = config;
++        this.storage = storage;
++        this.dataSource = dataSource;
++    }
++
++    public Map<String, Object> getLastReport() {
++        return lastReport;
++    }
++
++    public boolean isRunning() {
++        return running;
++    }
++
++    public Map<String, Object> getSettings() {
++        Map<String, Object> settings = new LinkedHashMap<>();
++        settings.put("days", config.getInteger(Keys.RETENTION_DAYS));
++        settings.put("compactDays", config.getInteger(Keys.RETENTION_COMPACT_DAYS));
++        settings.put("compactInterval", config.getInteger(Keys.RETENTION_COMPACT_INTERVAL));
++        settings.put("mediaCompressDays", config.getInteger(Keys.RETENTION_MEDIA_COMPRESS_DAYS));
++        settings.put("mediaMaxSize", config.getDouble(Keys.RETENTION_MEDIA_MAX_SIZE));
++        settings.put("hour", config.getInteger(Keys.RETENTION_HOUR));
++        settings.put("nextRun", nextRun(config.getInteger(Keys.RETENTION_HOUR)));
++        return settings;
++    }
++
++    /**
++     * Next occurrence of the configured hour in the server time zone (epoch ms), so clients show it in local time.
++     */
++    public static long nextRun(int hour) {
++        ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
++        ZonedDateTime next = now.withHour(Math.max(0, Math.min(23, hour))).withMinute(0).withSecond(0).withNano(0);
++        if (!next.isAfter(now)) {
++            next = next.plusDays(1);
++        }
++        return next.toInstant().toEpochMilli();
++    }
++
++    private Path statePath(String name) {
++        String media = config.getString(Keys.MEDIA_PATH);
++        return Path.of(media != null ? media : "data").resolve(name);
++    }
++
++    private long readCompactedUntil() {
++        try {
++            Path path = statePath(STATE_FILE);
++            return Files.exists(path) ? Long.parseLong(Files.readString(path).trim()) : 0;
++        } catch (IOException | NumberFormatException e) {
++            return 0;
++        }
++    }
++
++    private void writeCompactedUntil(long time) throws IOException {
++        Path path = statePath(STATE_FILE);
++        Files.createDirectories(path.getParent());
++        Files.writeString(path, String.valueOf(time));
++    }
++
++    public synchronized Map<String, Object> run() {
++        running = true;
++        long started = System.currentTimeMillis();
++        Map<String, Object> report = new LinkedHashMap<>();
++        report.put("start", started);
++        try {
++            int days = config.getInteger(Keys.RETENTION_DAYS);
++            Collection<Device> devices = storage.getObjects(Device.class, new Request(new Columns.All()));
++            if (days > 0) {
++                deleteHistory(devices, started - days * DAY, report);
++            }
++            int compactDays = config.getInteger(Keys.RETENTION_COMPACT_DAYS);
++            if (compactDays > 0) {
++                compactHistory(devices, started - compactDays * DAY, days > 0 ? started - days * DAY : 0, report);
++            }
++            processMedia(started, report);
++        } catch (Exception e) {
++            LOGGER.warn("Storage retention failed", e);
++            report.put("error", e.getMessage());
++        } finally {
++            report.put("duration", System.currentTimeMillis() - started);
++            lastReport = report;
++            running = false;
++        }
++        LOGGER.info("Storage retention: {}", report);
++        return report;
++    }
++
++    private void deleteHistory(Collection<Device> devices, long cutoff, Map<String, Object> report)
++            throws SQLException {
++        long positions = 0;
++        long events = 0;
++        Timestamp time = new Timestamp(cutoff);
++        try (Connection connection = dataSource.getConnection();
++             PreparedStatement deleteEvents = connection.prepareStatement(
++                     "DELETE FROM tc_events WHERE deviceid = ? AND eventtime < ?");
++             PreparedStatement deletePositions = connection.prepareStatement(
++                     "DELETE FROM tc_positions WHERE deviceid = ? AND fixtime < ? AND id <> ?")) {
++            for (Device device : devices) {
++                deleteEvents.setLong(1, device.getId());
++                deleteEvents.setTimestamp(2, time);
++                events += deleteEvents.executeUpdate();
++                deletePositions.setLong(1, device.getId());
++                deletePositions.setTimestamp(2, time);
++                deletePositions.setLong(3, device.getPositionId());
++                positions += deletePositions.executeUpdate();
++            }
++        }
++        report.put("positionsExpired", positions);
++        report.put("eventsExpired", events);
++    }
++
++    private long oldestPosition() throws SQLException {
++        try (Connection connection = dataSource.getConnection();
++             PreparedStatement statement = connection.prepareStatement("SELECT MIN(fixtime) FROM tc_positions");
++             ResultSet result = statement.executeQuery()) {
++            Timestamp time = result.next() ? result.getTimestamp(1) : null;
++            return time != null ? time.getTime() : 0;
++        }
++    }
++
++    private void compactHistory(Collection<Device> devices, long until, long notBefore, Map<String, Object> report)
++            throws SQLException, StorageException, IOException {
++        long watermark = readCompactedUntil();
++        long from = Math.max(watermark > 0 ? watermark : oldestPosition(), notBefore);
++        long interval = config.getInteger(Keys.RETENTION_COMPACT_INTERVAL) * 1000L;
++        long removed = 0;
++        int processed = 0;
++        try (Connection connection = dataSource.getConnection();
++             PreparedStatement delete = connection.prepareStatement("DELETE FROM tc_positions WHERE id = ?")) {
++            while (from > 0 && from < until && processed < MAX_COMPACT_DAYS_PER_RUN) {
++                long to = Math.min(from + DAY, until);
++                for (Device device : devices) {
++                    List<Position> positions = PositionUtil.getPositions(
++                            storage, device.getId(), new Date(from), new Date(to));
++                    if (positions.size() < 3) {
++                        continue;
++                    }
++                    Set<Long> protectedIds = new HashSet<>();
++                    protectedIds.add(device.getPositionId());
++                    for (Event event : storage.getObjects(Event.class, new Request(
++                            new Columns.Include("positionId"),
++                            new Condition.And(
++                                    new Condition.Equals("deviceId", device.getId()),
++                                    new Condition.Between("eventTime", new Date(from), new Date(to)))))) {
++                        protectedIds.add(event.getPositionId());
++                    }
++                    List<Long> ids = HistoryCompactor.redundant(positions, protectedIds, interval);
++                    for (int i = 0; i < ids.size(); i++) {
++                        delete.setLong(1, ids.get(i));
++                        delete.addBatch();
++                        if (i % 1000 == 999 || i == ids.size() - 1) {
++                            delete.executeBatch();
++                        }
++                    }
++                    removed += ids.size();
++                }
++                from = to;
++                processed += 1;
++                writeCompactedUntil(from);
++            }
++        }
++        report.put("positionsCompacted", removed);
++        report.put("compactedUntil", from);
++    }
++
++    private void processMedia(long now, Map<String, Object> report) throws IOException {
++        String mediaPath = config.getString(Keys.MEDIA_PATH);
++        if (mediaPath == null || !Files.isDirectory(Path.of(mediaPath))) {
++            return;
++        }
++        Path root = Path.of(mediaPath);
++        List<Path> files = new ArrayList<>();
++        try (Stream<Path> stream = Files.walk(root)) {
++            stream.filter(Files::isRegularFile)
++                    .filter(path -> !path.getFileName().toString().startsWith("."))
++                    .forEach(files::add);
++        }
++
++        int days = config.getInteger(Keys.RETENTION_DAYS);
++        long deleted = 0;
++        if (days > 0) {
++            for (Path file : new ArrayList<>(files)) {
++                if (file.toFile().lastModified() < now - days * DAY) {
++                    Files.deleteIfExists(file);
++                    files.remove(file);
++                    deleted += 1;
++                }
++            }
++        }
++
++        Path indexPath = root.resolve(COMPRESSED_FILE);
++        Set<String> compressed = new HashSet<>(
++                Files.exists(indexPath) ? Files.readAllLines(indexPath, StandardCharsets.UTF_8) : List.of());
++        int compressDays = config.getInteger(Keys.RETENTION_MEDIA_COMPRESS_DAYS);
++        long saved = 0;
++        int compressedCount = 0;
++        if (compressDays > 0) {
++            boolean ffmpeg = ffmpegAvailable();
++            for (Path file : files) {
++                if (System.currentTimeMillis() - now > MEDIA_BUDGET) {
++                    break;
++                }
++                String key = root.relativize(file).toString();
++                File handle = file.toFile();
++                if (compressed.contains(key) || handle.lastModified() > now - compressDays * DAY
++                        || handle.length() < MIN_COMPRESS_SIZE) {
++                    continue;
++                }
++                long before = handle.length();
++                String name = key.toLowerCase();
++                boolean image = name.endsWith(".jpg") || name.endsWith(".jpeg");
++                if (!image && !(ffmpeg && name.endsWith(".mp4"))) {
++                    continue;
++                }
++                boolean done = image ? compressImage(file) : compressVideo(file);
++                compressed.add(key); // attempted once, also when the result would not be smaller
++                if (done) {
++                    compressedCount += 1;
++                    saved += before - file.toFile().length();
++                }
++            }
++        }
++
++        long maxSize = (long) (config.getDouble(Keys.RETENTION_MEDIA_MAX_SIZE) * 1024 * 1024 * 1024);
++        long total = files.stream().mapToLong(path -> path.toFile().length()).sum();
++        long overwritten = 0;
++        if (maxSize > 0 && total > maxSize) {
++            files.sort(Comparator.comparingLong(path -> path.toFile().lastModified()));
++            for (Path file : new ArrayList<>(files)) {
++                if (total <= maxSize * 9 / 10) {
++                    break;
++                }
++                total -= file.toFile().length();
++                Files.deleteIfExists(file);
++                files.remove(file);
++                overwritten += 1;
++            }
++        }
++
++        Set<String> existing = new HashSet<>();
++        files.forEach(path -> existing.add(root.relativize(path).toString()));
++        compressed.retainAll(existing);
++        Files.write(indexPath, compressed, StandardCharsets.UTF_8);
++
++        report.put("mediaExpired", deleted);
++        report.put("mediaCompressed", compressedCount);
++        report.put("mediaSaved", saved);
++        report.put("mediaOverwritten", overwritten);
++        report.put("mediaFiles", files.size());
++        report.put("mediaSize", total);
++    }
++
++    private static void replaceKeepingTime(Path file, Path replacement) throws IOException {
++        long modified = file.toFile().lastModified();
++        Files.move(replacement, file, StandardCopyOption.REPLACE_EXISTING);
++        file.toFile().setLastModified(modified);
++    }
++
++    private static boolean compressImage(Path file) {
++        try {
++            BufferedImage image = ImageIO.read(file.toFile());
++            if (image == null) {
++                return false;
++            }
++            if (image.getWidth() > MAX_IMAGE_WIDTH) {
++                int height = image.getHeight() * MAX_IMAGE_WIDTH / image.getWidth();
++                BufferedImage scaled = new BufferedImage(MAX_IMAGE_WIDTH, height, BufferedImage.TYPE_INT_RGB);
++                Graphics2D graphics = scaled.createGraphics();
++                graphics.setRenderingHint(
++                        RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
++                graphics.drawImage(image, 0, 0, MAX_IMAGE_WIDTH, height, null);
++                graphics.dispose();
++                image = scaled;
++            } else if (image.getType() != BufferedImage.TYPE_INT_RGB) {
++                BufferedImage rgb = new BufferedImage(
++                        image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_RGB);
++                Graphics2D graphics = rgb.createGraphics();
++                graphics.drawImage(image, 0, 0, null);
++                graphics.dispose();
++                image = rgb;
++            }
++            ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
++            ImageWriteParam param = writer.getDefaultWriteParam();
++            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
++            param.setCompressionQuality(0.7f);
++            ByteArrayOutputStream output = new ByteArrayOutputStream();
++            try (ImageOutputStream stream = ImageIO.createImageOutputStream(output)) {
++                writer.setOutput(stream);
++                writer.write(null, new IIOImage(image, null, null), param);
++            } finally {
++                writer.dispose();
++            }
++            if (output.size() > file.toFile().length() * 85 / 100) {
++                return false;
++            }
++            Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
++            Files.write(temporary, output.toByteArray());
++            replaceKeepingTime(file, temporary);
++            return true;
++        } catch (IOException e) {
++            LOGGER.warn("Image compression failed for {}", file, e);
++            return false;
++        }
++    }
++
++    private boolean ffmpegAvailable() {
++        try {
++            Process process = new ProcessBuilder(config.getString(Keys.RETENTION_FFMPEG), "-version")
++                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
++            return process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0;
++        } catch (IOException e) {
++            return false;
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++            return false;
++        }
++    }
++
++    private boolean compressVideo(Path file) {
++        Path temporary = file.resolveSibling(file.getFileName() + ".tmp.mp4");
++        try {
++            Process process = new ProcessBuilder(
++                    config.getString(Keys.RETENTION_FFMPEG), "-nostdin", "-y", "-loglevel", "error",
++                    "-i", file.toString(), "-map", "0:v:0", "-map", "0:a?",
++                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-vf", "scale='min(1280,iw)':-2",
++                    "-c:a", "aac", "-b:a", "48k", "-movflags", "+faststart", "-threads", "2",
++                    temporary.toString())
++                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
++            if (!process.waitFor(10, TimeUnit.MINUTES)) {
++                process.destroyForcibly();
++                return false;
++            }
++            if (process.exitValue() != 0 || !Files.exists(temporary)
++                    || Files.size(temporary) > file.toFile().length() * 9 / 10) {
++                return false;
++            }
++            replaceKeepingTime(file, temporary);
++            return true;
++        } catch (IOException e) {
++            LOGGER.warn("Video compression failed for {}", file, e);
++            return false;
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++            return false;
++        } finally {
++            try {
++                Files.deleteIfExists(temporary);
++            } catch (IOException ignored) {
++                // nothing left to clean
++            }
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/schedule/ScheduleManager.java b/src/main/java/org/traccar/schedule/ScheduleManager.java
+index fd81711..c1b0fdc 100644
+--- a/src/main/java/org/traccar/schedule/ScheduleManager.java
++++ b/src/main/java/org/traccar/schedule/ScheduleManager.java
+@@ -50,7 +50,8 @@ public class ScheduleManager implements LifecycleObject {
+                 TaskDeleteTemporary.class,
+                 TaskReports.class,
+                 TaskDeviceInactivityCheck.class,
+-                TaskWebSocketKeepalive.class)
++                TaskWebSocketKeepalive.class,
++                TaskStorageRetention.class)
+                 .forEachOrdered(taskClass -> {
+                     var task = injector.getInstance(taskClass);
+                     if (task.multipleInstances() || !secondary) {
+diff --git a/src/main/java/org/traccar/schedule/TaskStorageRetention.java b/src/main/java/org/traccar/schedule/TaskStorageRetention.java
+new file mode 100644
+index 0000000..b2e9c5c
+--- /dev/null
++++ b/src/main/java/org/traccar/schedule/TaskStorageRetention.java
+@@ -0,0 +1,51 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.schedule;
++
++import jakarta.inject.Inject;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.retention.StorageRetention;
++
++import java.util.concurrent.ScheduledExecutorService;
++import java.util.concurrent.TimeUnit;
++
++public class TaskStorageRetention extends SingleScheduleTask {
++
++    private final Config config;
++    private final StorageRetention retention;
++
++    @Inject
++    public TaskStorageRetention(Config config, StorageRetention retention) {
++        this.config = config;
++        this.retention = retention;
++    }
++
++    @Override
++    public void schedule(ScheduledExecutorService executor) {
++        long delay = TimeUnit.MILLISECONDS.toMinutes(
++                StorageRetention.nextRun(config.getInteger(Keys.RETENTION_HOUR)) - System.currentTimeMillis());
++        executor.scheduleAtFixedRate(this, delay, TimeUnit.DAYS.toMinutes(1), TimeUnit.MINUTES);
++    }
++
++    @Override
++    public void run() {
++        if (config.getInteger(Keys.RETENTION_DAYS) > 0 || config.getInteger(Keys.RETENTION_COMPACT_DAYS) > 0
++                || config.getInteger(Keys.RETENTION_MEDIA_COMPRESS_DAYS) > 0
++                || config.getDouble(Keys.RETENTION_MEDIA_MAX_SIZE) > 0) {
++            retention.run();
++        }
++    }
++
++}
+diff --git a/src/test/java/org/traccar/retention/HistoryCompactorTest.java b/src/test/java/org/traccar/retention/HistoryCompactorTest.java
+new file mode 100644
+index 0000000..444860b
+--- /dev/null
++++ b/src/test/java/org/traccar/retention/HistoryCompactorTest.java
+@@ -0,0 +1,72 @@
++package org.traccar.retention;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class HistoryCompactorTest {
++
++    private final List<Position> positions = new ArrayList<>();
++    private long time = 1_700_000_000_000L;
++    private double latitude = -12;
++
++    private Position add(double speed, double course, boolean ignition) {
++        Position position = new Position();
++        position.setId(positions.size() + 1);
++        position.setTime(new Date(time));
++        time += 1000;
++        latitude += speed / 3.6 / 111320;
++        position.setLatitude(latitude);
++        position.setLongitude(-77);
++        position.setSpeed(UnitsConverter.knotsFromKph(speed));
++        position.setCourse(course);
++        position.set(Position.KEY_IGNITION, ignition);
++        positions.add(position);
++        return position;
++    }
++
++    @Test
++    public void testThinning() {
++        for (int i = 0; i < 600; i++) {
++            add(50, 0, true); // 10 min straight at 1 s
++        }
++        Position turn = add(50, 90, true);
++        for (int i = 0; i < 3600; i++) {
++            add(0, 90, false); // 1 h parked
++        }
++        Position alarm = add(0, 90, false);
++        alarm.set(Position.KEY_ALARM, Position.ALARM_SOS);
++        for (int i = 0; i < 60; i++) {
++            add(0, 90, false);
++        }
++        Set<Long> protectedIds = new HashSet<>(Set.of(5L));
++
++        List<Long> removed = HistoryCompactor.redundant(positions, protectedIds, 30_000);
++        Set<Long> removedSet = new HashSet<>(removed);
++        int kept = positions.size() - removed.size();
++
++        assertTrue(kept < 50, "kept " + kept); // from 4262 points
++        assertFalse(removedSet.contains(1L)); // first
++        assertFalse(removedSet.contains(5L)); // protected (event)
++        assertFalse(removedSet.contains(35L)); // 30 s after the protected point
++        assertTrue(removedSet.contains(10L));
++        assertFalse(removedSet.contains(turn.getId())); // turn
++        assertFalse(removedSet.contains(turn.getId() + 1)); // ignition off, stop starts
++        assertFalse(removedSet.contains(alarm.getId()));
++        assertFalse(removedSet.contains((long) positions.size())); // last
++        // parked: one point every half hour
++        assertFalse(removedSet.contains(turn.getId() + 1 + 1800));
++        assertEquals(0, HistoryCompactor.redundant(List.of(positions.get(0)), Set.of(), 30_000).size());
++    }
++
++}

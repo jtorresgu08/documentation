@@ -20,6 +20,8 @@ COPY web/ ./
 RUN npm run build
 
 FROM eclipse-temurin:21-jre
+# ffmpeg recompresses old dashcam videos (retention.media.compressDays)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system traccar && useradd --system --gid traccar --home-dir /opt/traccar traccar
 WORKDIR /opt/traccar
 COPY --from=server /build/target/tracker-server.jar ./

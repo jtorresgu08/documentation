@@ -53,6 +53,20 @@ const SystemStatusPage = () => {
   const [search, setSearch] = useState('');
   const [adding, setAdding] = useState(null);
 
+  const [retentionBusy, setRetentionBusy] = useState(false);
+
+  const runRetention = async () => {
+    setRetentionBusy(true);
+    try {
+      await fetchOrThrow('/api/system/retention', { method: 'POST' });
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRetentionBusy(false);
+    }
+  };
+
   const load = async () => {
     try {
       const response = await fetchOrThrow('/api/system/status');
@@ -166,6 +180,58 @@ const SystemStatusPage = () => {
           />
         </Grid>
       </Grid>
+
+      {status.retention && (
+        <>
+          <Stack direction="row" alignItems="center" spacing={2} sx={{ mt: 4, mb: 1 }}>
+            <Typography variant="h6" fontWeight={700} sx={{ flexGrow: 1 }}>{t('retentionTitle')}</Typography>
+            <Button variant="outlined" onClick={runRetention} disabled={retentionBusy || status.retention.running}>
+              {t('retentionRunNow')}
+            </Button>
+          </Stack>
+          <Card variant="outlined" sx={{ borderRadius: 3 }}>
+            <CardContent>
+              {retentionBusy && <LinearProgress sx={{ mb: 2 }} />}
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+                <Chip
+                  color={status.retention.days ? 'primary' : 'default'}
+                  label={status.retention.days ? t('retentionDays').replace('{days}', status.retention.days) : t('retentionUnlimited')}
+                />
+                {status.retention.compactDays > 0 && (
+                  <Chip variant="outlined" label={t('retentionCompact').replace('{days}', status.retention.compactDays).replace('{seconds}', status.retention.compactInterval)} />
+                )}
+                {status.retention.mediaCompressDays > 0 && (
+                  <Chip variant="outlined" label={t('retentionMediaCompress').replace('{days}', status.retention.mediaCompressDays)} />
+                )}
+                {status.retention.mediaMaxSize > 0 && (
+                  <Chip variant="outlined" label={t('retentionMediaMax').replace('{size}', status.retention.mediaMaxSize)} />
+                )}
+                <Chip variant="outlined" label={t('retentionSchedule').replace('{hour}', dayjs(status.retention.nextRun).format('HH:mm'))} />
+              </Stack>
+              {status.retention.last ? (
+                <Grid container spacing={2}>
+                  {[
+                    [t('retentionLastRun'), `${dayjs(status.retention.last.start).format('DD/MM/YYYY HH:mm')} · ${formatPeriod(status.retention.last.duration)}`],
+                    [t('retentionPositions'), `${(status.retention.last.positionsCompacted || 0).toLocaleString()} ${t('retentionCompacted')} · ${(status.retention.last.positionsExpired || 0).toLocaleString()} ${t('retentionExpired')}`],
+                    [t('retentionEvents'), `${(status.retention.last.eventsExpired || 0).toLocaleString()} ${t('retentionExpired')}`],
+                    [t('retentionMedia'), `${(status.retention.last.mediaFiles || 0).toLocaleString()} ${t('retentionFiles')} · ${formatBytes(status.retention.last.mediaSize || 0)}`],
+                    [t('retentionCompressed'), `${status.retention.last.mediaCompressed || 0} · ${formatBytes(status.retention.last.mediaSaved || 0)} ${t('retentionSaved')}`],
+                    [t('retentionRemoved'), `${(status.retention.last.mediaExpired || 0) + (status.retention.last.mediaOverwritten || 0)} ${t('retentionFiles')}`],
+                  ].map(([label, value]) => (
+                    <Grid key={label} size={{ xs: 12, sm: 6, md: 4 }}>
+                      <Typography variant="caption" color="text.secondary">{label}</Typography>
+                      <Typography fontWeight={600}>{value}</Typography>
+                    </Grid>
+                  ))}
+                  {status.retention.last.error && (
+                    <Grid size={12}><Alert severity="error">{status.retention.last.error}</Alert></Grid>
+                  )}
+                </Grid>
+              ) : <Typography variant="body2" color="text.secondary">{t('retentionNever')}</Typography>}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ sm: 'center' }} spacing={2} sx={{ mt: 4, mb: 1 }}>
         <Typography variant="h6" fontWeight={700} sx={{ flexGrow: 1 }}>{t('statusPortMonitor')}</Typography>
