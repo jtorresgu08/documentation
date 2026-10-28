@@ -5,11 +5,14 @@ Simulador de dashcam Jimi IoT con protocolo GT06 (JC400 / JC261).
   - inicio de sesión y alarma JC400 (0x95) con la lista de archivos del evento, por TCP (puerto gt06, 5023)
   - subida de los archivos del evento por HTTP (puerto jimiupload, 5262), como hace la cámara con UPLOAD,...
   - escucha comandos de texto del servidor (0x80), p. ej. RTMP,ON,INOUT para video en vivo
+  - grabaciones de la tarjeta (start_storage): FILELIST sube la lista de archivos de 1 minuto por HTTP, REPLAYLIST
+    "transmite" archivos por nombre y HVIDEO sube un minuto como video
 
 Uso:
   python3 jimi_simulator.py --host 127.0.0.1 --imei 862798052429087 --front clip.mp4 --cabin cabina.jpg
 """
 import argparse
+import json
 import queue
 import socket
 import struct
@@ -17,7 +20,7 @@ import threading
 import time
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def crc16_x25(data: bytes) -> int:
@@ -45,6 +48,10 @@ class JimiCamera:
         self.serial = 0
         self.sock = socket.create_connection((host, port), timeout=10)
         self.commands = queue.Queue()
+        self.storage = None
+        self.replays = []
+        self.hvideos = []
+        self.file_list_url = None
         self.running = True
         self.log = print
         threading.Thread(target=self._read, daemon=True).start()
@@ -78,6 +85,8 @@ class JimiCamera:
                     text = frame[start + 5:start + 1 + frame[start]].decode('ascii', 'replace')
                     self.log(f'[{self.imei}] comando recibido: {text}')
                     self.commands.put(text)
+                    if self.storage:
+                        threading.Thread(target=self._storage_command, args=(text,), daemon=True).start()
 
     def login(self):
         self.sock.sendall(packet(0x01, bcd_imei(self.imei), self._next()))
@@ -113,6 +122,46 @@ class JimiCamera:
         with opener.open(request, timeout=30) as response:
             self.log(f'[{self.imei}] archivo {name} ({len(data)} bytes) subido: HTTP {response.status}')
             return response.status
+
+    def start_storage(self, clip, upload_port=5262, tz_offset=0, list_format='txt'):
+        """Recordings on the card: one-minute files per camera (01 road, 02 cabin) in two blocks of the last hours,
+        named in device local time (UTC + tz_offset hours)."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0) + timedelta(hours=tz_offset)
+        names = []
+        for camera in (1, 2):
+            for begin, minutes in ((now - timedelta(hours=3), 60), (now - timedelta(minutes=90), 60)):
+                for minute in range(minutes):
+                    names.append(f'{begin + timedelta(minutes=minute):%Y_%m_%d_%H_%M_%S}_{camera:02d}.mp4')
+        self.storage = {'names': names, 'clip': clip, 'upload_port': upload_port, 'format': list_format}
+
+    def _storage_command(self, text):
+        parts = text.split(',')
+        if parts[0] == 'FILELIST' and len(parts) > 1:
+            self.file_list_url = ','.join(parts[1:])
+        elif parts[0] == 'FILELIST':
+            self.send_file_list()
+        elif parts[0] == 'REPLAYLIST':
+            self.replays.append(parts[1:])
+        elif parts[0] == 'HVIDEO':
+            self.hvideos.append(parts[1:])
+            with open(self.storage['clip'], 'rb') as handle:
+                self.upload(self.storage['upload_port'], f'{parts[1]}_{int(parts[2]):02d}.mp4', handle.read())
+
+    def send_file_list(self):
+        url = self.file_list_url or f'http://{self.host}:{self.storage["upload_port"]}/filelist/{self.imei}'
+        names = self.storage['names']
+        if self.storage['format'] == 'json':
+            body = json.dumps({'imei': self.imei, 'fileNameList': ','.join(names)}).encode()
+            headers = {'Content-Type': 'application/json'}
+        else:
+            boundary = uuid.uuid4().hex
+            body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{self.imei}.txt"\r\n'
+                    'Content-Type: text/plain\r\n\r\n').encode() + '\n'.join(names).encode() \
+                + f'\r\n--{boundary}--\r\n'.encode()
+            headers = {'Content-Type': f'multipart/form-data; boundary={boundary}'}
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(urllib.request.Request(url, data=body, method='POST', headers=headers), timeout=30) as response:
+            self.log(f'[{self.imei}] lista de {len(names)} grabaciones enviada a {url}: {response.read().decode()}')
 
     def close(self):
         self.running = False

@@ -1056,7 +1056,6 @@
     "expenseWorkshop": "Taller",
     "expenseWorkshopCaption": "Mantenimiento, reparación y llantas",
     "playbackTitle": "Grabaciones",
-    "playbackJt808Only": "La reproducción de grabaciones requiere un equipo JT/T 808 / JT/T 1078 (MDVR).",
     "playbackAlarm": "Alarma",
     "playbackAllChannels": "Todos los canales",
     "playbackDay": "Día",
@@ -1068,5 +1067,8 @@
     "playbackSize": "Tamaño",
     "playbackTimeline": "Línea de tiempo",
     "playbackTimeout": "El equipo no respondió a tiempo. Intente nuevamente.",
-    "fuelPeriodLast30d": "Últimos 30 días"
+    "fuelPeriodLast30d": "Últimos 30 días",
+    "playbackTimeoutJimi": "La cámara no envió la lista de grabaciones. Verifica que tenga configurado FILELIST hacia el servidor (ver guía de instalación) y que esté en línea.",
+    "playbackDownloadMinute": "Descargar este minuto a la galería",
+    "playbackDownloadRequested": "Video pedido: aparecerá en Eventos de cámara cuando la cámara lo suba (puede tardar unos minutos)."
 }

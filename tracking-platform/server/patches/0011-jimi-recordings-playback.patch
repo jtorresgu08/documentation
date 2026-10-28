@@ -1,0 +1,358 @@
+diff --git a/src/main/java/org/traccar/api/resource/VideoResource.java b/src/main/java/org/traccar/api/resource/VideoResource.java
+index a1c16e5..323badd 100644
+--- a/src/main/java/org/traccar/api/resource/VideoResource.java
++++ b/src/main/java/org/traccar/api/resource/VideoResource.java
+@@ -22,13 +22,19 @@ import jakarta.ws.rs.QueryParam;
+ import jakarta.ws.rs.core.MediaType;
+ import jakarta.ws.rs.core.Response;
+ import org.traccar.api.BaseResource;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
+ import org.traccar.database.CommandsManager;
+ import org.traccar.model.Command;
+ import org.traccar.model.Device;
+ import org.traccar.protocol.HuabaoProtocol;
++import org.traccar.protocol.JimiRecordings;
+ import org.traccar.protocol.VideoRecordings;
+ import org.traccar.session.ConnectionManager;
+ import org.traccar.session.DeviceSession;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
+ 
+ import java.util.Date;
+ import java.util.List;
+@@ -38,8 +44,8 @@ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.TimeoutException;
+ 
+ /**
+- * Recordings stored on a JT/T 1078 MDVR: asks the connected device for its resource list and waits for the answer.
+- * Playback itself is started with the videoPlayback / videoPlaybackControl commands.
++ * Recordings stored on a JT/T 1078 MDVR or a Jimi GT06 dashcam: asks the connected device for its resource list and
++ * waits for the answer. Playback is started with videoPlayback / videoPlaybackControl (JT/T 1078) or REPLAYLIST (Jimi).
+  */
+ @Path("video")
+ @Produces(MediaType.APPLICATION_JSON)
+@@ -47,6 +53,7 @@ import java.util.concurrent.TimeoutException;
+ public class VideoResource extends BaseResource {
+ 
+     private static final long TIMEOUT = 20;
++    private static final long JIMI_TIMEOUT = 60;
+ 
+     @Inject
+     private CommandsManager commandsManager;
+@@ -54,6 +61,42 @@ public class VideoResource extends BaseResource {
+     @Inject
+     private ConnectionManager connectionManager;
+ 
++    @Inject
++    private Config config;
++
++    private void sendText(long deviceId, String text) throws Exception {
++        Command command = new Command();
++        command.setDeviceId(deviceId);
++        command.setType(Command.TYPE_CUSTOM);
++        command.set(Command.KEY_DATA, text);
++        command.set(Command.KEY_NO_QUEUE, true);
++        commandsManager.sendCommand(command);
++    }
++
++    // Jimi GT06 dashcams upload the whole list of one-minute files over HTTP after FILELIST
++    private Response jimiRecordings(long deviceId, int channel, Date from, Date to) throws Exception {
++        CompletableFuture<List<VideoRecordings.Recording>> future = VideoRecordings.expect(deviceId);
++        try {
++            String url = config.getString(Keys.JIMI_FILE_LIST_URL);
++            if (url != null && !url.isBlank()) {
++                Device device = storage.getObject(Device.class, new Request(
++                        new Columns.All(), new Condition.Equals("id", deviceId)));
++                String target = url.contains("{uniqueId}")
++                        ? url.replace("{uniqueId}", device.getUniqueId())
++                        : url.replaceAll("/+$", "") + "/" + device.getUniqueId();
++                sendText(deviceId, "FILELIST," + target);
++            }
++            sendText(deviceId, "FILELIST");
++            List<VideoRecordings.Recording> files = future.get(JIMI_TIMEOUT, TimeUnit.SECONDS);
++            return Response.ok(JimiRecordings.merge(
++                    files, channel, from != null ? from.getTime() : 0, to != null ? to.getTime() : 0)).build();
++        } catch (TimeoutException e) {
++            return Response.status(Response.Status.GATEWAY_TIMEOUT).entity(Map.of("error", "timeout")).build();
++        } finally {
++            VideoRecordings.cancel(deviceId, future);
++        }
++    }
++
+     @GET
+     @Path("recordings")
+     public Response recordings(
+@@ -64,6 +107,9 @@ public class VideoResource extends BaseResource {
+         if (session == null || !session.supportsLiveCommands()) {
+             return Response.status(Response.Status.CONFLICT).entity(Map.of("error", "offline")).build();
+         }
++        if ("gt06".equals(session.getProtocol().getName())) {
++            return jimiRecordings(deviceId, channel, from, to);
++        }
+         CompletableFuture<List<VideoRecordings.Recording>> future = VideoRecordings.expect(deviceId);
+         Command command = new Command();
+         command.setDeviceId(deviceId);
+diff --git a/src/main/java/org/traccar/config/Keys.java b/src/main/java/org/traccar/config/Keys.java
+index 8c0622a..c8d2d9f 100644
+--- a/src/main/java/org/traccar/config/Keys.java
++++ b/src/main/java/org/traccar/config/Keys.java
+@@ -2040,6 +2040,14 @@ public final class Keys {
+             "broadcast.secondary",
+             List.of(KeyType.CONFIG));
+ 
++    /**
++     * Address where Jimi GT06 dashcams upload the list of recordings stored on their card (FILELIST). The device IMEI
++     * is appended as the last path segment, e.g. http://203.0.113.10:5262/filelist.
++     */
++    public static final ConfigKey<String> JIMI_FILE_LIST_URL = new StringConfigKey(
++            "jimi.fileListUrl",
++            List.of(KeyType.CONFIG));
++
+     /**
+      * Engine stop is only sent while the unit goes at or below this speed (km/h); 0 disables the check.
+      */
+diff --git a/src/main/java/org/traccar/protocol/JimiRecordings.java b/src/main/java/org/traccar/protocol/JimiRecordings.java
+new file mode 100644
+index 0000000..6b95488
+--- /dev/null
++++ b/src/main/java/org/traccar/protocol/JimiRecordings.java
+@@ -0,0 +1,101 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.protocol;
++
++import java.util.ArrayList;
++import java.util.Calendar;
++import java.util.Comparator;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.TimeZone;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * Recordings of Jimi GT06 dashcams (JC400, JC261). The camera loops one-minute files named
++ * YYYY_MM_DD_HH_MM_SS_CC.mp4 (local time, CC camera: 01 road, 02 cabin) and uploads the list of names on FILELIST;
++ * REPLAYLIST streams up to eight of them by name.
++ */
++public final class JimiRecordings {
++
++    public static final long FILE_LENGTH = 60_000;
++    public static final int MAX_REPLAY_FILES = 8;
++    private static final long MAX_GAP = 5_000;
++
++    private static final Pattern NAME = Pattern.compile(
++            "(?<![\\d_])((\\d{4})_(\\d{2})_(\\d{2})_(\\d{2})_(\\d{2})_(\\d{2})_(\\d{2})\\.(?:mp4|ts|avi|h264|h265))",
++            Pattern.CASE_INSENSITIVE);
++
++    private JimiRecordings() {
++    }
++
++    /**
++     * Extracts the file names from whatever the camera uploaded (TXT file, JSON or plain text), one minute each.
++     */
++    public static List<VideoRecordings.Recording> parse(String text, TimeZone timeZone) {
++        Map<String, VideoRecordings.Recording> result = new LinkedHashMap<>();
++        Matcher matcher = NAME.matcher(text);
++        Calendar calendar = Calendar.getInstance(timeZone);
++        while (matcher.find()) {
++            String name = matcher.group(1);
++            calendar.clear();
++            calendar.set(
++                    Integer.parseInt(matcher.group(2)), Integer.parseInt(matcher.group(3)) - 1,
++                    Integer.parseInt(matcher.group(4)), Integer.parseInt(matcher.group(5)),
++                    Integer.parseInt(matcher.group(6)), Integer.parseInt(matcher.group(7)));
++            long start = calendar.getTimeInMillis();
++            int channel = Math.max(1, Integer.parseInt(matcher.group(8)));
++            result.putIfAbsent(name, new VideoRecordings.Recording(
++                    channel, start, start + FILE_LENGTH, 0, 0, 0, 0, 0, List.of(name)));
++        }
++        return new ArrayList<>(result.values());
++    }
++
++    /**
++     * Joins consecutive files of the same camera into continuous recordings within the period.
++     */
++    public static List<VideoRecordings.Recording> merge(
++            List<VideoRecordings.Recording> files, int channel, long from, long to) {
++        List<VideoRecordings.Recording> sorted = new ArrayList<>(files.stream()
++                .filter(file -> channel <= 0 || file.channel() == channel)
++                .filter(file -> (to <= 0 || file.start() < to) && (from <= 0 || file.end() > from))
++                .toList());
++        sorted.sort(Comparator.comparingInt(VideoRecordings.Recording::channel)
++                .thenComparingLong(VideoRecordings.Recording::start));
++        List<VideoRecordings.Recording> result = new ArrayList<>();
++        int currentChannel = -1;
++        long start = 0;
++        long end = 0;
++        List<String> names = new ArrayList<>();
++        for (VideoRecordings.Recording file : sorted) {
++            if (file.channel() != currentChannel || file.start() - end > MAX_GAP) {
++                if (!names.isEmpty()) {
++                    result.add(new VideoRecordings.Recording(currentChannel, start, end, 0, 0, 0, 0, 0, names));
++                }
++                currentChannel = file.channel();
++                start = file.start();
++                end = file.end();
++                names = new ArrayList<>();
++            }
++            end = Math.max(end, file.end());
++            names.add(file.files().get(0));
++        }
++        if (!names.isEmpty()) {
++            result.add(new VideoRecordings.Recording(currentChannel, start, end, 0, 0, 0, 0, 0, names));
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/protocol/JimiUploadProtocolDecoder.java b/src/main/java/org/traccar/protocol/JimiUploadProtocolDecoder.java
+index e10a03d..00e7344 100644
+--- a/src/main/java/org/traccar/protocol/JimiUploadProtocolDecoder.java
++++ b/src/main/java/org/traccar/protocol/JimiUploadProtocolDecoder.java
+@@ -125,6 +125,32 @@ public class JimiUploadProtocolDecoder extends BaseHttpProtocolDecoder {
+         return request.headers().get("fileName");
+     }
+ 
++    private static boolean isFileList(String path) {
++        return path.toLowerCase().contains("/filelist");
++    }
++
++    // FILELIST: the camera uploads the names of the recordings on its card (TXT file, JSON or plain text)
++    private Object decodeFileList(
++            Channel channel, FullHttpRequest request, String path, Map<String, String> fields,
++            Map<String, ByteBuf> files) throws StorageException {
++        Device device = findDevice(findImei(path, fields, Map.of()));
++        if (device == null) {
++            sendResponse(channel, HttpResponseStatus.NOT_FOUND);
++            return null;
++        }
++        StringBuilder text = new StringBuilder();
++        files.forEach((name, content) -> text.append(name).append('\n')
++                .append(content.toString(StandardCharsets.UTF_8)).append('\n'));
++        fields.values().forEach(value -> text.append(value).append('\n'));
++        if (!HttpPostRequestDecoder.isMultipart(request)) {
++            text.append(request.content().toString(StandardCharsets.UTF_8));
++        }
++        VideoRecordings.complete(device.getId(), JimiRecordings.parse(text.toString(), getTimeZone(device.getId())));
++        sendResponse(channel, HttpResponseStatus.OK, Unpooled.copiedBuffer(
++                "{\"code\":0,\"ok\":true}", StandardCharsets.US_ASCII));
++        return null;
++    }
++
+     @Override
+     protected Object decode(Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
+ 
+@@ -156,11 +182,15 @@ public class JimiUploadProtocolDecoder extends BaseHttpProtocolDecoder {
+                     String path = query.path();
+                     name = path.substring(path.lastIndexOf('/') + 1);
+                 }
+-                if (name != null && name.contains(".")) {
++                if (name != null && name.contains(".") && !isFileList(query.path())) {
+                     files.put(name, request.content().retainedDuplicate());
+                 }
+             }
+ 
++            if (isFileList(query.path())) {
++                return decodeFileList(channel, request, query.path(), fields, files);
++            }
++
+             Device device = findDevice(findImei(query.path(), fields, files));
+             if (device == null || files.isEmpty()) {
+                 sendResponse(channel, device == null ? HttpResponseStatus.NOT_FOUND : HttpResponseStatus.BAD_REQUEST);
+diff --git a/src/main/java/org/traccar/protocol/VideoRecordings.java b/src/main/java/org/traccar/protocol/VideoRecordings.java
+index ab0c5dd..6cd108a 100644
+--- a/src/main/java/org/traccar/protocol/VideoRecordings.java
++++ b/src/main/java/org/traccar/protocol/VideoRecordings.java
+@@ -13,19 +13,32 @@
+  */
+ package org.traccar.protocol;
+ 
++import com.fasterxml.jackson.annotation.JsonInclude;
++
+ import java.util.List;
+ import java.util.Map;
+ import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.ConcurrentHashMap;
+ 
+ /**
+- * Pending JT/T 1078 recording queries: the API waits on a future that the decoder completes when the MDVR answers
+- * with its resource list (0x1205).
++ * Pending recording queries: the API waits on a future that the decoder completes when the device answers with its
++ * resource list (JT/T 1078 0x1205, or the Jimi FILELIST upload).
+  */
+ public final class VideoRecordings {
+ 
++    /**
++     * A recording on the device storage; files holds the device file names for cameras that play back by name (Jimi).
++     */
++    @JsonInclude(JsonInclude.Include.NON_NULL)
+     public record Recording(
+-            int channel, long start, long end, long alarm, int mediaType, int streamType, int storageType, long size) {
++            int channel, long start, long end, long alarm, int mediaType, int streamType, int storageType, long size,
++            List<String> files) {
++
++        public Recording(
++                int channel, long start, long end, long alarm, int mediaType, int streamType, int storageType,
++                long size) {
++            this(channel, start, end, alarm, mediaType, streamType, storageType, size, null);
++        }
+     }
+ 
+     private static final Map<Long, CompletableFuture<List<Recording>>> PENDING = new ConcurrentHashMap<>();
+diff --git a/src/test/java/org/traccar/protocol/JimiRecordingsTest.java b/src/test/java/org/traccar/protocol/JimiRecordingsTest.java
+new file mode 100644
+index 0000000..c629273
+--- /dev/null
++++ b/src/test/java/org/traccar/protocol/JimiRecordingsTest.java
+@@ -0,0 +1,36 @@
++package org.traccar.protocol;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.TimeZone;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++public class JimiRecordingsTest {
++
++    @Test
++    public void testParseAndMerge() {
++        String text = "{\"fileNameList\":\"2021_05_31_08_10_45_01.mp4,2021_05_31_08_11_45_01.mp4,"
++                + "2021_05_31_08_12_45_01.mp4\\n2021_05_31_08_30_00_01.mp4;2021_05_31_08_10_50_02.mp4,"
++                + "EVENT_862798052429087_00000000_2021_05_31_08_10_45_F_1.mp4,2021_05_31_08_10_45_01.mp4\"}";
++        var files = JimiRecordings.parse(text, TimeZone.getTimeZone("GMT-5"));
++        assertEquals(5, files.size()); // duplicate and event file ignored
++        assertEquals(1622466645000L, files.get(0).start()); // 08:10:45 GMT-5 = 13:10:45 UTC
++
++        var all = JimiRecordings.merge(files, 0, 0, 0);
++        assertEquals(3, all.size());
++        assertEquals(List.of("2021_05_31_08_10_45_01.mp4", "2021_05_31_08_11_45_01.mp4",
++                "2021_05_31_08_12_45_01.mp4"), all.get(0).files());
++        assertEquals(3 * 60_000, all.get(0).end() - all.get(0).start());
++        assertEquals(2, all.get(2).channel());
++
++        var cabin = JimiRecordings.merge(files, 2, 0, 0);
++        assertEquals(1, cabin.size());
++
++        var late = JimiRecordings.merge(files, 1, 1622467700000L, 0); // after 08:28:20 local
++        assertEquals(1, late.size());
++        assertEquals(List.of("2021_05_31_08_30_00_01.mp4"), late.get(0).files());
++    }
++
++}

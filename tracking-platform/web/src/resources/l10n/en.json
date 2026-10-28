@@ -1056,7 +1056,6 @@
     "expenseWorkshop": "Workshop",
     "expenseWorkshopCaption": "Maintenance, repairs and tires",
     "playbackTitle": "Recordings",
-    "playbackJt808Only": "Playback of recordings requires a JT/T 808 / JT/T 1078 device (MDVR).",
     "playbackAlarm": "Alarm",
     "playbackAllChannels": "All channels",
     "playbackDay": "Day",
@@ -1068,5 +1067,8 @@
     "playbackSize": "Size",
     "playbackTimeline": "Timeline",
     "playbackTimeout": "The device did not respond in time. Try again.",
-    "fuelPeriodLast30d": "Last 30 days"
+    "fuelPeriodLast30d": "Last 30 days",
+    "playbackTimeoutJimi": "The camera did not send its recording list. Check that FILELIST points to the server (see the installation guide) and that it is online.",
+    "playbackDownloadMinute": "Download this minute to the gallery",
+    "playbackDownloadRequested": "Video requested: it will appear in Camera events once the camera uploads it (it may take a few minutes)."
 }

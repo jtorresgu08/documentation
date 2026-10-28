@@ -38,6 +38,7 @@ services:
       # Dashcams JT808: servidor de adjuntos ADAS/DMS y servidor de video JT/T 1078 (IP pública o dominio)
       HUABAO_ATTACHMENT_SERVER: ${PUBLIC_HOST:-${DOMAIN}}:5261
       HUABAO_VIDEO_SERVER: ${PUBLIC_HOST:-${DOMAIN}}:${VIDEO_PORT:-7611}
+      JIMI_FILE_LIST_URL: http://${PUBLIC_HOST:-${DOMAIN}}:5262/filelist
       JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx2g}
       # Canales de notificación y WhatsApp Cloud API (ver DEPLOY.md, sección 10); vacío = desactivado
       NOTIFICATOR_TYPES: ${NOTIFICATOR_TYPES:-web,mail}

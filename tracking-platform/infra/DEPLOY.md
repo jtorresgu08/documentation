@@ -123,6 +123,22 @@ transmiten por RTMP, así que necesitan un servidor que lo convierta a HTTP-FLV,
 Atributos*, `dashcam.playUrlJimi` define la dirección de reproducción, p. ej.
 `https://tu-dominio/live/{channel}/{uniqueId}.flv`.
 
+**Grabaciones de la tarjeta (JC400, JC261)**: la pestaña *Grabaciones* también funciona con estas cámaras. La
+plataforma envía `FILELIST,http://IP_DEL_VPS:5262/filelist/IMEI` y luego `FILELIST`; la cámara sube por HTTP la lista
+de sus archivos de 1 minuto (`2026_10_27_14_05_00_01.mp4`, 01 frontal / 02 cabina) y la plataforma los muestra en la
+línea de tiempo. Al reproducir se envía `REPLAYLIST` con hasta 8 minutos y se continúa sola cada 8 minutos; la
+cámara los transmite por RTMP al mismo servidor del video en vivo. Define la dirección de reproducción en
+*Configuración del servidor > Atributos* con `dashcam.playbackUrlJimi`, p. ej.
+`https://tu-dominio/live/replay/{uniqueId}.flv` (si no existe se usa `dashcam.playUrlJimi`). El botón de descarga
+envía `HVIDEO` y el minuto llega a *Eventos de cámara* por la subida HTTP (no necesita servidor de video).
+
+- La dirección de la lista sale de `JIMI_FILE_LIST_URL` (en `docker-compose.yml`, con `PUBLIC_HOST`); el puerto 5262
+  ya está abierto para las subidas.
+- Los nombres de archivo están en la hora local de la cámara: pon en la unidad el atributo `decoder.timezone`
+  (p. ej. `America/Lima`) para que la línea de tiempo coincida; sin él se asume UTC.
+- Jimi no permite pausar ni cambiar la velocidad en el equipo: la pausa es local y para saltar se pide la
+  reproducción desde ese minuto.
+
 Las Jimi JC450, JC181, JC371, JC182 y JC451 usan JT/T 808 / 1078: van al puerto 5015 como el resto de cámaras
 JT808.
 

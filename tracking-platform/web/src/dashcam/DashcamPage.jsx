@@ -104,6 +104,7 @@ const DashcamPage = () => {
   const serverPlayUrl = useSelector((state) => state.session.server.attributes['dashcam.playUrl']);
   const serverJimiPlayUrl = useSelector((state) => state.session.server.attributes['dashcam.playUrlJimi']);
   const serverPlaybackUrl = useSelector((state) => state.session.server.attributes['dashcam.playbackUrl']);
+  const serverJimiPlaybackUrl = useSelector((state) => state.session.server.attributes['dashcam.playbackUrlJimi']);
 
   const [storedDeviceId, setDeviceId] = usePersistedState('dashcamDevice', null);
   const deviceId = storedDeviceId ?? selectedId;
@@ -232,20 +233,24 @@ const DashcamPage = () => {
         </>
       )}
 
-      {device && tab === 'playback' && (config.protocol === 'jt808' ? (
+      {device && tab === 'playback' && (
         <PlaybackPanel
           device={device}
+          protocol={config.protocol}
           channels={channels}
           channelLabel={channelLabel}
+          onMessage={setMessage}
+          onMediaRequested={() => setTimeout(() => setTimestamp(Date.now()), 60000)}
           resolveUrl={(channel) => {
-            const template = device.attributes?.['dashcam.playbackUrl'] || serverPlaybackUrl;
+            const template = device.attributes?.['dashcam.playbackUrl']
+              || (config.protocol === 'jimi' ? serverJimiPlaybackUrl : serverPlaybackUrl);
             return template ? template
               .replaceAll('{uniqueId}', device.uniqueId)
               .replaceAll('{deviceId}', device.id)
               .replaceAll('{channel}', channel) : resolveUrl(channel);
           }}
         />
-      ) : <Alert severity="info">{t('playbackJt808Only')}</Alert>)}
+      )}
 
       {device && tab === 'events' && (
         <>

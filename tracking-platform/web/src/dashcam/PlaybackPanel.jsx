@@ -9,6 +9,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import StopIcon from '@mui/icons-material/Stop';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
+import DownloadIcon from '@mui/icons-material/Download';
 import dayjs from 'dayjs';
 import mpegts from 'mpegts.js';
 import { useTranslation } from '../common/components/LocalizationProvider';
@@ -17,12 +18,16 @@ import fetchOrThrow from '../common/util/fetchOrThrow';
 
 const SPEEDS = [1, 2, 4, 8];
 const DAY = 24 * 3600 * 1000;
+const MINUTE = 60000;
+const JIMI_BATCH = 8; // REPLAYLIST streams at most eight one-minute files
 
-// Recordings stored on a JT/T 1078 MDVR / dashcam: search by day and channel, 24 h timeline per channel and
-// on-demand playback streamed by the device to the media server, with pause, speed, seek and stop.
+// Recordings stored on a JT/T 1078 MDVR or a Jimi GT06 dashcam: search by day and channel, 24 h timeline per channel
+// and on-demand playback streamed by the device to the media server. JT/T 1078 adds pause, speed, seek and stop on the
+// device; Jimi plays one-minute files by name (REPLAYLIST, continued in batches) and can upload a minute (HVIDEO).
 const PlaybackPanel = ({
-  device, channels, channelLabel, resolveUrl,
+  device, protocol = 'jt808', channels, channelLabel, resolveUrl, onMessage, onMediaRequested,
 }) => {
+  const jimi = protocol === 'jimi';
   const theme = useTheme();
   const t = useTranslation();
   const videoRef = useRef(null);
@@ -44,6 +49,17 @@ const PlaybackPanel = ({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ deviceId: device.id, type, attributes }),
   });
+  const text = (data) => command('custom', { data });
+
+  // Jimi: stream the files from the chosen minute, eight at a time
+  const replayJimi = async (recording, index) => {
+    const batch = recording.files.slice(index, index + JIMI_BATCH);
+    await text(`REPLAYLIST,${batch.join(',')}`);
+    const from = recording.start + index * MINUTE;
+    setPlaying({ ...recording, from, index, count: batch.length, startedAt: Date.now() });
+    setPosition(from);
+    setPaused(false);
+  };
 
   const search = useCatch(async () => {
     setLoading(true);
@@ -57,7 +73,7 @@ const PlaybackPanel = ({
         setError(t('playbackOffline'));
         setRecordings(null);
       } else if (response.status === 504) {
-        setError(t('playbackTimeout'));
+        setError(t(jimi ? 'playbackTimeoutJimi' : 'playbackTimeout'));
         setRecordings(null);
       } else if (!response.ok) {
         throw new Error(await response.text());
@@ -70,7 +86,7 @@ const PlaybackPanel = ({
   });
 
   const stop = useCatch(async () => {
-    if (playing) {
+    if (playing && !jimi) {
       await command('videoPlaybackControl', { index: playing.channel, control: 2 });
     }
     setPlaying(null);
@@ -78,6 +94,11 @@ const PlaybackPanel = ({
   });
 
   const play = useCatch(async (recording, from = recording.start) => {
+    if (jimi) {
+      const index = Math.min(recording.files.length - 1, Math.max(0, Math.floor((from - recording.start) / MINUTE)));
+      await replayJimi(recording, index);
+      return;
+    }
     if (playing) {
       await command('videoPlaybackControl', { index: playing.channel, control: 2 });
     }
@@ -90,6 +111,15 @@ const PlaybackPanel = ({
   });
 
   const togglePause = useCatch(async () => {
+    if (jimi) {
+      if (paused) {
+        videoRef.current?.play()?.catch?.(() => {});
+      } else {
+        videoRef.current?.pause();
+      }
+      setPaused(!paused);
+      return;
+    }
     await command('videoPlaybackControl', { index: playing.channel, control: paused ? 0 : 1 });
     setPaused(!paused);
   });
@@ -102,6 +132,10 @@ const PlaybackPanel = ({
   });
 
   const seek = useCatch(async (value) => {
+    if (jimi) {
+      await play(playing, value);
+      return;
+    }
     await command('videoPlaybackControl', { index: playing.channel, control: 5, seek: value });
     setPosition(value);
   });
@@ -122,10 +156,37 @@ const PlaybackPanel = ({
       clearTimeout(start);
       player.destroy();
     };
-  }, [playing?.channel, playing?.from]);
+  }, [playing?.channel, playing?.from, playing?.startedAt]);
+
+  // Jimi: follow the playing minute and ask for the next files before the current batch ends
+  useEffect(() => {
+    if (!jimi || !playing) {
+      return undefined;
+    }
+    const tick = setInterval(() => {
+      if (!paused) {
+        setPosition((value) => Math.min(playing.end, value + 1000));
+      }
+    }, 1000);
+    const next = playing.index + playing.count;
+    const continuation = next < playing.files.length
+      ? setTimeout(() => replayJimi(playing, next).catch(() => {}), playing.count * MINUTE - 15000) : null;
+    return () => {
+      clearInterval(tick);
+      clearTimeout(continuation);
+    };
+  }, [playing, paused]);
+
+  const downloadMinute = useCatch(async () => {
+    const index = Math.min(playing.files.length - 1, Math.max(0, Math.floor((position - playing.start) / MINUTE)));
+    const name = playing.files[index];
+    await text(`HVIDEO,${name.slice(0, 19)},${playing.channel}`);
+    onMessage?.(t('playbackDownloadRequested'));
+    onMediaRequested?.();
+  });
 
   useEffect(() => () => {
-    if (playing) {
+    if (playing && !jimi) {
       command('videoPlaybackControl', { index: playing.channel, control: 2 }).catch(() => {});
     }
   }, [device.id]);
@@ -171,9 +232,15 @@ const PlaybackPanel = ({
               valueLabelFormat={(value) => dayjs(value).format('HH:mm:ss')}
               sx={{ mx: 2 }}
             />
-            <TextField select size="small" value={speed} onChange={(event) => changeSpeed(Number(event.target.value))} sx={{ width: 90 }}>
-              {SPEEDS.map((value) => <MenuItem key={value} value={value}>{`x${value}`}</MenuItem>)}
-            </TextField>
+            {jimi ? (
+              <Tooltip title={t('playbackDownloadMinute')}>
+                <IconButton onClick={downloadMinute}><DownloadIcon /></IconButton>
+              </Tooltip>
+            ) : (
+              <TextField select size="small" value={speed} onChange={(event) => changeSpeed(Number(event.target.value))} sx={{ width: 90 }}>
+                {SPEEDS.map((value) => <MenuItem key={value} value={value}>{`x${value}`}</MenuItem>)}
+              </TextField>
+            )}
           </Stack>
         </Card>
       )}
@@ -236,7 +303,7 @@ const PlaybackPanel = ({
                     <TableCell>{dayjs(item.start).format('HH:mm:ss')}</TableCell>
                     <TableCell>{dayjs(item.end).format('HH:mm:ss')}</TableCell>
                     <TableCell align="right">{`${Math.round((item.end - item.start) / 60000)} min`}</TableCell>
-                    <TableCell align="right">{`${(item.size / 1048576).toFixed(0)} MB`}</TableCell>
+                    <TableCell align="right">{item.size ? `${(item.size / 1048576).toFixed(0)} MB` : '—'}</TableCell>
                     <TableCell>{item.alarm ? <Chip size="small" color="error" label={t('playbackAlarm')} /> : null}</TableCell>
                     <TableCell align="right">
                       <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => play(item)}>{t('playbackPlay')}</Button>

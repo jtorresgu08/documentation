@@ -149,6 +149,9 @@ cuadrícula de video en vivo de 4 canales. Ver la sección *Dashcams* de [infra/
   Un clic en la línea de tiempo reproduce desde ese minuto (0x9201) con **pausa, avance x2/x4/x8, salto a un minuto y
   detener** (0x9202). Requiere el equipo en línea y el servidor de video (el mismo del video en vivo); la dirección
   de reproducción sale de `dashcam.playbackUrl` (unidad o servidor) y, si no existe, de `dashcam.playUrl`.
+- **Grabaciones de las Jimi JC400 / JC261** (parche `0011`): la misma pestaña lista los archivos de la tarjeta
+  (`FILELIST`, subida HTTP), los reproduce por nombre (`REPLAYLIST`, 8 minutos por pedido, continuando solo) y permite
+  **descargar un minuto** a la galería (`HVIDEO`). Configuración en [infra/DEPLOY.md](infra/DEPLOY.md).
 - **Puntaje de conducción** (*Reportes → Puntaje de conducción*): 0–100 por unidad y por **conductor** (iButton /
   RFID), con frenadas, aceleraciones y curvas bruscas, excesos de velocidad sostenidos (20 s o más), alertas ADAS y de
   fatiga/distracción. Los eventos bruscos se toman de las alarmas del equipo o se calculan del GPS. Penalidad por cada
@@ -235,6 +238,7 @@ SMS_CAPTURE_PORT=7620 python3 server/tests/test_teltonika_ft.py   # con sms.http
 python3 server/tests/test_fuel.py
 python3 server/tests/test_safety.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_video_driving_expenses.py
+python3 server/tests/test_jimi_playback.py clip.mp4
 ```
 
 ## Producción
