@@ -23,21 +23,35 @@ import { devicesActions } from '../store';
 import EngineCutDialog from '../common/components/EngineCutDialog';
 import VideoTile from '../dashcam/VideoTile';
 
-const LAYOUTS = [1, 4, 9, 16];
+const LAYOUTS = [1, 4, 6, 8, 9, 12, 16];
+
+// columns and rows for a number of panels, wide rather than tall so the window fits over the map
+export const gridFor = (count) => {
+  if (count <= 1) return [1, 1];
+  if (count <= 2) return [2, 1];
+  if (count <= 4) return [2, 2];
+  if (count <= 6) return [3, 2];
+  if (count <= 8) return [4, 2];
+  if (count <= 9) return [3, 3];
+  if (count <= 12) return [4, 3];
+  return [4, 4];
+};
 
 const LayoutIcon = ({ size }) => {
-  const cells = Math.sqrt(size);
+  const [columns, rows] = gridFor(size);
   return (
     <Box sx={{
-      display: 'grid', gridTemplateColumns: `repeat(${cells}, 1fr)`, gap: '1.5px', width: 16, height: 12,
+      display: 'grid', gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: '1.5px', width: 4 * columns + 4, height: 12,
     }}
     >
-      {Array.from({ length: size }, (_, index) => <Box key={index} sx={{ bgcolor: 'currentColor', borderRadius: '1.5px' }} />)}
+      {Array.from({ length: columns * rows }, (_, index) => (
+        <Box key={index} sx={{ bgcolor: 'currentColor', borderRadius: '1.5px', opacity: index < size ? 1 : 0.3 }} />
+      ))}
     </Box>
   );
 };
 
-// Live video of one unit in a window floating over the platform: a grid of channels (1, 4, 9 or 16), each with its
+// Live video of one unit in a window floating over the platform: a grid of every assigned channel (or 1, 4, 6, 8, 9, 12, 16 at a time), each with its
 // own controls, plus play / stop all, HD or SD stream, engine on / off and minimize, maximize, move and resize.
 const VideoWindow = ({ deviceId, cascade, onTop }) => {
   const theme = useTheme();
@@ -58,7 +72,8 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
   const label = (channel) => config.channelName(channel) || `CH ${channel}`;
 
   const [playing, setPlaying] = useState([]);
-  const [layout, setLayout] = useState(() => LAYOUTS.find((size) => size >= Math.min(config.channels, 16)) || 4);
+  // all the channels assigned to the unit by default
+  const [layout, setLayout] = useState(() => Math.min(config.channels, 16));
   const [first, setFirst] = useState(1);
   const [single, setSingle] = useState(null);
   const [selected, setSelected] = useState(1);
@@ -66,7 +81,7 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
   const [minimized, setMinimized] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [width, setWidth] = useState(() => Math.min(820, window.innerWidth - 140));
+  const [width, setWidth] = useState(() => Math.min(config.channels > 4 ? 1160 : 820, window.innerWidth - 140));
   const [message, setMessage] = useState(null);
   const [engineMode, setEngineMode] = useState(null);
   const drag = useRef(null);
@@ -141,8 +156,7 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
   }
 
   const size = single ? 1 : Math.min(layout, Math.max(1, channels.length));
-  const columns = Math.ceil(Math.sqrt(size));
-  const rows = Math.ceil(size / columns);
+  const [columns, rows] = gridFor(size);
   const page = Math.floor((first - 1) / size);
   const visible = single ? [single] : channels.slice(page * size, page * size + size);
 
@@ -263,8 +277,12 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
                 }}
                 sx={{ '& .MuiToggleButton-root': { height: 30, px: 1, borderRadius: 2 } }}
               >
-                {LAYOUTS.filter((value, index) => value === 1 || LAYOUTS[index - 1] < channels.length).map((value) => (
-                  <ToggleButton key={value} value={value} aria-label={`${value}`}><LayoutIcon size={value} /></ToggleButton>
+                {[...LAYOUTS.filter((value) => value < channels.length), Math.min(channels.length, 16)].map((value) => (
+                  <ToggleButton key={value} value={value} aria-label={value === channels.length ? t('videoAllChannels') : `${value}`}>
+                    <Tooltip title={value === channels.length ? `${t('videoAllChannels')} (${value})` : `${value}`}>
+                      <span style={{ display: 'flex' }}><LayoutIcon size={value} /></span>
+                    </Tooltip>
+                  </ToggleButton>
                 ))}
               </ToggleButtonGroup>
             )}

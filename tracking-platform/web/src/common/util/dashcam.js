@@ -1,7 +1,7 @@
 // Camera configuration kept in device attributes: kind (dashcam / MDVR), channel count (1-12), protocol and,
 // for Jimi GT06 cameras, the text commands sent to the device.
 
-export const MAX_CHANNELS = 12;
+export const MAX_CHANNELS = 16;
 
 export const CAMERA_KINDS = ['dashcam', 'mdvr'];
 
