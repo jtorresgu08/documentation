@@ -1,0 +1,2066 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index 17bbcf8..daea3f7 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -49,4 +49,86 @@
+ 
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-operations">
++
++    <createTable tableName="tc_alert_states">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="eventid" type="INT">
++        <constraints nullable="false" unique="true" />
++      </column>
++      <column name="deviceid" type="INT">
++        <constraints nullable="false" />
++      </column>
++      <column name="status" type="VARCHAR(32)">
++        <constraints nullable="false" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="note" type="VARCHAR(4000)" />
++      <column name="updatetime" type="TIMESTAMP">
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_alert_states" baseColumnNames="eventid" constraintName="fk_alert_states_eventid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_events" />
++    <addForeignKeyConstraint baseTableName="tc_alert_states" baseColumnNames="deviceid" constraintName="fk_alert_states_deviceid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_devices" />
++
++    <createTable tableName="tc_service_records">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="deviceid" type="INT">
++        <constraints nullable="false" />
++      </column>
++      <column name="maintenanceid" type="INT" />
++      <column name="servicetime" type="TIMESTAMP">
++        <constraints nullable="false" />
++      </column>
++      <column name="odometer" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="hours" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="cost" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="workshop" type="VARCHAR(512)" />
++      <column name="notes" type="VARCHAR(4000)" />
++      <column name="expenseid" type="INT" />
++      <column name="userid" type="INT" />
++      <column name="attributes" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_service_records" baseColumnNames="deviceid" constraintName="fk_service_records_deviceid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_devices" />
++    <createIndex tableName="tc_service_records" indexName="idx_service_records_deviceid">
++      <column name="deviceid" />
++      <column name="maintenanceid" />
++    </createIndex>
++
++    <createTable tableName="tc_report_templates">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT">
++        <constraints nullable="false" />
++      </column>
++      <column name="name" type="VARCHAR(128)">
++        <constraints nullable="false" />
++      </column>
++      <column name="config" type="CLOB">
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_report_templates" baseColumnNames="userid" constraintName="fk_report_templates_userid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_users" />
++
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/alerts/AlertSeverity.java b/src/main/java/org/traccar/alerts/AlertSeverity.java
+new file mode 100644
+index 0000000..9cd5c62
+--- /dev/null
++++ b/src/main/java/org/traccar/alerts/AlertSeverity.java
+@@ -0,0 +1,113 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.alerts;
++
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Priority of an event in the alert center. Keys are the event type, or "alarm:" plus the alarm name; the server
++ * attribute alerts.severity overrides them, e.g. "alarm:door=critical, geofenceEnter=low".
++ */
++public final class AlertSeverity {
++
++    public static final String CRITICAL = "critical";
++    public static final String HIGH = "high";
++    public static final String MEDIUM = "medium";
++    public static final String LOW = "low";
++
++    public static final List<String> ORDER = List.of(CRITICAL, HIGH, MEDIUM, LOW);
++
++    private static final Map<String, String> DEFAULTS = new HashMap<>();
++
++    static {
++        for (String alarm : List.of(
++                Position.ALARM_SOS, Position.ALARM_ACCIDENT, Position.ALARM_TOW, Position.ALARM_POWER_CUT,
++                Position.ALARM_TAMPERING, Position.ALARM_REMOVING, Position.ALARM_JAMMING,
++                Position.ALARM_GPS_ANTENNA_CUT, Position.ALARM_FALL_DOWN, Position.ALARM_FUEL_LEAK,
++                "forwardCollision", "pedestrianCollision")) {
++            DEFAULTS.put("alarm:" + alarm, CRITICAL);
++        }
++        DEFAULTS.put(Event.TYPE_DEVICE_FUEL_DROP, CRITICAL);
++        for (String alarm : List.of(
++                Position.ALARM_OVERSPEED, Position.ALARM_BRAKING, Position.ALARM_ACCELERATION,
++                Position.ALARM_CORNERING, Position.ALARM_FATIGUE_DRIVING, Position.ALARM_LOW_POWER,
++                Position.ALARM_LOW_BATTERY, Position.ALARM_TEMPERATURE, Position.ALARM_MOVEMENT,
++                Position.ALARM_VIBRATION, Position.ALARM_DOOR, Position.ALARM_BONNET, Position.ALARM_POWER_OFF,
++                "phoneCall", "smoking", "distraction", "driverAbnormal", "laneDeparture", "vehicleDistance",
++                "obstacle", "frequentLaneChange", "roadSignOverLimit")) {
++            DEFAULTS.put("alarm:" + alarm, HIGH);
++        }
++        for (String type : List.of(
++                Event.TYPE_DEVICE_OVERSPEED, Event.TYPE_GEOFENCE_EXIT, Event.TYPE_MAINTENANCE,
++                Event.TYPE_DEVICE_INACTIVE)) {
++            DEFAULTS.put(type, HIGH);
++        }
++        for (String type : List.of(
++                Event.TYPE_DEVICE_ONLINE, Event.TYPE_DEVICE_OFFLINE, Event.TYPE_DEVICE_UNKNOWN,
++                Event.TYPE_DEVICE_MOVING, Event.TYPE_DEVICE_STOPPED, Event.TYPE_IGNITION_ON,
++                Event.TYPE_IGNITION_OFF, Event.TYPE_QUEUED_COMMAND_SENT)) {
++            DEFAULTS.put(type, LOW);
++        }
++    }
++
++    /** Event types that only describe normal operation; hidden in the alert center unless asked for. */
++    public static final Set<String> ROUTINE = Set.of(
++            Event.TYPE_DEVICE_ONLINE, Event.TYPE_DEVICE_OFFLINE, Event.TYPE_DEVICE_UNKNOWN,
++            Event.TYPE_DEVICE_MOVING, Event.TYPE_DEVICE_STOPPED, Event.TYPE_IGNITION_ON,
++            Event.TYPE_IGNITION_OFF, Event.TYPE_QUEUED_COMMAND_SENT, Event.TYPE_MEDIA);
++
++    private AlertSeverity() {
++    }
++
++    public static Map<String, String> parseOverrides(String value) {
++        Map<String, String> result = new HashMap<>();
++        if (value != null) {
++            for (String entry : value.split("[,;\\n]")) {
++                String[] pair = entry.split("=");
++                if (pair.length == 2 && ORDER.contains(pair[1].trim().toLowerCase())) {
++                    result.put(pair[0].trim(), pair[1].trim().toLowerCase());
++                }
++            }
++        }
++        return result;
++    }
++
++    public static String key(Event event) {
++        String alarm = event.getString(Position.KEY_ALARM);
++        return Event.TYPE_ALARM.equals(event.getType()) && alarm != null
++                ? "alarm:" + alarm.split(",")[0] : event.getType();
++    }
++
++    public static String of(Event event, Map<String, String> overrides) {
++        String key = key(event);
++        String severity = overrides.get(key);
++        if (severity == null && key.startsWith("alarm:")) {
++            severity = overrides.get(Event.TYPE_ALARM);
++        }
++        if (severity == null) {
++            severity = DEFAULTS.get(key);
++        }
++        if (severity == null) {
++            severity = key.startsWith("alarm:") ? HIGH : MEDIUM;
++        }
++        return severity;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/AlertResource.java b/src/main/java/org/traccar/api/resource/AlertResource.java
+new file mode 100644
+index 0000000..e3f7d86
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/AlertResource.java
+@@ -0,0 +1,350 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.NotFoundException;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.alerts.AlertSeverity;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.model.DeviceUtil;
++import org.traccar.model.AlertState;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.model.UserRestrictions;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Alert center: the events that need attention, with priority and handling status (new, in progress, resolved or
++ * false alarm), who took them, notes and response times.
++ */
++@Path("alerts")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class AlertResource extends BaseResource {
++
++    public static final String STATUS_NEW = "new";
++    public static final String STATUS_ACK = "ack";
++    public static final String STATUS_RESOLVED = "resolved";
++    public static final String STATUS_DISMISSED = "dismissed";
++    private static final Set<String> STATUSES = Set.of(STATUS_NEW, STATUS_ACK, STATUS_RESOLVED, STATUS_DISMISSED);
++    private static final long MAX_PERIOD = 93L * 24 * 3600 * 1000;
++    private static final int LIMIT = 2000;
++
++    public static class StateUpdate {
++        private List<Long> eventIds;
++        private String status;
++        private String note;
++
++        public List<Long> getEventIds() {
++            return eventIds;
++        }
++
++        public void setEventIds(List<Long> eventIds) {
++            this.eventIds = eventIds;
++        }
++
++        public String getStatus() {
++            return status;
++        }
++
++        public void setStatus(String status) {
++            this.status = status;
++        }
++
++        public String getNote() {
++            return note;
++        }
++
++        public void setNote(String note) {
++            this.note = note;
++        }
++    }
++
++    private Map<String, String> overrides() throws StorageException {
++        return AlertSeverity.parseOverrides(permissionsService.getServer().getString("alerts.severity"));
++    }
++
++    private final Map<Long, String> userNames = new HashMap<>();
++
++    private String userName(long userId) throws StorageException {
++        if (userId == 0) {
++            return null;
++        }
++        if (!userNames.containsKey(userId)) {
++            User user = storage.getObject(User.class, new Request(
++                    new Columns.Include("name"), new Condition.Equals("id", userId)));
++            userNames.put(userId, user != null ? user.getName() : null);
++        }
++        return userNames.get(userId);
++    }
++
++    private List<Map<String, Object>> collect(
++            List<Long> deviceIds, List<Long> groupIds, Date from, Date to, List<String> statuses,
++            List<String> severities, List<String> types, boolean all) throws StorageException {
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > MAX_PERIOD) {
++            throw new BadRequestException("Invalid period");
++        }
++        Map<String, String> overrides = overrides();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : DeviceUtil.getAccessibleDevices(storage, getUserId(), deviceIds, groupIds)) {
++            Map<Long, AlertState> states = new HashMap<>();
++            for (AlertState state : storage.getObjects(AlertState.class, new Request(
++                    new Columns.All(),
++                    new Condition.And(
++                            new Condition.Equals("deviceId", device.getId()),
++                            new Condition.Compare("updateTime", ">=", from))))) {
++                states.put(state.getEventId(), state);
++            }
++            for (Event event : storage.getObjects(Event.class, new Request(
++                    new Columns.All(),
++                    new Condition.And(
++                            new Condition.Equals("deviceId", device.getId()),
++                            new Condition.Between("eventTime", from, to)),
++                    new Order("eventTime", true, 0)))) {
++                if (!all && types.isEmpty() && AlertSeverity.ROUTINE.contains(event.getType())) {
++                    continue;
++                }
++                String key = AlertSeverity.key(event);
++                if (!types.isEmpty() && !types.contains(event.getType()) && !types.contains(key)) {
++                    continue;
++                }
++                String severity = AlertSeverity.of(event, overrides);
++                if (!severities.isEmpty() && !severities.contains(severity)) {
++                    continue;
++                }
++                AlertState state = states.get(event.getId());
++                String status = state != null ? state.getStatus() : STATUS_NEW;
++                if (!statuses.isEmpty() && !statuses.contains(status)) {
++                    continue;
++                }
++                Map<String, Object> item = new LinkedHashMap<>();
++                item.put("id", event.getId());
++                item.put("type", event.getType());
++                item.put("key", key);
++                item.put("eventTime", event.getEventTime());
++                item.put("deviceId", device.getId());
++                item.put("deviceName", device.getName());
++                item.put("groupId", device.getGroupId());
++                item.put("positionId", event.getPositionId());
++                item.put("geofenceId", event.getGeofenceId());
++                item.put("maintenanceId", event.getMaintenanceId());
++                item.put("attributes", event.getAttributes());
++                item.put("severity", severity);
++                item.put("status", status);
++                if (state != null) {
++                    item.put("userId", state.getUserId());
++                    item.put("userName", userName(state.getUserId()));
++                    item.put("note", state.getNote());
++                    item.put("updateTime", state.getUpdateTime());
++                    item.put("history", state.getAttributes().get("history"));
++                    Object ackTime = state.getAttributes().get("ackTime");
++                    if (ackTime instanceof Number number) {
++                        item.put("responseMinutes", (number.longValue() - event.getEventTime().getTime()) / 60000.0);
++                    }
++                }
++                result.add(item);
++            }
++        }
++        result.sort(Comparator.comparing((Map<String, Object> item) -> (Date) item.get("eventTime")).reversed());
++        return result;
++    }
++
++    @GET
++    public List<Map<String, Object>> get(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to, @QueryParam("status") List<String> statuses,
++            @QueryParam("severity") List<String> severities, @QueryParam("type") List<String> types,
++            @QueryParam("all") boolean all) throws StorageException {
++        List<Map<String, Object>> items = collect(deviceIds, groupIds, from, to, statuses, severities, types, all);
++        return items.size() > LIMIT ? items.subList(0, LIMIT) : items;
++    }
++
++    @GET
++    @Path("summary")
++    public Map<String, Object> summary(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        List<Map<String, Object>> items = collect(
++                deviceIds, groupIds, from, to, List.of(), List.of(), List.of(), false);
++        Map<String, Integer> bySeverity = new LinkedHashMap<>();
++        AlertSeverity.ORDER.forEach(severity -> bySeverity.put(severity, 0));
++        Map<String, Integer> byStatus = new LinkedHashMap<>();
++        STATUSES.stream().sorted().forEach(status -> byStatus.put(status, 0));
++        Map<String, Integer> byType = new HashMap<>();
++        Map<String, Integer> byDevice = new HashMap<>();
++        Map<Integer, Integer> byHour = new LinkedHashMap<>();
++        for (int hour = 0; hour < 24; hour++) {
++            byHour.put(hour, 0);
++        }
++        double responseTotal = 0;
++        int responses = 0;
++        int openCritical = 0;
++        java.util.Calendar calendar = java.util.Calendar.getInstance();
++        for (Map<String, Object> item : items) {
++            String severity = (String) item.get("severity");
++            String status = (String) item.get("status");
++            bySeverity.merge(severity, 1, Integer::sum);
++            byStatus.merge(status, 1, Integer::sum);
++            byType.merge((String) item.get("key"), 1, Integer::sum);
++            byDevice.merge((String) item.get("deviceName"), 1, Integer::sum);
++            calendar.setTime((Date) item.get("eventTime"));
++            byHour.merge(calendar.get(java.util.Calendar.HOUR_OF_DAY), 1, Integer::sum);
++            if (item.get("responseMinutes") instanceof Double minutes) {
++                responseTotal += minutes;
++                responses += 1;
++            }
++            if (AlertSeverity.CRITICAL.equals(severity) && (STATUS_NEW.equals(status) || STATUS_ACK.equals(status))) {
++                openCritical += 1;
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("total", items.size());
++        result.put("open", byStatus.get(STATUS_NEW) + byStatus.get(STATUS_ACK));
++        result.put("openCritical", openCritical);
++        result.put("bySeverity", bySeverity);
++        result.put("byStatus", byStatus);
++        result.put("byType", top(byType, 8));
++        result.put("byDevice", top(byDevice, 5));
++        result.put("byHour", byHour);
++        result.put("avgResponseMinutes", responses > 0 ? responseTotal / responses : null);
++        result.put("handledPercent", items.isEmpty() ? null
++                : (items.size() - byStatus.get(STATUS_NEW)) * 100.0 / items.size());
++        return result;
++    }
++
++    private static List<Map<String, Object>> top(Map<String, Integer> counts, int limit) {
++        return counts.entrySet().stream()
++                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
++                .limit(limit)
++                .map(entry -> {
++                    Map<String, Object> item = new LinkedHashMap<>();
++                    item.put("key", entry.getKey());
++                    item.put("count", entry.getValue());
++                    return item;
++                })
++                .toList();
++    }
++
++    private AlertState update(long eventId, String status, String note) throws StorageException {
++        if (!STATUSES.contains(status)) {
++            throw new BadRequestException("Invalid status");
++        }
++        Event event = storage.getObject(Event.class, new Request(
++                new Columns.All(), new Condition.Equals("id", eventId)));
++        if (event == null) {
++            throw new NotFoundException();
++        }
++        permissionsService.checkPermission(Device.class, getUserId(), event.getDeviceId());
++        AlertState state = storage.getObject(AlertState.class, new Request(
++                new Columns.All(), new Condition.Equals("eventId", eventId)));
++        boolean created = state == null;
++        if (created) {
++            state = new AlertState();
++            state.setEventId(eventId);
++            state.setDeviceId(event.getDeviceId());
++        }
++        Date now = new Date();
++        state.setStatus(status);
++        state.setUserId(getUserId());
++        if (note != null && !note.isBlank()) {
++            state.setNote(note.length() > 4000 ? note.substring(0, 4000) : note);
++        }
++        state.setUpdateTime(now);
++        if (!STATUS_NEW.equals(status) && !state.hasAttribute("ackTime")) {
++            state.set("ackTime", now.getTime());
++        }
++        @SuppressWarnings("unchecked")
++        List<Object> history = state.getAttributes().get("history") instanceof List<?> list
++                ? new ArrayList<>((List<Object>) list) : new ArrayList<>();
++        Map<String, Object> entry = new LinkedHashMap<>();
++        entry.put("time", now.getTime());
++        entry.put("userId", getUserId());
++        entry.put("userName", userName(getUserId()));
++        entry.put("status", status);
++        if (note != null && !note.isBlank()) {
++            entry.put("note", note.length() > 300 ? note.substring(0, 300) : note);
++        }
++        history.add(entry);
++        while (history.size() > 10) {
++            history.remove(0);
++        }
++        state.getAttributes().put("history", history);
++        if (created) {
++            state.setId(storage.addObject(state, new Request(new Columns.Exclude("id"))));
++        } else {
++            storage.updateObject(state, new Request(
++                    new Columns.Exclude("id"), new Condition.Equals("id", state.getId())));
++        }
++        return state;
++    }
++
++    @POST
++    @Path("{eventId}")
++    public AlertState updateOne(@PathParam("eventId") long eventId, StateUpdate update) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        return update(eventId, update.getStatus(), update.getNote());
++    }
++
++    @POST
++    @Path("batch")
++    public Collection<AlertState> updateMany(StateUpdate update) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        if (update.getEventIds() == null || update.getEventIds().isEmpty() || update.getEventIds().size() > 500) {
++            throw new BadRequestException("Invalid events");
++        }
++        List<AlertState> result = new ArrayList<>();
++        for (long eventId : update.getEventIds()) {
++            result.add(update(eventId, update.getStatus(), update.getNote()));
++        }
++        return result;
++    }
++
++    @GET
++    @Path("position/{eventId}")
++    public Position position(@PathParam("eventId") long eventId) throws StorageException {
++        Event event = storage.getObject(Event.class, new Request(
++                new Columns.All(), new Condition.Equals("id", eventId)));
++        if (event == null || event.getPositionId() == 0) {
++            throw new NotFoundException();
++        }
++        permissionsService.checkPermission(Device.class, getUserId(), event.getDeviceId());
++        return storage.getObject(Position.class, new Request(
++                new Columns.All(), new Condition.Equals("id", event.getPositionId())));
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/MaintenancePlanResource.java b/src/main/java/org/traccar/api/resource/MaintenancePlanResource.java
+new file mode 100644
+index 0000000..f392c1c
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/MaintenancePlanResource.java
+@@ -0,0 +1,178 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.NotFoundException;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.model.DeviceUtil;
++import org.traccar.maintenance.FleetMaintenance;
++import org.traccar.model.Device;
++import org.traccar.model.Expense;
++import org.traccar.model.Maintenance;
++import org.traccar.model.Position;
++import org.traccar.model.ServiceRecord;
++import org.traccar.model.UserRestrictions;
++import org.traccar.schedule.TaskMaintenanceReminder;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Fleet maintenance: status of every plan per unit and the service log (work done, odometer, cost and workshop).
++ * Registering a service restarts the plan and can add the cost to the unit's expenses.
++ */
++@Path("maintenance-plans")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class MaintenancePlanResource extends BaseResource {
++
++    private static final List<String> STATE_ORDER = List.of(
++            FleetMaintenance.OVERDUE, FleetMaintenance.SOON, FleetMaintenance.OK);
++
++    @Inject
++    private FleetMaintenance fleetMaintenance;
++
++    @Inject
++    private TaskMaintenanceReminder reminder;
++
++    @POST
++    @Path("check")
++    public Map<String, Object> check() throws StorageException {
++        permissionsService.checkAdmin(getUserId());
++        return Map.of("events", reminder.check());
++    }
++
++    @GET
++    @Path("status")
++    public Map<String, Object> status(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds)
++            throws StorageException {
++        long now = System.currentTimeMillis();
++        List<Map<String, Object>> items = new ArrayList<>();
++        for (Device device : DeviceUtil.getAccessibleDevices(storage, getUserId(), deviceIds, groupIds)) {
++            items.addAll(fleetMaintenance.status(device, now));
++        }
++        items.sort(Comparator.comparingInt((Map<String, Object> item) -> STATE_ORDER.indexOf(item.get("state")))
++                .thenComparing(item -> -((Number) item.get("progress")).doubleValue()));
++        Map<String, Integer> counts = new LinkedHashMap<>();
++        STATE_ORDER.forEach(state -> counts.put(state, 0));
++        items.forEach(item -> counts.merge((String) item.get("state"), 1, Integer::sum));
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("counts", counts);
++        result.put("items", items);
++        return result;
++    }
++
++    @GET
++    @Path("records")
++    public List<ServiceRecord> records(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        List<ServiceRecord> result = new ArrayList<>();
++        for (Device device : DeviceUtil.getAccessibleDevices(storage, getUserId(), deviceIds, groupIds)) {
++            Condition condition = new Condition.Equals("deviceId", device.getId());
++            if (from != null && to != null) {
++                condition = new Condition.And(condition, new Condition.Between("serviceTime", from, to));
++            }
++            result.addAll(storage.getObjects(ServiceRecord.class, new Request(
++                    new Columns.All(), condition, new Order("serviceTime", true, 0))));
++        }
++        result.sort(Comparator.comparing(ServiceRecord::getServiceTime).reversed());
++        return result;
++    }
++
++    @POST
++    @Path("records")
++    public ServiceRecord add(ServiceRecord record) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        permissionsService.checkPermission(Device.class, getUserId(), record.getDeviceId());
++        if (record.getServiceTime() == null || record.getCost() < 0) {
++            throw new BadRequestException("Invalid service");
++        }
++        Device device = storage.getObject(Device.class, new Request(
++                new Columns.All(), new Condition.Equals("id", record.getDeviceId())));
++        Maintenance maintenance = null;
++        if (record.getMaintenanceId() > 0) {
++            maintenance = fleetMaintenance.maintenances(device).stream()
++                    .filter(item -> item.getId() == record.getMaintenanceId()).findFirst()
++                    .orElseThrow(() -> new BadRequestException("Maintenance not assigned to the unit"));
++        }
++        Position latest = fleetMaintenance.latest(device);
++        if (latest != null) {
++            if (record.getOdometer() <= 0) {
++                record.setOdometer(latest.getDouble(Position.KEY_TOTAL_DISTANCE));
++            }
++            if (record.getHours() <= 0) {
++                record.setHours(latest.getDouble(Position.KEY_HOURS));
++            }
++        }
++        record.setUserId(getUserId());
++        if (record.getCost() > 0 && record.getBoolean("createExpense")) {
++            Expense expense = new Expense();
++            expense.setDeviceId(record.getDeviceId());
++            expense.setType("maintenance");
++            expense.setAmount(record.getCost());
++            expense.setExpenseTime(record.getServiceTime());
++            expense.setOdometer(Math.round(record.getOdometer() / 1000));
++            expense.setVendor(record.getWorkshop());
++            expense.setDescription(maintenance != null ? maintenance.getName() : record.getNotes());
++            expense.setMaintenanceId(record.getMaintenanceId());
++            expense.setUserId(getUserId());
++            expense.setId(storage.addObject(expense, new Request(new Columns.Exclude("id"))));
++            record.setExpenseId(expense.getId());
++        }
++        record.getAttributes().remove("createExpense");
++        record.setId(storage.addObject(record, new Request(new Columns.Exclude("id"))));
++        return record;
++    }
++
++    @DELETE
++    @Path("records/{id}")
++    public Response remove(@PathParam("id") long id) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        ServiceRecord record = storage.getObject(ServiceRecord.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (record == null) {
++            throw new NotFoundException();
++        }
++        permissionsService.checkPermission(Device.class, getUserId(), record.getDeviceId());
++        if (record.getExpenseId() > 0) {
++            storage.removeObject(Expense.class, new Request(new Condition.Equals("id", record.getExpenseId())));
++        }
++        storage.removeObject(ServiceRecord.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/QualityResource.java b/src/main/java/org/traccar/api/resource/QualityResource.java
+new file mode 100644
+index 0000000..7aa0c83
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/QualityResource.java
+@@ -0,0 +1,86 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.model.DeviceUtil;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.quality.ConnectionQuality;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Connection quality per unit: score, grade, detected issues and, with details, reports per hour and gaps.
++ */
++@Path("quality")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class QualityResource extends BaseResource {
++
++    private static final long MAX_PERIOD = 31L * 24 * 3600 * 1000;
++
++    @GET
++    public List<Map<String, Object>> get(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to,
++            @QueryParam("details") boolean details) throws StorageException {
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > MAX_PERIOD) {
++            throw new BadRequestException("Invalid period");
++        }
++        long now = System.currentTimeMillis();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : DeviceUtil.getAccessibleDevices(storage, getUserId(), deviceIds, groupIds)) {
++            List<Position> positions = PositionUtil.getPositions(storage, device.getId(), from, to);
++            int reconnections = storage.getObjects(Event.class, new Request(
++                    new Columns.Include("id"),
++                    new Condition.And(
++                            new Condition.Equals("deviceId", device.getId()),
++                            new Condition.And(
++                                    new Condition.Equals("type", Event.TYPE_DEVICE_ONLINE),
++                                    new Condition.Between("eventTime", from, to))))).size();
++            Map<String, Object> item = ConnectionQuality.compute(
++                    positions, reconnections, from.getTime(), to.getTime(),
++                    device.getLastUpdate() != null ? device.getLastUpdate().getTime() : null, now, details);
++            item.put("deviceId", device.getId());
++            item.put("name", device.getName());
++            item.put("uniqueId", device.getUniqueId());
++            item.put("model", device.getModel());
++            item.put("phone", device.getPhone());
++            item.put("status", device.getStatus());
++            item.put("protocol", positions.isEmpty() ? null : positions.get(positions.size() - 1).getProtocol());
++            result.add(item);
++        }
++        result.sort((a, b) -> Long.compare(
++                ((Number) a.get("score")).longValue(), ((Number) b.get("score")).longValue()));
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/ReportTemplateResource.java b/src/main/java/org/traccar/api/resource/ReportTemplateResource.java
+new file mode 100644
+index 0000000..3702315
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/ReportTemplateResource.java
+@@ -0,0 +1,98 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.NotFoundException;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.model.ReportTemplate;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.List;
++
++/**
++ * Configurable reports saved by each user (data source, columns, filters, grouping and sorting as JSON).
++ */
++@Path("report-templates")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class ReportTemplateResource extends BaseResource {
++
++    private static final int MAX_CONFIG = 100_000;
++
++    private ReportTemplate find(long id) throws StorageException {
++        ReportTemplate template = storage.getObject(ReportTemplate.class, new Request(
++                new Columns.All(),
++                new Condition.And(new Condition.Equals("id", id), new Condition.Equals("userId", getUserId()))));
++        if (template == null) {
++            throw new NotFoundException();
++        }
++        return template;
++    }
++
++    private static void validate(ReportTemplate template) {
++        if (template.getName() == null || template.getName().isBlank() || template.getName().length() > 128
++                || template.getConfig() == null || template.getConfig().length() > MAX_CONFIG) {
++            throw new BadRequestException("Invalid template");
++        }
++    }
++
++    @GET
++    public List<ReportTemplate> get() throws StorageException {
++        return storage.getObjects(ReportTemplate.class, new Request(
++                new Columns.All(), new Condition.Equals("userId", getUserId()), new Order("name")));
++    }
++
++    @POST
++    public ReportTemplate add(ReportTemplate template) throws StorageException {
++        validate(template);
++        template.setUserId(getUserId());
++        template.setId(storage.addObject(template, new Request(new Columns.Exclude("id"))));
++        return template;
++    }
++
++    @PUT
++    @Path("{id}")
++    public ReportTemplate update(@PathParam("id") long id, ReportTemplate template) throws StorageException {
++        find(id);
++        validate(template);
++        template.setId(id);
++        template.setUserId(getUserId());
++        storage.updateObject(template, new Request(new Columns.Exclude("id"), new Condition.Equals("id", id)));
++        return template;
++    }
++
++    @DELETE
++    @Path("{id}")
++    public Response remove(@PathParam("id") long id) throws StorageException {
++        find(id);
++        storage.removeObject(ReportTemplate.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/maintenance/FleetMaintenance.java b/src/main/java/org/traccar/maintenance/FleetMaintenance.java
+new file mode 100644
+index 0000000..31aad6a
+--- /dev/null
++++ b/src/main/java/org/traccar/maintenance/FleetMaintenance.java
+@@ -0,0 +1,217 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.maintenance;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Group;
++import org.traccar.model.Maintenance;
++import org.traccar.model.Permission;
++import org.traccar.model.Position;
++import org.traccar.model.ServiceRecord;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Date;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Maintenance status of a unit: for every plan (own or inherited from its groups) the current value, last service,
++ * next due, what remains, whether it is ok / soon / overdue and, from the last 30 days of use, the estimated date.
++ * A service record restarts the plan from the odometer, engine hours or date it was done at.
++ */
++@Singleton
++public class FleetMaintenance {
++
++    public static final String OK = "ok";
++    public static final String SOON = "soon";
++    public static final String OVERDUE = "overdue";
++
++    static final double DEFAULT_NOTICE = 0.1;
++    static final long DAY = 24L * 3600 * 1000;
++
++    private final Storage storage;
++
++    @Inject
++    public FleetMaintenance(Storage storage) {
++        this.storage = storage;
++    }
++
++    public static boolean isTime(String type) {
++        return type.endsWith("Time");
++    }
++
++    public static double currentValue(String type, Position position) {
++        if (isTime(type)) {
++            return switch (type) {
++                case "serverTime" -> position.getServerTime().getTime();
++                case "deviceTime" -> position.getDeviceTime().getTime();
++                default -> position.getFixTime().getTime();
++            };
++        }
++        return position.getDouble(type);
++    }
++
++    /** Value of a service record in the plan's unit (date, engine hours or odometer). */
++    public static double recordValue(String type, ServiceRecord record) {
++        if (isTime(type)) {
++            return record.getServiceTime().getTime();
++        }
++        if (Position.KEY_HOURS.equals(type)) {
++            return record.getHours();
++        }
++        return record.getOdometer();
++    }
++
++    public static double nextDue(double start, double period, double current) {
++        if (current < start || period <= 0) {
++            return start;
++        }
++        return start + period * (Math.floor((current - start) / period) + 1);
++    }
++
++    /** Pure status computation, kept static for tests. */
++    public static Map<String, Object> status(
++            Maintenance maintenance, double current, ServiceRecord last, Double dailyUse, long now) {
++        String type = maintenance.getType();
++        double period = maintenance.getPeriod();
++        double base;
++        double next;
++        if (last != null) {
++            base = recordValue(type, last);
++            next = base + period;
++        } else {
++            next = nextDue(maintenance.getStart(), period, current);
++            base = period > 0 ? next - period : maintenance.getStart();
++        }
++        double remaining = next - current;
++        double notice = maintenance.hasAttribute("notice") ? maintenance.getDouble("notice") : DEFAULT_NOTICE;
++        double noticeValue = notice <= 1 ? period * notice : notice;
++        String state = remaining <= 0 ? OVERDUE : remaining <= noticeValue ? SOON : OK;
++        Map<String, Object> item = new LinkedHashMap<>();
++        item.put("maintenanceId", maintenance.getId());
++        item.put("name", maintenance.getName());
++        item.put("type", type);
++        item.put("period", period);
++        item.put("current", current);
++        item.put("base", base);
++        item.put("next", next);
++        item.put("remaining", remaining);
++        item.put("progress", period > 0 ? Math.max(0, Math.min(1.5, (current - base) / period)) : 0);
++        item.put("state", state);
++        item.put("notice", noticeValue);
++        if (isTime(type)) {
++            item.put("estimatedDate", (long) next);
++        } else if (dailyUse != null && dailyUse > 0) {
++            item.put("dailyUse", dailyUse);
++            item.put("estimatedDate", now + (long) (remaining / dailyUse * DAY));
++        }
++        if (last != null) {
++            item.put("lastServiceId", last.getId());
++            item.put("lastServiceTime", last.getServiceTime());
++            item.put("lastServiceCost", last.getCost());
++            item.put("lastWorkshop", last.getWorkshop());
++        }
++        return item;
++    }
++
++    public Collection<Maintenance> maintenances(Device device) throws StorageException {
++        Map<Long, Maintenance> result = new LinkedHashMap<>();
++        for (Maintenance maintenance : storage.getObjects(Maintenance.class, new Request(
++                new Columns.All(), new Condition.Permission(Device.class, device.getId(), Maintenance.class)))) {
++            result.put(maintenance.getId(), maintenance);
++        }
++        Set<Long> visited = new HashSet<>();
++        long groupId = device.getGroupId();
++        while (groupId > 0 && visited.add(groupId)) {
++            for (Permission permission : storage.getPermissions(Group.class, groupId, Maintenance.class, 0)) {
++                if (!result.containsKey(permission.getPropertyId())) {
++                    Maintenance maintenance = storage.getObject(Maintenance.class, new Request(
++                            new Columns.All(), new Condition.Equals("id", permission.getPropertyId())));
++                    if (maintenance != null) {
++                        result.put(maintenance.getId(), maintenance);
++                    }
++                }
++            }
++            Group group = storage.getObject(Group.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", groupId)));
++            groupId = group != null ? group.getGroupId() : 0;
++        }
++        return result.values();
++    }
++
++    public ServiceRecord lastService(long deviceId, long maintenanceId) throws StorageException {
++        List<ServiceRecord> records = storage.getObjects(ServiceRecord.class, new Request(
++                new Columns.All(),
++                new Condition.And(
++                        new Condition.Equals("deviceId", deviceId),
++                        new Condition.Equals("maintenanceId", maintenanceId)),
++                new Order("serviceTime", true, 1)));
++        return records.isEmpty() ? null : records.get(0);
++    }
++
++    public Position latest(Device device) throws StorageException {
++        return device.getPositionId() > 0 ? storage.getObject(Position.class, new Request(
++                new Columns.All(), new Condition.Equals("id", device.getPositionId()))) : null;
++    }
++
++    private Double dailyUse(Device device, String type, Position latest, long now) throws StorageException {
++        if (isTime(type)) {
++            return null;
++        }
++        Position first = PositionUtil.getEdgePosition(
++                storage, device.getId(), new Date(now - 30 * DAY), new Date(now), false);
++        if (first == null || latest == null || !first.hasAttribute(type)) {
++            return null;
++        }
++        double days = Math.max(1, (latest.getFixTime().getTime() - first.getFixTime().getTime()) / (double) DAY);
++        double used = latest.getDouble(type) - first.getDouble(type);
++        return used > 0 ? used / days : null;
++    }
++
++    public List<Map<String, Object>> status(Device device, long now) throws StorageException {
++        List<Map<String, Object>> result = new ArrayList<>();
++        Position latest = latest(device);
++        if (latest == null) {
++            return result;
++        }
++        Map<String, Double> usage = new LinkedHashMap<>();
++        for (Maintenance maintenance : maintenances(device)) {
++            String type = maintenance.getType();
++            if (!usage.containsKey(type)) {
++                usage.put(type, dailyUse(device, type, latest, now));
++            }
++            Map<String, Object> item = status(
++                    maintenance, currentValue(type, latest), lastService(device.getId(), maintenance.getId()),
++                    usage.get(type), now);
++            item.put("deviceId", device.getId());
++            item.put("deviceName", device.getName());
++            result.add(item);
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/AlertState.java b/src/main/java/org/traccar/model/AlertState.java
+new file mode 100644
+index 0000000..0ac02c3
+--- /dev/null
++++ b/src/main/java/org/traccar/model/AlertState.java
+@@ -0,0 +1,86 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Handling of an event in the alert center: status, who took it and notes; history is kept in the attributes.
++ */
++@StorageName("tc_alert_states")
++public class AlertState extends ExtendedModel {
++
++    private long eventId;
++
++    public long getEventId() {
++        return eventId;
++    }
++
++    public void setEventId(long eventId) {
++        this.eventId = eventId;
++    }
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String note;
++
++    public String getNote() {
++        return note;
++    }
++
++    public void setNote(String note) {
++        this.note = note;
++    }
++
++    private Date updateTime;
++
++    public Date getUpdateTime() {
++        return updateTime;
++    }
++
++    public void setUpdateTime(Date updateTime) {
++        this.updateTime = updateTime;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/ReportTemplate.java b/src/main/java/org/traccar/model/ReportTemplate.java
+new file mode 100644
+index 0000000..5ff0139
+--- /dev/null
++++ b/src/main/java/org/traccar/model/ReportTemplate.java
+@@ -0,0 +1,54 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++/**
++ * A configurable report saved by a user: data source, columns, filters and grouping as JSON.
++ */
++@StorageName("tc_report_templates")
++public class ReportTemplate extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private String config;
++
++    public String getConfig() {
++        return config;
++    }
++
++    public void setConfig(String config) {
++        this.config = config;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/ServiceRecord.java b/src/main/java/org/traccar/model/ServiceRecord.java
+new file mode 100644
+index 0000000..5e4e665
+--- /dev/null
++++ b/src/main/java/org/traccar/model/ServiceRecord.java
+@@ -0,0 +1,127 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * A completed service of a unit, optionally for a maintenance plan; it restarts the plan's counter from its
++ * odometer, engine hours or date.
++ */
++@StorageName("tc_service_records")
++public class ServiceRecord extends ExtendedModel {
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private long maintenanceId;
++
++    public long getMaintenanceId() {
++        return maintenanceId;
++    }
++
++    public void setMaintenanceId(long maintenanceId) {
++        this.maintenanceId = maintenanceId;
++    }
++
++    private Date serviceTime;
++
++    public Date getServiceTime() {
++        return serviceTime;
++    }
++
++    public void setServiceTime(Date serviceTime) {
++        this.serviceTime = serviceTime;
++    }
++
++    private double odometer;
++
++    public double getOdometer() {
++        return odometer;
++    }
++
++    public void setOdometer(double odometer) {
++        this.odometer = odometer;
++    }
++
++    private double hours;
++
++    public double getHours() {
++        return hours;
++    }
++
++    public void setHours(double hours) {
++        this.hours = hours;
++    }
++
++    private double cost;
++
++    public double getCost() {
++        return cost;
++    }
++
++    public void setCost(double cost) {
++        this.cost = cost;
++    }
++
++    private String workshop;
++
++    public String getWorkshop() {
++        return workshop;
++    }
++
++    public void setWorkshop(String workshop) {
++        this.workshop = workshop;
++    }
++
++    private String notes;
++
++    public String getNotes() {
++        return notes;
++    }
++
++    public void setNotes(String notes) {
++        this.notes = notes;
++    }
++
++    private long expenseId;
++
++    public long getExpenseId() {
++        return expenseId;
++    }
++
++    public void setExpenseId(long expenseId) {
++        this.expenseId = expenseId;
++    }
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/quality/ConnectionQuality.java b/src/main/java/org/traccar/quality/ConnectionQuality.java
+new file mode 100644
+index 0000000..3cc9a94
+--- /dev/null
++++ b/src/main/java/org/traccar/quality/ConnectionQuality.java
+@@ -0,0 +1,257 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.quality;
++
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Connection quality of a unit over a period, scored 0-100 from: time covered without reporting gaps while the unit
++ * works, valid GPS fixes, satellites / HDOP, GSM signal, power supply and reconnections. Gaps while the engine is off
++ * are expected (devices sleep), unless the unit stays silent for hours.
++ */
++public final class ConnectionQuality {
++
++    static final long MIN_GAP = 10 * 60 * 1000;
++    static final long SILENT_GAP = 6 * 3600 * 1000;
++    static final long CLOCK_TOLERANCE = 5 * 60 * 1000;
++    static final long DAY = 24 * 3600 * 1000;
++
++    public static final String ISSUE_NO_DATA = "noData";
++    public static final String ISSUE_OFFLINE = "offline";
++    public static final String ISSUE_GAPS = "gaps";
++    public static final String ISSUE_INVALID = "invalidFix";
++    public static final String ISSUE_WEAK_GPS = "weakGps";
++    public static final String ISSUE_WEAK_SIGNAL = "weakSignal";
++    public static final String ISSUE_LOW_POWER = "lowPower";
++    public static final String ISSUE_RECONNECTS = "reconnects";
++    public static final String ISSUE_CLOCK = "clock";
++    public static final String ISSUE_FEW_REPORTS = "fewReports";
++
++    static final double MIN_REPORTS_PER_DAY = 10;
++
++    private ConnectionQuality() {
++    }
++
++    /** Signal in percent from the usual scales: dBm, 0-5 bars, 0-31 CSQ or percent. */
++    static Double signalPercent(Double rssi) {
++        if (rssi == null) {
++            return null;
++        }
++        double value;
++        if (rssi < 0) {
++            value = (rssi + 110) / 60 * 100;
++        } else if (rssi <= 5) {
++            value = rssi * 20;
++        } else if (rssi <= 31) {
++            value = rssi / 31 * 100;
++        } else {
++            value = rssi;
++        }
++        return Math.max(0, Math.min(100, value));
++    }
++
++    private static Double average(List<Double> values) {
++        return values.isEmpty() ? null : values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
++    }
++
++    private static boolean working(Position position) {
++        return position.getBoolean(Position.KEY_MOTION) || position.getBoolean(Position.KEY_IGNITION);
++    }
++
++    private static double clamp(double value) {
++        return Math.max(0, Math.min(1, value));
++    }
++
++    public static Map<String, Object> compute(
++            List<Position> positions, int reconnections, long from, long to, Long lastUpdate, long now,
++            boolean details) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        long period = Math.max(1, Math.min(to, now) - from);
++        double days = Math.max(1.0 / 24, period / (double) DAY);
++        List<String> issues = new ArrayList<>();
++        result.put("reports", positions.size());
++        result.put("reconnections", reconnections);
++        result.put("lastUpdate", lastUpdate);
++        boolean offline = lastUpdate == null || now - lastUpdate > DAY;
++        if (offline) {
++            issues.add(ISSUE_OFFLINE);
++        }
++        if (positions.isEmpty()) {
++            issues.add(ISSUE_NO_DATA);
++            result.put("score", 0);
++            result.put("grade", "poor");
++            result.put("issues", issues);
++            return result;
++        }
++
++        List<Long> intervals = new ArrayList<>();
++        for (int i = 1; i < positions.size(); i++) {
++            long gap = positions.get(i).getFixTime().getTime() - positions.get(i - 1).getFixTime().getTime();
++            if (gap > 0) {
++                intervals.add(gap);
++            }
++        }
++        List<Long> sorted = new ArrayList<>(intervals);
++        Collections.sort(sorted);
++        long median = sorted.isEmpty() ? 0 : sorted.get(sorted.size() / 2);
++        long threshold = Math.max(MIN_GAP, median * 5);
++
++        long lostTime = 0;
++        List<Map<String, Object>> gaps = new ArrayList<>();
++        int valid = 0;
++        int future = 0;
++        List<Double> satellites = new ArrayList<>();
++        List<Double> hdops = new ArrayList<>();
++        List<Double> signals = new ArrayList<>();
++        List<Double> power = new ArrayList<>();
++        int lowPowerAlarms = 0;
++        Position previous = null;
++        for (Position position : positions) {
++            if (position.getValid()) {
++                valid += 1;
++            }
++            if (position.getServerTime() != null
++                    && position.getFixTime().getTime() - position.getServerTime().getTime() > CLOCK_TOLERANCE) {
++                future += 1;
++            }
++            if (position.hasAttribute(Position.KEY_SATELLITES)) {
++                satellites.add(position.getDouble(Position.KEY_SATELLITES));
++            }
++            if (position.hasAttribute(Position.KEY_HDOP)) {
++                hdops.add(position.getDouble(Position.KEY_HDOP));
++            }
++            if (position.hasAttribute(Position.KEY_RSSI)) {
++                signals.add(signalPercent(position.getDouble(Position.KEY_RSSI)));
++            }
++            if (position.hasAttribute(Position.KEY_POWER)) {
++                power.add(position.getDouble(Position.KEY_POWER));
++            }
++            String alarm = position.getString(Position.KEY_ALARM);
++            if (alarm != null && (alarm.contains(Position.ALARM_LOW_POWER) || alarm.contains(Position.ALARM_POWER_CUT)
++                    || alarm.contains(Position.ALARM_LOW_BATTERY))) {
++                lowPowerAlarms += 1;
++            }
++            if (previous != null) {
++                long gap = position.getFixTime().getTime() - previous.getFixTime().getTime();
++                if (gap > threshold && (working(previous) || gap > SILENT_GAP)) {
++                    lostTime += gap - threshold;
++                    if (details || gaps.size() < 20) {
++                        Map<String, Object> item = new LinkedHashMap<>();
++                        item.put("start", previous.getFixTime().getTime());
++                        item.put("end", position.getFixTime().getTime());
++                        item.put("duration", gap);
++                        item.put("latitude", previous.getLatitude());
++                        item.put("longitude", previous.getLongitude());
++                        item.put("working", working(previous));
++                        gaps.add(item);
++                    }
++                }
++            }
++            previous = position;
++        }
++
++        double coverage = clamp(1 - lostTime / (double) period);
++        double validity = valid / (double) positions.size();
++        Double satelliteAverage = average(satellites);
++        Double hdopAverage = average(hdops);
++        Double signalAverage = average(signals);
++        Double powerAverage = average(power);
++
++        double gps = satelliteAverage != null ? clamp((satelliteAverage - 3) / 5) : validity;
++        if (hdopAverage != null && hdopAverage > 2) {
++            gps *= clamp(1 - (hdopAverage - 2) / 4);
++        }
++        double signal = signalAverage != null ? clamp(signalAverage / 70) : 0.8;
++        double supply = 1;
++        if (powerAverage != null && powerAverage > 0 && powerAverage < 9) {
++            supply = 0.3;
++        }
++        if (lowPowerAlarms > 0) {
++            supply = Math.min(supply, 0.5);
++        }
++        // per day over at least one day, so the first connection of a short period is not a problem
++        double reconnectsPerDay = reconnections / Math.max(1, days);
++        double stability = clamp(1 - reconnectsPerDay / 10);
++
++        double score = 35 * coverage + 25 * validity + 15 * gps + 10 * signal + 10 * supply + 5 * stability;
++        if (offline) {
++            score = Math.min(score, 40);
++        }
++        // too few positions to judge the unit well: a device sending a couple of reports a day is not excellent
++        boolean fewReports = days >= 0.25 && positions.size() / days < MIN_REPORTS_PER_DAY;
++        if (fewReports) {
++            score = Math.min(score, 60);
++        }
++
++        if (!gaps.isEmpty()) {
++            issues.add(ISSUE_GAPS);
++        }
++        if (validity < 0.8) {
++            issues.add(ISSUE_INVALID);
++        }
++        if ((satelliteAverage != null && satelliteAverage < 5) || (hdopAverage != null && hdopAverage > 3)) {
++            issues.add(ISSUE_WEAK_GPS);
++        }
++        if (signalAverage != null && signalAverage < 35) {
++            issues.add(ISSUE_WEAK_SIGNAL);
++        }
++        if (supply < 1) {
++            issues.add(ISSUE_LOW_POWER);
++        }
++        if (reconnectsPerDay > 4) {
++            issues.add(ISSUE_RECONNECTS);
++        }
++        if (future > 0) {
++            issues.add(ISSUE_CLOCK);
++        }
++        if (fewReports) {
++            issues.add(ISSUE_FEW_REPORTS);
++        }
++
++        result.put("score", Math.round(score));
++        result.put("grade", score >= 85 ? "excellent" : score >= 70 ? "good" : score >= 50 ? "fair" : "poor");
++        result.put("issues", issues);
++        result.put("interval", median / 1000);
++        result.put("coverage", Math.round(coverage * 1000) / 10.0);
++        result.put("validity", Math.round(validity * 1000) / 10.0);
++        result.put("satellites", satelliteAverage != null ? Math.round(satelliteAverage * 10) / 10.0 : null);
++        result.put("hdop", hdopAverage != null ? Math.round(hdopAverage * 10) / 10.0 : null);
++        result.put("signal", signalAverage != null ? Math.round(signalAverage) : null);
++        result.put("power", powerAverage != null ? Math.round(powerAverage * 10) / 10.0 : null);
++        result.put("lowPowerAlarms", lowPowerAlarms);
++        result.put("futureTimestamps", future);
++        result.put("gapCount", gaps.size());
++        result.put("lostTime", lostTime);
++        result.put("gaps", gaps);
++        if (details) {
++            int buckets = (int) Math.min(31 * 24, Math.ceil(period / 3600000.0));
++            int[] hourly = new int[Math.max(1, buckets)];
++            for (Position position : positions) {
++                int bucket = (int) ((position.getFixTime().getTime() - from) / 3600000);
++                if (bucket >= 0 && bucket < hourly.length) {
++                    hourly[bucket] += 1;
++                }
++            }
++            result.put("hourly", hourly);
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/schedule/ScheduleManager.java b/src/main/java/org/traccar/schedule/ScheduleManager.java
+index c1b0fdc..284be43 100644
+--- a/src/main/java/org/traccar/schedule/ScheduleManager.java
++++ b/src/main/java/org/traccar/schedule/ScheduleManager.java
+@@ -51,7 +51,8 @@ public class ScheduleManager implements LifecycleObject {
+                 TaskReports.class,
+                 TaskDeviceInactivityCheck.class,
+                 TaskWebSocketKeepalive.class,
+-                TaskStorageRetention.class)
++                TaskStorageRetention.class,
++                TaskMaintenanceReminder.class)
+                 .forEachOrdered(taskClass -> {
+                     var task = injector.getInstance(taskClass);
+                     if (task.multipleInstances() || !secondary) {
+diff --git a/src/main/java/org/traccar/schedule/TaskMaintenanceReminder.java b/src/main/java/org/traccar/schedule/TaskMaintenanceReminder.java
+new file mode 100644
+index 0000000..a6a2254
+--- /dev/null
++++ b/src/main/java/org/traccar/schedule/TaskMaintenanceReminder.java
+@@ -0,0 +1,114 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.schedule;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.database.NotificationManager;
++import org.traccar.maintenance.FleetMaintenance;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.Date;
++import java.util.Map;
++import java.util.concurrent.ScheduledExecutorService;
++import java.util.concurrent.TimeUnit;
++
++/**
++ * Hourly check of the maintenance plans: when a plan becomes due soon or overdue it raises one maintenance event
++ * per service cycle (attributes state = soon / overdue), which notifications and the alert center pick up.
++ */
++public class TaskMaintenanceReminder extends SingleScheduleTask {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(TaskMaintenanceReminder.class);
++
++    private static final long CHECK_PERIOD_MINUTES = 60;
++    private static final long LOOKBACK = 400L * 24 * 3600 * 1000;
++
++    private final Storage storage;
++    private final FleetMaintenance fleetMaintenance;
++    private final NotificationManager notificationManager;
++
++    @Inject
++    public TaskMaintenanceReminder(
++            Storage storage, FleetMaintenance fleetMaintenance, NotificationManager notificationManager) {
++        this.storage = storage;
++        this.fleetMaintenance = fleetMaintenance;
++        this.notificationManager = notificationManager;
++    }
++
++    @Override
++    public void schedule(ScheduledExecutorService executor) {
++        executor.scheduleAtFixedRate(this, 5, CHECK_PERIOD_MINUTES, TimeUnit.MINUTES);
++    }
++
++    static String cycle(Map<String, Object> item) {
++        return item.get("maintenanceId") + ":" + item.get("state") + ":" + Math.round((Double) item.get("next"));
++    }
++
++    private boolean notified(long deviceId, String cycle, long now) throws StorageException {
++        return storage.getObjects(Event.class, new Request(
++                new Columns.All(),
++                new Condition.And(
++                        new Condition.Equals("deviceId", deviceId),
++                        new Condition.And(
++                                new Condition.Equals("type", Event.TYPE_MAINTENANCE),
++                                new Condition.Between("eventTime", new Date(now - LOOKBACK), new Date(now))))))
++                .stream().anyMatch(event -> cycle.equals(event.getString("cycle")));
++    }
++
++    public int check() throws StorageException {
++        long now = System.currentTimeMillis();
++        int created = 0;
++        for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
++            for (Map<String, Object> item : fleetMaintenance.status(device, now)) {
++                if (FleetMaintenance.OK.equals(item.get("state"))) {
++                    continue;
++                }
++                String cycle = cycle(item);
++                if (notified(device.getId(), cycle, now)) {
++                    continue;
++                }
++                Position position = fleetMaintenance.latest(device);
++                Event event = new Event(Event.TYPE_MAINTENANCE, position);
++                event.setEventTime(new Date(now));
++                event.setMaintenanceId((Long) item.get("maintenanceId"));
++                event.set("state", (String) item.get("state"));
++                event.set("cycle", cycle);
++                event.set("name", (String) item.get("name"));
++                event.set("remaining", (Double) item.get("remaining"));
++                notificationManager.updateEvents(Map.of(event, position));
++                created += 1;
++            }
++        }
++        return created;
++    }
++
++    @Override
++    public void run() {
++        try {
++            check();
++        } catch (Exception e) {
++            LOGGER.warn("Maintenance reminder failed", e);
++        }
++    }
++
++}
+diff --git a/src/test/java/org/traccar/alerts/AlertSeverityTest.java b/src/test/java/org/traccar/alerts/AlertSeverityTest.java
+new file mode 100644
+index 0000000..b8c44f5
+--- /dev/null
++++ b/src/test/java/org/traccar/alerts/AlertSeverityTest.java
+@@ -0,0 +1,37 @@
++package org.traccar.alerts;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class AlertSeverityTest {
++
++    private static Event alarm(String alarm) {
++        Event event = new Event(Event.TYPE_ALARM, 1);
++        event.set(Position.KEY_ALARM, alarm);
++        return event;
++    }
++
++    @Test
++    public void testDefaultsAndOverrides() {
++        var none = AlertSeverity.parseOverrides(null);
++        assertEquals(AlertSeverity.CRITICAL, AlertSeverity.of(alarm(Position.ALARM_SOS), none));
++        assertEquals(AlertSeverity.CRITICAL, AlertSeverity.of(new Event(Event.TYPE_DEVICE_FUEL_DROP, 1), none));
++        assertEquals(AlertSeverity.HIGH, AlertSeverity.of(alarm("phoneCall"), none));
++        assertEquals(AlertSeverity.HIGH, AlertSeverity.of(alarm("unknownAlarm"), none));
++        assertEquals(AlertSeverity.HIGH, AlertSeverity.of(new Event(Event.TYPE_DEVICE_OVERSPEED, 1), none));
++        assertEquals(AlertSeverity.MEDIUM, AlertSeverity.of(new Event(Event.TYPE_GEOFENCE_ENTER, 1), none));
++        assertEquals(AlertSeverity.LOW, AlertSeverity.of(new Event(Event.TYPE_DEVICE_ONLINE, 1), none));
++        assertEquals("alarm:sos", AlertSeverity.key(alarm("sos,overspeed")));
++        assertTrue(AlertSeverity.ROUTINE.contains(Event.TYPE_IGNITION_ON));
++
++        var custom = AlertSeverity.parseOverrides("alarm:door = critical; geofenceEnter=low, bad=urgent");
++        assertEquals(2, custom.size());
++        assertEquals(AlertSeverity.CRITICAL, AlertSeverity.of(alarm(Position.ALARM_DOOR), custom));
++        assertEquals(AlertSeverity.LOW, AlertSeverity.of(new Event(Event.TYPE_GEOFENCE_ENTER, 1), custom));
++    }
++
++}
+diff --git a/src/test/java/org/traccar/maintenance/FleetMaintenanceTest.java b/src/test/java/org/traccar/maintenance/FleetMaintenanceTest.java
+new file mode 100644
+index 0000000..a7eb1e7
+--- /dev/null
++++ b/src/test/java/org/traccar/maintenance/FleetMaintenanceTest.java
+@@ -0,0 +1,64 @@
++package org.traccar.maintenance;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Maintenance;
++import org.traccar.model.ServiceRecord;
++
++import java.util.Date;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class FleetMaintenanceTest {
++
++    private static Maintenance plan(String type, double start, double period) {
++        Maintenance maintenance = new Maintenance();
++        maintenance.setId(7);
++        maintenance.setName("Aceite");
++        maintenance.setType(type);
++        maintenance.setStart(start);
++        maintenance.setPeriod(period);
++        return maintenance;
++    }
++
++    @Test
++    public void testDistancePlanWithoutService() {
++        long now = 1_700_000_000_000L;
++        var status = FleetMaintenance.status(plan("totalDistance", 0, 5_000_000), 12_300_000, null, 100_000.0, now);
++        assertEquals(15_000_000.0, status.get("next"));
++        assertEquals(2_700_000.0, status.get("remaining"));
++        assertEquals(FleetMaintenance.OK, status.get("state"));
++        assertEquals(now + 27L * 24 * 3600 * 1000, status.get("estimatedDate")); // 2,700 km at 100 km/day
++    }
++
++    @Test
++    public void testServiceRestartsThePlan() {
++        long now = 1_700_000_000_000L;
++        ServiceRecord record = new ServiceRecord();
++        record.setServiceTime(new Date(now));
++        record.setOdometer(11_000_000);
++        var status = FleetMaintenance.status(plan("totalDistance", 0, 5_000_000), 15_700_000, record, null, now);
++        assertEquals(16_000_000.0, status.get("next"));
++        assertEquals(FleetMaintenance.SOON, status.get("state")); // 300 km left, notice 10% = 500 km
++        assertFalse(status.containsKey("estimatedDate"));
++
++        var overdue = FleetMaintenance.status(plan("totalDistance", 0, 5_000_000), 16_200_000, record, null, now);
++        assertEquals(FleetMaintenance.OVERDUE, overdue.get("state"));
++        assertTrue((Double) overdue.get("progress") > 1);
++    }
++
++    @Test
++    public void testTimePlanAndNotice() {
++        long day = 24L * 3600 * 1000;
++        long now = 1_700_000_000_000L;
++        Maintenance maintenance = plan("fixTime", now - 300 * day, 365 * day);
++        maintenance.set("notice", 30.0 * day);
++        var status = FleetMaintenance.status(maintenance, now, null, null, now);
++        assertEquals(FleetMaintenance.OK, status.get("state"));
++        assertEquals((long) (now + 65.0 * day), status.get("estimatedDate"));
++        var soon = FleetMaintenance.status(maintenance, now + 40 * day, null, null, now);
++        assertEquals(FleetMaintenance.SOON, soon.get("state"));
++    }
++
++}
+diff --git a/src/test/java/org/traccar/quality/ConnectionQualityTest.java b/src/test/java/org/traccar/quality/ConnectionQualityTest.java
+new file mode 100644
+index 0000000..1b49d3c
+--- /dev/null
++++ b/src/test/java/org/traccar/quality/ConnectionQualityTest.java
+@@ -0,0 +1,96 @@
++package org.traccar.quality;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class ConnectionQualityTest {
++
++    private static final long START = 1_700_000_000_000L;
++    private static final long HOUR = 3600_000L;
++
++    private static Position position(long time, boolean valid, int satellites, int rssi, boolean ignition) {
++        Position position = new Position();
++        position.setTime(new Date(time));
++        position.setServerTime(new Date(time));
++        position.setValid(valid);
++        position.set(Position.KEY_SATELLITES, satellites);
++        position.set(Position.KEY_RSSI, rssi);
++        position.set(Position.KEY_IGNITION, ignition);
++        position.set(Position.KEY_MOTION, ignition);
++        return position;
++    }
++
++    @Test
++    public void testHealthyUnit() {
++        List<Position> positions = new ArrayList<>();
++        for (long time = START; time < START + 24 * HOUR; time += 30_000) {
++            positions.add(position(time, true, 11, 28, true));
++        }
++        var result = ConnectionQuality.compute(positions, 1, START, START + 24 * HOUR, START + 24 * HOUR,
++                START + 24 * HOUR, true);
++        assertTrue(((Number) result.get("score")).intValue() >= 90, result.toString());
++        assertEquals("excellent", result.get("grade"));
++        assertTrue(((List<?>) result.get("issues")).isEmpty(), result.get("issues").toString());
++        assertEquals(30L, result.get("interval"));
++        assertEquals(24, ((int[]) result.get("hourly")).length);
++    }
++
++    @Test
++    public void testProblems() {
++        List<Position> positions = new ArrayList<>();
++        int index = 0;
++        for (long time = START; time < START + 12 * HOUR; time += 30_000) {
++            positions.add(position(time, index++ % 3 != 0, 3, 1, true)); // 1-bar signal, few satellites
++        }
++        // 4 h lost while driving, then a parked night without reports (expected)
++        for (long time = START + 16 * HOUR; time < START + 18 * HOUR; time += 30_000) {
++            positions.add(position(time, true, 3, 1, time < START + 17 * HOUR));
++        }
++        positions.add(position(START + 23 * HOUR, true, 3, 1, false));
++        var result = ConnectionQuality.compute(positions, 20, START, START + 24 * HOUR, START + 23 * HOUR,
++                START + 24 * HOUR, false);
++        List<?> issues = (List<?>) result.get("issues");
++        assertTrue(issues.contains(ConnectionQuality.ISSUE_GAPS), issues.toString());
++        assertTrue(issues.contains(ConnectionQuality.ISSUE_WEAK_GPS), issues.toString());
++        assertTrue(issues.contains(ConnectionQuality.ISSUE_RECONNECTS), issues.toString());
++        assertTrue(issues.contains(ConnectionQuality.ISSUE_WEAK_SIGNAL), issues.toString());
++        assertTrue(issues.contains(ConnectionQuality.ISSUE_INVALID), issues.toString());
++        assertFalse(issues.contains(ConnectionQuality.ISSUE_OFFLINE));
++        assertEquals(1, result.get("gapCount")); // the parked hours are not a problem
++        assertTrue(((Number) result.get("score")).intValue() < 70, result.toString());
++    }
++
++    @Test
++    public void testFewReports() {
++        List<Position> positions = List.of(
++                position(START + HOUR, true, 10, 25, false), position(START + 20 * HOUR, true, 10, 25, false));
++        var result = ConnectionQuality.compute(positions, 0, START, START + 24 * HOUR, START + 20 * HOUR,
++                START + 24 * HOUR, false);
++        assertTrue(((List<?>) result.get("issues")).contains(ConnectionQuality.ISSUE_FEW_REPORTS));
++        assertTrue(((Number) result.get("score")).intValue() <= 60, result.toString());
++    }
++
++    @Test
++    public void testSignalScales() {
++        assertEquals(100.0, ConnectionQuality.signalPercent(-50.0));
++        assertEquals(60.0, ConnectionQuality.signalPercent(3.0));
++        assertEquals(100.0, ConnectionQuality.signalPercent(31.0));
++        assertEquals(0.0, ConnectionQuality.signalPercent(-120.0));
++    }
++
++    @Test
++    public void testNoData() {
++        var result = ConnectionQuality.compute(List.of(), 0, START, START + HOUR, null, START + HOUR, false);
++        assertEquals(0, result.get("score"));
++        assertTrue(((List<?>) result.get("issues")).contains(ConnectionQuality.ISSUE_NO_DATA));
++    }
++
++}

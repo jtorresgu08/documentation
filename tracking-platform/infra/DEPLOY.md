@@ -277,3 +277,25 @@ La primera ejecución sobre una base grande avanza hasta 62 días de historial p
 PostgreSQL reutiliza el espacio de lo borrado (autovacuum), así que la base deja de crecer; para devolver espacio
 al disco de una sola vez después de la primera limpieza: `docker compose exec db vacuumdb -U traccar -d traccar --full`
 (bloquea las tablas unos minutos; hazlo de madrugada).
+
+## 13. Operación inteligente: prioridades y recordatorios
+
+- **Prioridad de alertas**: cada tipo trae una prioridad por defecto (SOS, corte de energía, manipulación,
+  fatiga = crítica; exceso de velocidad, frenadas, geocerca prohibida = alta; …). Para cambiarla, en
+  *Configuración → Servidor → Atributos* agregue `alerts.severity` con pares `tipo=prioridad` separados por coma:
+
+  ```
+  alerts.severity = alarm:overspeed=critical, deviceOffline=high, alarm:door=low
+  ```
+
+  Las claves son el tipo de evento (`deviceOffline`, `geofenceEnter`, `maintenance`…) o `alarm:<alarma>`; las
+  prioridades válidas son `critical`, `high`, `medium` y `low`.
+- **Aviso previo de mantenimiento**: cada plan de mantenimiento acepta el atributo `notice`, que indica cuándo pasa a
+  *Próximo*: una fracción del periodo (`0.1` = 10 %, valor por defecto) o un valor absoluto en la unidad del plan
+  (metros, ms de horas de motor o ms para planes por fecha).
+- **Recordatorios**: una tarea revisa cada hora todos los planes y genera un evento `maintenance` (estado *próximo*
+  o *vencido*) una sola vez por ciclo. Para recibirlo, cree una notificación del tipo *Se requiere mantenimiento*
+  con el canal deseado. Los administradores pueden forzar la revisión con `POST /api/maintenance-plans/check`.
+- **Calidad de conexión**: hueco = silencio mayor a 10 min (o 5× el intervalo habitual) con la unidad en marcha, o
+  mayor a 6 h en cualquier caso; un equipo con menos de 10 reportes por día queda como máximo en *Regular*.
+

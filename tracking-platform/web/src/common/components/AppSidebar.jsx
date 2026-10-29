@@ -41,6 +41,9 @@ import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import PaymentsIcon from '@mui/icons-material/Payments';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import SignalCellularAltIcon from '@mui/icons-material/SignalCellularAlt';
 import { useLocalization, useTranslation } from './LocalizationProvider';
 import { useAdministrator, useManager, useRestriction } from '../util/permissions';
 import useFeatures from '../util/useFeatures';
@@ -265,6 +268,9 @@ const AppSidebar = () => {
       key: 'events', title: t('reportEvents'), icon: <EventIcon />, href: '/reports/events',
     },
     !disableReports && {
+      key: 'alertCenter', title: t('alertCenterTitle'), icon: <NotificationsActiveIcon />, href: '/alert-center', match: /^\/alert-center/,
+    },
+    !disableReports && {
       key: 'history', title: t('navHistory'), icon: <HistoryIcon />, href: '/replay',
     },
     {
@@ -292,7 +298,13 @@ const AppSidebar = () => {
       match: /\/settings\/device\/\d+\/command/,
     },
     !disableReports && {
-      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel|driving|expenses)/,
+      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel|driving|expenses|quality|builder)/,
+    },
+    !disableReports && {
+      key: 'reportBuilder', title: t('reportBuilderTitle'), icon: <TableChartIcon />, href: '/reports/builder', match: /^\/reports\/builder/,
+    },
+    !disableReports && {
+      key: 'quality', title: t('qualityTitle'), icon: <SignalCellularAltIcon />, href: '/reports/quality', match: /^\/reports\/quality/,
     },
     !disableReports && {
       key: 'expenses', title: t('expensesTitle'), icon: <PaymentsIcon />, href: '/reports/expenses', match: /^\/reports\/expenses/,
@@ -311,7 +323,7 @@ const AppSidebar = () => {
       key: 'geofences', title: t('sharedGeofences'), icon: <PolylineIcon />, href: '/geofences', match: /^\/(geofences|settings\/geofence)/,
     },
     !readonly && !features.disableMaintenance && {
-      key: 'maintenance', title: t('sharedMaintenance'), icon: <BuildIcon />, href: '/settings/maintenances', match: '/settings/maintenance',
+      key: 'maintenance', title: t('sharedMaintenance'), icon: <BuildIcon />, href: '/maintenance', match: /^\/(maintenance|settings\/maintenance)/,
     },
     !readonly && !features.disableDrivers && {
       key: 'drivers', title: t('sharedDrivers'), icon: <BadgeIcon />, href: '/settings/drivers', match: '/settings/driver',

@@ -187,6 +187,27 @@ Configuración en [infra/DEPLOY.md](infra/DEPLOY.md), sección 12.
 - **Estilo más suave** en toda la plataforma: esquinas más redondeadas, sombras ligeras, botones sin mayúsculas y
   textos un punto más pequeños.
 
+## Operación inteligente (parche `0014`)
+
+- **Centro de alertas** (*Centro de alertas* en el menú): todo lo que requiere atención con **prioridad**
+  (crítica, alta, media, baja), estado (**nueva → en atención → resuelta / falsa alarma**), responsable, notas e
+  historial de cada alerta, acciones en lote, KPIs (abiertas, críticas, **tiempo medio de respuesta**, % atendido),
+  alertas por hora, tipos y unidades más frecuentes, sonido para nuevas críticas y accesos directos a mapa,
+  historial y video. Los eventos rutinarios (encendido, entradas a geocercas…) se ocultan salvo que se pidan.
+- **Calidad de conexión** (*Reportes → Calidad de conexión*): puntaje 0–100 por equipo con cobertura, huecos sin
+  reportar, GPS válido, satélites, señal GSM, alimentación, reconexiones y reloj desfasado; filtros por problema,
+  detalle con reportes por hora, lista de huecos y **qué revisar** en el equipo; exportación CSV.
+- **Historial mejorado**: resumen (distancia, en marcha, detenido, velocidad máx.), viajes, paradas y eventos con
+  salto directo al momento, marcadores en el mapa, reproducción 1–32×, gráfico de velocidad con clic para ubicarse
+  y exportación KML, GPX y CSV. Si el odómetro del equipo retrocede, la distancia se calcula con el recorrido GPS.
+- **Mantenimiento de flota** (*Gastos y mantenimiento → Mantenimiento*): estado de cada plan por unidad (al día,
+  próximo, vencido) por km, horas de motor o días, avance, fecha estimada según el uso diario, calendario de los
+  próximos 90 días, **registro de servicios** (taller, costo, notas) que reinicia el ciclo y puede crear el gasto, y
+  **recordatorios automáticos** como evento *Se requiere mantenimiento* (notificable por correo, push o WhatsApp).
+- **Reportes configurables** (*Reportes configurables*): elige fuente (resumen, viajes, paradas, eventos,
+  conducción, gastos, calidad, mantenimiento), columnas y su orden, filtros, agrupación y totales; guarda
+  **plantillas** por usuario, exporta CSV o imprime/PDF.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -260,6 +281,7 @@ python3 server/tests/test_fuel.py
 python3 server/tests/test_safety.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_video_driving_expenses.py
 python3 server/tests/test_jimi_playback.py clip.mp4
+python3 server/tests/test_operations.py
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```
 

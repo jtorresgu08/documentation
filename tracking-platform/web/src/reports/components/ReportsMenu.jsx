@@ -10,6 +10,8 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import PaymentsIcon from '@mui/icons-material/Payments';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import SignalCellularAltIcon from '@mui/icons-material/SignalCellularAlt';
 import RouteIcon from '@mui/icons-material/Route';
 import EventRepeatIcon from '@mui/icons-material/EventRepeat';
 import NotesIcon from '@mui/icons-material/Notes';
@@ -64,6 +66,18 @@ const ReportsMenu = () => {
           link="/reports/chart"
           icon={<TrendingUpIcon />}
           selected={location.pathname === '/reports/chart'}
+        />
+        <MenuItem
+          title={t('reportBuilderTitle')}
+          link="/reports/builder"
+          icon={<TableChartIcon />}
+          selected={location.pathname === '/reports/builder'}
+        />
+        <MenuItem
+          title={t('qualityTitle')}
+          link="/reports/quality"
+          icon={<SignalCellularAltIcon />}
+          selected={location.pathname === '/reports/quality'}
         />
         <MenuItem
           title={t('expensesTitle')}

@@ -24,6 +24,10 @@ import SummaryReportPage from './reports/SummaryReportPage';
 import ChartReportPage from './reports/ChartReportPage';
 import FuelReportPage from './reports/FuelReportPage';
 import ExpensesPage from './reports/ExpensesPage';
+import AlertCenterPage from './operations/AlertCenterPage';
+import ConnectionQualityPage from './operations/ConnectionQualityPage';
+import FleetMaintenancePage from './operations/FleetMaintenancePage';
+import ReportBuilderPage from './operations/ReportBuilderPage';
 import DrivingScorePage from './reports/DrivingScorePage';
 import FuelEvidencePage from './reports/FuelEvidencePage';
 import TrackPage from './other/TrackPage';
@@ -131,6 +135,8 @@ const Navigation = () => {
         <Route path="network/:positionId" element={<NetworkPage />} />
         <Route path="event/:id" element={<EventPage />} />
         <Route path="replay" element={<ReplayPage />} />
+        <Route path="alert-center" element={<AlertCenterPage />} />
+        <Route path="maintenance" element={<FleetMaintenancePage />} />
         <Route path="geofences" element={<GeofencesPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
         <Route path="admin" element={<AdminDashboardPage />} />
@@ -187,6 +193,8 @@ const Navigation = () => {
           <Route path="fuel/evidence" element={<FuelEvidencePage />} />
           <Route path="driving" element={<DrivingScorePage />} />
           <Route path="expenses" element={<ExpensesPage />} />
+          <Route path="quality" element={<ConnectionQualityPage />} />
+          <Route path="builder" element={<ReportBuilderPage />} />
           <Route path="events" element={<EventReportPage />} />
           <Route path="route" element={<PositionsReportPage />} />
           <Route path="stops" element={<StopReportPage />} />
