@@ -298,4 +298,9 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
   con el canal deseado. Los administradores pueden forzar la revisión con `POST /api/maintenance-plans/check`.
 - **Calidad de conexión**: hueco = silencio mayor a 10 min (o 5× el intervalo habitual) con la unidad en marcha, o
   mayor a 6 h en cualquier caso; un equipo con menos de 10 reportes por día queda como máximo en *Regular*.
+- **Servicios (*Añadir servicio*)**: se guardan como planes de mantenimiento con los atributos `renew` (renovar al
+  expirar), `notice` (aviso previo, en metros, ms de horas de motor o ms), `description` y `emails`. Los correos
+  adicionales usan el SMTP del servidor (`mail.smtp.*` en `traccar.xml`); sin SMTP solo se envían las alertas por
+  los demás canales. Los planes con `renew` los avisa únicamente la tarea horaria (no el aviso nativo de Traccar al
+  cruzar cada periodo), para no duplicar eventos.
 

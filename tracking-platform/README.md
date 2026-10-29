@@ -208,6 +208,25 @@ Configuración en [infra/DEPLOY.md](infra/DEPLOY.md), sección 12.
   conducción, gastos, calidad, mantenimiento), columnas y su orden, filtros, agrupación y totales; guarda
   **plantillas** por usuario, exporta CSV o imprime/PDF.
 
+## Servicios por unidad: aceite, maquinaria y vencimientos (parche `0015`)
+
+*Añadir servicio* (en *Mantenimiento* o en el menú de cada unidad) configura en un solo paso un servicio que
+**expira por odómetro (km), horómetro (horas de motor) o fecha (días)**:
+
+- **Plantillas rápidas**: cambio de aceite, llantas, filtro de aire y frenos (vehículos); aceite de motor, engrase,
+  filtros hidráulicos y mantenimiento mayor (maquinaria amarilla); SOAT, revisión técnica, póliza y extintor
+  (documentos).
+- Intervalo, último servicio (o la fecha de vencimiento directamente para SOAT y documentos), **avisar cuando
+  falten** X km / horas / días, odómetro y horas actuales de la unidad y vista previa del próximo servicio.
+- **Renovar servicio al expirar**: si está activo, al vencer se avisa y el ciclo vuelve a empezar solo; si no, queda
+  *vencido* hasta registrar el servicio realizado o la renovación.
+- **Alerta configurada automáticamente**: crea (o completa) la notificación *Se requiere mantenimiento* con los
+  canales elegidos (web, correo, push, WhatsApp…). Además se pueden indicar **correos adicionales** que reciben el
+  aviso aunque no sean usuarios.
+- Se puede aplicar a varias unidades a la vez (un servicio por unidad, con la lectura actual de cada una), editar,
+  eliminar y ver con el ícono de renovación en la tabla de estado. Los vencimientos por fecha avanzan aunque la
+  unidad no reporte.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -282,6 +301,7 @@ python3 server/tests/test_safety.py   # con la configuración de WhatsApp de pru
 python3 server/tests/test_video_driving_expenses.py
 python3 server/tests/test_jimi_playback.py clip.mp4
 python3 server/tests/test_operations.py
+python3 server/tests/test_services.py
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```
 

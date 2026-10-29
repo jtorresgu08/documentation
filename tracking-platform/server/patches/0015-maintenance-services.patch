@@ -1,0 +1,333 @@
+diff --git a/src/main/java/org/traccar/handler/events/MaintenanceEventHandler.java b/src/main/java/org/traccar/handler/events/MaintenanceEventHandler.java
+index 4d0fb00..1c226f8 100644
+--- a/src/main/java/org/traccar/handler/events/MaintenanceEventHandler.java
++++ b/src/main/java/org/traccar/handler/events/MaintenanceEventHandler.java
+@@ -39,7 +39,8 @@ public class MaintenanceEventHandler extends BaseEventHandler {
+         }
+ 
+         for (Maintenance maintenance : cacheManager.getDeviceObjects(position.getDeviceId(), Maintenance.class)) {
+-            if (maintenance.getPeriod() != 0) {
++            // services with the renew attribute are reminded by TaskMaintenanceReminder, with notice and expiry
++            if (maintenance.getPeriod() != 0 && !maintenance.hasAttribute("renew")) {
+                 double oldValue = getValue(lastPosition, maintenance.getType());
+                 double newValue = getValue(position, maintenance.getType());
+                 if (oldValue != 0.0 && newValue != 0.0 && newValue >= maintenance.getStart()) {
+diff --git a/src/main/java/org/traccar/maintenance/FleetMaintenance.java b/src/main/java/org/traccar/maintenance/FleetMaintenance.java
+index 31aad6a..a6437e1 100644
+--- a/src/main/java/org/traccar/maintenance/FleetMaintenance.java
++++ b/src/main/java/org/traccar/maintenance/FleetMaintenance.java
+@@ -42,6 +42,8 @@ import java.util.Set;
+  * Maintenance status of a unit: for every plan (own or inherited from its groups) the current value, last service,
+  * next due, what remains, whether it is ok / soon / overdue and, from the last 30 days of use, the estimated date.
+  * A service record restarts the plan from the odometer, engine hours or date it was done at.
++ * Plans created as services carry the "renew" attribute: false keeps them overdue until a service is registered
++ * (oil change, SOAT renewal), true rolls them to the next cycle when they expire and reports when that happened.
+  */
+ @Singleton
+ public class FleetMaintenance {
+@@ -50,8 +52,12 @@ public class FleetMaintenance {
+     public static final String SOON = "soon";
+     public static final String OVERDUE = "overdue";
+ 
++    public static final String RENEW = "renew";
++    public static final String EMAILS = "emails";
++    public static final String DESCRIPTION = "description";
++
+     static final double DEFAULT_NOTICE = 0.1;
+-    static final long DAY = 24L * 3600 * 1000;
++    public static final long DAY = 24L * 3600 * 1000;
+ 
+     private final Storage storage;
+ 
+@@ -100,7 +106,18 @@ public class FleetMaintenance {
+         double period = maintenance.getPeriod();
+         double base;
+         double next;
+-        if (last != null) {
++        Double expired = null;
++        if (maintenance.hasAttribute(RENEW)) {
++            double origin = last != null ? recordValue(type, last) : maintenance.getStart();
++            double first = origin + period;
++            if (maintenance.getBoolean(RENEW) && period > 0 && current >= first) {
++                next = first + period * (Math.floor((current - first) / period) + 1);
++                expired = next - period;
++            } else {
++                next = first;
++            }
++            base = next - period;
++        } else if (last != null) {
+             base = recordValue(type, last);
+             next = base + period;
+         } else {
+@@ -123,6 +140,18 @@ public class FleetMaintenance {
+         item.put("progress", period > 0 ? Math.max(0, Math.min(1.5, (current - base) / period)) : 0);
+         item.put("state", state);
+         item.put("notice", noticeValue);
++        if (maintenance.hasAttribute(RENEW)) {
++            item.put(RENEW, maintenance.getBoolean(RENEW));
++        }
++        if (expired != null) {
++            item.put("expired", expired);
++        }
++        for (String key : List.of(DESCRIPTION, EMAILS)) {
++            String value = maintenance.getString(key);
++            if (value != null && !value.isBlank()) {
++                item.put(key, value);
++            }
++        }
+         if (isTime(type)) {
+             item.put("estimatedDate", (long) next);
+         } else if (dailyUse != null && dailyUse > 0) {
+@@ -195,18 +224,19 @@ public class FleetMaintenance {
+     public List<Map<String, Object>> status(Device device, long now) throws StorageException {
+         List<Map<String, Object>> result = new ArrayList<>();
+         Position latest = latest(device);
+-        if (latest == null) {
+-            return result;
+-        }
+         Map<String, Double> usage = new LinkedHashMap<>();
+         for (Maintenance maintenance : maintenances(device)) {
+             String type = maintenance.getType();
++            if (latest == null && !isTime(type)) {
++                continue;
++            }
+             if (!usage.containsKey(type)) {
+                 usage.put(type, dailyUse(device, type, latest, now));
+             }
++            // dates count from today, so an expiry (SOAT, inspection) advances even if the unit stops reporting
++            double current = isTime(type) ? now : currentValue(type, latest);
+             Map<String, Object> item = status(
+-                    maintenance, currentValue(type, latest), lastService(device.getId(), maintenance.getId()),
+-                    usage.get(type), now);
++                    maintenance, current, lastService(device.getId(), maintenance.getId()), usage.get(type), now);
+             item.put("deviceId", device.getId());
+             item.put("deviceName", device.getName());
+             result.add(item);
+diff --git a/src/main/java/org/traccar/schedule/TaskMaintenanceReminder.java b/src/main/java/org/traccar/schedule/TaskMaintenanceReminder.java
+index a6a2254..3a65aad 100644
+--- a/src/main/java/org/traccar/schedule/TaskMaintenanceReminder.java
++++ b/src/main/java/org/traccar/schedule/TaskMaintenanceReminder.java
+@@ -17,17 +17,23 @@ import jakarta.inject.Inject;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ import org.traccar.database.NotificationManager;
++import org.traccar.mail.MailManager;
+ import org.traccar.maintenance.FleetMaintenance;
+ import org.traccar.model.Device;
+ import org.traccar.model.Event;
+ import org.traccar.model.Position;
++import org.traccar.model.User;
+ import org.traccar.storage.Storage;
+ import org.traccar.storage.StorageException;
+ import org.traccar.storage.query.Columns;
+ import org.traccar.storage.query.Condition;
+ import org.traccar.storage.query.Request;
+ 
++import java.text.SimpleDateFormat;
++import java.util.ArrayList;
+ import java.util.Date;
++import java.util.List;
++import java.util.Locale;
+ import java.util.Map;
+ import java.util.concurrent.ScheduledExecutorService;
+ import java.util.concurrent.TimeUnit;
+@@ -35,6 +41,8 @@ import java.util.concurrent.TimeUnit;
+ /**
+  * Hourly check of the maintenance plans: when a plan becomes due soon or overdue it raises one maintenance event
+  * per service cycle (attributes state = soon / overdue), which notifications and the alert center pick up.
++ * Services that renew themselves also raise one overdue event when a cycle expires, and services with the "emails"
++ * attribute send each reminder to those addresses as well.
+  */
+ public class TaskMaintenanceReminder extends SingleScheduleTask {
+ 
+@@ -46,13 +54,16 @@ public class TaskMaintenanceReminder extends SingleScheduleTask {
+     private final Storage storage;
+     private final FleetMaintenance fleetMaintenance;
+     private final NotificationManager notificationManager;
++    private final MailManager mailManager;
+ 
+     @Inject
+     public TaskMaintenanceReminder(
+-            Storage storage, FleetMaintenance fleetMaintenance, NotificationManager notificationManager) {
++            Storage storage, FleetMaintenance fleetMaintenance, NotificationManager notificationManager,
++            MailManager mailManager) {
+         this.storage = storage;
+         this.fleetMaintenance = fleetMaintenance;
+         this.notificationManager = notificationManager;
++        this.mailManager = mailManager;
+     }
+ 
+     @Override
+@@ -64,6 +75,74 @@ public class TaskMaintenanceReminder extends SingleScheduleTask {
+         return item.get("maintenanceId") + ":" + item.get("state") + ":" + Math.round((Double) item.get("next"));
+     }
+ 
++    /** Reminders due for a status item: its soon / overdue state and, for renewing services, the cycle that expired. */
++    public static List<String[]> reminders(Map<String, Object> item) {
++        List<String[]> result = new ArrayList<>();
++        if (item.containsKey("expired")) {
++            result.add(new String[] {FleetMaintenance.OVERDUE,
++                    item.get("maintenanceId") + ":" + FleetMaintenance.OVERDUE + ":"
++                    + Math.round((Double) item.get("expired"))});
++        }
++        if (!FleetMaintenance.OK.equals(item.get("state"))) {
++            result.add(new String[] {(String) item.get("state"), cycle(item)});
++        }
++        return result;
++    }
++
++    static String formatValue(String type, double value) {
++        if (FleetMaintenance.isTime(type)) {
++            return Math.round(value / FleetMaintenance.DAY) + " días";
++        }
++        if (Position.KEY_HOURS.equals(type)) {
++            return Math.round(value / 3600000) + " h";
++        }
++        return Math.round(value / 1000) + " km";
++    }
++
++    public static String mailBody(Device device, Map<String, Object> item, String state) {
++        String type = (String) item.get("type");
++        double remaining = (Double) item.get("remaining");
++        StringBuilder body = new StringBuilder();
++        body.append("Unidad: ").append(device.getName()).append('\n');
++        body.append("Servicio: ").append(item.get("name")).append('\n');
++        if (FleetMaintenance.OVERDUE.equals(state)) {
++            body.append(item.containsKey("expired") && remaining > 0
++                    ? "Estado: vencido, el ciclo se renovó automáticamente\n"
++                    : "Estado: vencido\n");
++        } else {
++            body.append("Estado: próximo, faltan ").append(formatValue(type, remaining)).append('\n');
++        }
++        if (FleetMaintenance.isTime(type)) {
++            SimpleDateFormat format = new SimpleDateFormat("dd/MM/yyyy", Locale.ROOT);
++            body.append("Fecha: ").append(format.format(new Date(Math.round(
++                    (Double) item.getOrDefault("expired", item.get("next")))))).append('\n');
++        }
++        if (item.containsKey(FleetMaintenance.DESCRIPTION)) {
++            body.append('\n').append(item.get(FleetMaintenance.DESCRIPTION)).append('\n');
++        }
++        return body.toString();
++    }
++
++    private void sendMail(Device device, Map<String, Object> item, String state) {
++        String emails = (String) item.get(FleetMaintenance.EMAILS);
++        if (emails == null || !mailManager.getEmailEnabled()) {
++            return;
++        }
++        String subject = (FleetMaintenance.OVERDUE.equals(state) ? "Servicio vencido: " : "Servicio próximo: ")
++                + item.get("name") + " - " + device.getName();
++        for (String email : emails.split("[,;\\s]+")) {
++            if (email.contains("@")) {
++                User recipient = new User();
++                recipient.setEmail(email.trim());
++                try {
++                    mailManager.sendMessage(recipient, true, subject, mailBody(device, item, state));
++                } catch (Exception e) {
++                    LOGGER.warn("Maintenance mail to {} failed", email, e);
++                }
++            }
++        }
++    }
++
+     private boolean notified(long deviceId, String cycle, long now) throws StorageException {
+         return storage.getObjects(Event.class, new Request(
+                 new Columns.All(),
+@@ -80,23 +159,29 @@ public class TaskMaintenanceReminder extends SingleScheduleTask {
+         int created = 0;
+         for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
+             for (Map<String, Object> item : fleetMaintenance.status(device, now)) {
+-                if (FleetMaintenance.OK.equals(item.get("state"))) {
+-                    continue;
+-                }
+-                String cycle = cycle(item);
+-                if (notified(device.getId(), cycle, now)) {
+-                    continue;
++                for (String[] reminder : reminders(item)) {
++                    String state = reminder[0];
++                    String cycle = reminder[1];
++                    if (notified(device.getId(), cycle, now)) {
++                        continue;
++                    }
++                    Position position = fleetMaintenance.latest(device);
++                    if (position == null) {
++                        position = new Position();
++                        position.setDeviceId(device.getId());
++                        position.setTime(new Date(now));
++                    }
++                    Event event = new Event(Event.TYPE_MAINTENANCE, position);
++                    event.setEventTime(new Date(now));
++                    event.setMaintenanceId((Long) item.get("maintenanceId"));
++                    event.set("state", state);
++                    event.set("cycle", cycle);
++                    event.set("name", (String) item.get("name"));
++                    event.set("remaining", (Double) item.get("remaining"));
++                    notificationManager.updateEvents(Map.of(event, position));
++                    sendMail(device, item, state);
++                    created += 1;
+                 }
+-                Position position = fleetMaintenance.latest(device);
+-                Event event = new Event(Event.TYPE_MAINTENANCE, position);
+-                event.setEventTime(new Date(now));
+-                event.setMaintenanceId((Long) item.get("maintenanceId"));
+-                event.set("state", (String) item.get("state"));
+-                event.set("cycle", cycle);
+-                event.set("name", (String) item.get("name"));
+-                event.set("remaining", (Double) item.get("remaining"));
+-                notificationManager.updateEvents(Map.of(event, position));
+-                created += 1;
+             }
+         }
+         return created;
+diff --git a/src/test/java/org/traccar/maintenance/FleetMaintenanceTest.java b/src/test/java/org/traccar/maintenance/FleetMaintenanceTest.java
+index a7eb1e7..643f4d1 100644
+--- a/src/test/java/org/traccar/maintenance/FleetMaintenanceTest.java
++++ b/src/test/java/org/traccar/maintenance/FleetMaintenanceTest.java
+@@ -1,8 +1,10 @@
+ package org.traccar.maintenance;
+ 
+ import org.junit.jupiter.api.Test;
++import org.traccar.model.Device;
+ import org.traccar.model.Maintenance;
+ import org.traccar.model.ServiceRecord;
++import org.traccar.schedule.TaskMaintenanceReminder;
+ 
+ import java.util.Date;
+ 
+@@ -61,4 +63,36 @@ public class FleetMaintenanceTest {
+         assertEquals(FleetMaintenance.SOON, soon.get("state"));
+     }
+ 
++    @Test
++    public void testServiceWithoutRenewStaysOverdue() {
++        long now = 1_700_000_000_000L;
++        Maintenance maintenance = plan("hours", 1_000 * 3_600_000.0, 250 * 3_600_000.0);
++        maintenance.set(FleetMaintenance.RENEW, false);
++        maintenance.set("notice", 25 * 3_600_000.0);
++        var soon = FleetMaintenance.status(maintenance, 1_230 * 3_600_000.0, null, null, now);
++        assertEquals(FleetMaintenance.SOON, soon.get("state"));
++        var overdue = FleetMaintenance.status(maintenance, 1_900 * 3_600_000.0, null, null, now);
++        assertEquals(FleetMaintenance.OVERDUE, overdue.get("state")); // no auto roll: stays overdue at 1,250 h
++        assertEquals(1_250 * 3_600_000.0, overdue.get("next"));
++        assertFalse(overdue.containsKey("expired"));
++    }
++
++    @Test
++    public void testRenewingServiceRollsAndReportsExpiry() {
++        long day = FleetMaintenance.DAY;
++        long now = 1_700_000_000_000L;
++        Maintenance maintenance = plan("fixTime", now - 370 * day, 365 * day);
++        maintenance.set(FleetMaintenance.RENEW, true);
++        maintenance.set("notice", 15.0 * day);
++        var status = FleetMaintenance.status(maintenance, now, null, null, now);
++        assertEquals((double) (now - 5 * day), status.get("expired"));
++        assertEquals((double) (now + 360 * day), status.get("next"));
++        assertEquals(FleetMaintenance.OK, status.get("state"));
++        var reminders = TaskMaintenanceReminder.reminders(status);
++        assertEquals(1, reminders.size());
++        assertEquals(FleetMaintenance.OVERDUE, reminders.get(0)[0]);
++        assertTrue(TaskMaintenanceReminder.mailBody(new Device(), status, FleetMaintenance.OVERDUE)
++                .contains("renovó"));
++    }
++
+ }

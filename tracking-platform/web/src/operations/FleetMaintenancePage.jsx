@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert, Autocomplete, Box, Button, Card, Checkbox, Chip, Container, Dialog, DialogActions, DialogContent, DialogTitle,
   FormControlLabel, Grid, IconButton, InputAdornment, LinearProgress, MenuItem, Stack, Tab, Table, TableBody,
@@ -15,11 +15,14 @@ import PaymentsIcon from '@mui/icons-material/Payments';
 import SettingsIcon from '@mui/icons-material/Settings';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import AutorenewIcon from '@mui/icons-material/Autorenew';
 import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import { useRestriction } from '../common/util/permissions';
 import { capitalize } from './alertUtils';
+import ServiceSetupDialog from './ServiceSetupDialog';
 
 const STATE_COLORS = { overdue: '#c62828', soon: '#e65100', ok: '#2e7d32' };
 
@@ -61,6 +64,17 @@ const FleetMaintenancePage = () => {
   const [records, setRecords] = useState(null);
   const [error, setError] = useState(null);
   const [dialog, setDialog] = useState(null);
+  const [setup, setSetup] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    const deviceId = Number(searchParams.get('deviceId'));
+    if (deviceId) {
+      setUnits(devices[deviceId] ? [devices[deviceId]] : []);
+      if (searchParams.get('add')) setSetup({ deviceIds: [deviceId] });
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams]);
 
   const money = (value) => `${currency} ${Number(value || 0).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -145,8 +159,11 @@ const FleetMaintenancePage = () => {
             onChange={(_, value) => setUnits(value)}
             renderInput={(params) => <TextField {...params} label={t('deviceTitle')} placeholder={units.length ? '' : t('drivingAllUnits')} />}
           />
-          <Button variant="outlined" startIcon={<SettingsIcon />} onClick={() => navigate('/settings/maintenances')}>{t('maintenancePlans')}</Button>
-          {!readonly && <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialog({})}>{t('maintenanceRegister')}</Button>}
+          <Tooltip title={t('maintenancePlans')}>
+            <IconButton onClick={() => navigate('/settings/maintenances')} aria-label={t('maintenancePlans')}><SettingsIcon /></IconButton>
+          </Tooltip>
+          {!readonly && <Button variant="outlined" startIcon={<BuildIcon />} onClick={() => setDialog({})}>{t('maintenanceRegister')}</Button>}
+          {!readonly && <Button variant="contained" startIcon={<AddIcon />} onClick={() => setSetup({ deviceIds: units.map((unit) => unit.id) })}>{t('serviceAdd')}</Button>}
         </Stack>
       </Stack>
       {!status && !error && <LinearProgress sx={{ mb: 2 }} />}
@@ -161,7 +178,7 @@ const FleetMaintenancePage = () => {
         </Grid>
       )}
       {status && !status.items.length && (
-        <Alert severity="info" sx={{ mb: 2 }} action={<Button onClick={() => navigate('/settings/maintenances')}>{t('maintenancePlans')}</Button>}>{t('maintenanceNoPlans')}</Alert>
+        <Alert severity="info" sx={{ mb: 2 }} action={!readonly && <Button onClick={() => setSetup({ deviceIds: units.map((unit) => unit.id) })}>{t('serviceAdd')}</Button>}>{t('maintenanceNoPlans')}</Alert>
       )}
 
       <Card variant="outlined">
@@ -195,7 +212,10 @@ const FleetMaintenancePage = () => {
                   <TableRow key={`${item.deviceId}-${item.maintenanceId}`} hover>
                     <TableCell sx={{ fontWeight: 600 }}>{item.deviceName}</TableCell>
                     <TableCell>
-                      <Typography variant="body2">{item.name}</Typography>
+                      <Stack direction="row" spacing={0.5} alignItems="center">
+                        <Typography variant="body2">{item.name}</Typography>
+                        {item.renew && <Tooltip title={t('serviceRenew')}><AutorenewIcon sx={{ fontSize: 14 }} color="action" /></Tooltip>}
+                      </Stack>
                       <Typography variant="caption" color="text.secondary">{`${t('maintenanceEvery')} ${formatPlanValue(item.type, isTime(item.type) ? null : item.period, t) === '—' ? `${Math.round(item.period / 86400000)} ${t('expenseDays')}` : formatPlanValue(item.type, item.period, t)}`}</Typography>
                     </TableCell>
                     <TableCell>
@@ -223,9 +243,14 @@ const FleetMaintenancePage = () => {
                     </TableCell>
                     <TableCell align="right">
                       {!readonly && (
-                        <Tooltip title={t('maintenanceRegister')}>
-                          <IconButton size="small" color="primary" onClick={() => setDialog({ deviceId: item.deviceId, maintenanceId: item.maintenanceId })} aria-label={t('maintenanceRegister')}><BuildIcon fontSize="small" /></IconButton>
-                        </Tooltip>
+                        <Stack direction="row" justifyContent="flex-end">
+                          <Tooltip title={t('serviceEdit')}>
+                            <IconButton size="small" onClick={() => setSetup({ deviceIds: [item.deviceId], maintenanceId: item.maintenanceId })} aria-label={t('serviceEdit')}><EditIcon fontSize="small" /></IconButton>
+                          </Tooltip>
+                          <Tooltip title={t('maintenanceRegister')}>
+                            <IconButton size="small" color="primary" onClick={() => setDialog({ deviceId: item.deviceId, maintenanceId: item.maintenanceId })} aria-label={t('maintenanceRegister')}><BuildIcon fontSize="small" /></IconButton>
+                          </Tooltip>
+                        </Stack>
                       )}
                     </TableCell>
                   </TableRow>
@@ -309,6 +334,13 @@ const FleetMaintenancePage = () => {
         onClose={() => setDialog(null)}
         onSaved={() => { setDialog(null); load(); }}
       />
+      <ServiceSetupDialog
+        open={Boolean(setup)}
+        deviceIds={setup?.deviceIds}
+        maintenanceId={setup?.maintenanceId}
+        onClose={() => setSetup(null)}
+        onSaved={() => { setSetup(null); load(); }}
+      />
     </Container>
   );
 };
@@ -324,11 +356,13 @@ const ServiceDialog = ({ open, initial, items, currency, onClose, onSaved }) => 
     if (open) {
       const deviceId = initial?.deviceId;
       const total = positions[deviceId]?.attributes?.totalDistance;
+      const hours = positions[deviceId]?.attributes?.hours;
       setForm({
         deviceId,
         maintenanceId: initial?.maintenanceId || 0,
         serviceTime: dayjs().format('YYYY-MM-DDTHH:mm'),
         odometer: total ? Math.round(total / 1000) : '',
+        hours: hours ? Math.round(hours / 3600000) : '',
         cost: '',
         workshop: '',
         notes: '',
@@ -341,6 +375,7 @@ const ServiceDialog = ({ open, initial, items, currency, onClose, onSaved }) => 
   if (!form) return null;
   const update = (changes) => setForm({ ...form, ...changes });
   const plans = items.filter((item) => item.deviceId === form.deviceId);
+  const byHours = plans.find((item) => item.maintenanceId === form.maintenanceId)?.type === 'hours';
 
   const save = async () => {
     try {
@@ -352,6 +387,7 @@ const ServiceDialog = ({ open, initial, items, currency, onClose, onSaved }) => 
           maintenanceId: Number(form.maintenanceId) || 0,
           serviceTime: dayjs(form.serviceTime).toISOString(),
           odometer: form.odometer ? Number(form.odometer) * 1000 : 0,
+          hours: form.hours ? Number(form.hours) * 3600000 : 0,
           cost: Number(form.cost) || 0,
           workshop: form.workshop,
           notes: form.notes,
@@ -377,7 +413,10 @@ const ServiceDialog = ({ open, initial, items, currency, onClose, onSaved }) => 
               value={devices[form.deviceId] || null}
               onChange={(_, value) => {
                 const total = positions[value?.id]?.attributes?.totalDistance;
-                update({ deviceId: value?.id, maintenanceId: 0, odometer: total ? Math.round(total / 1000) : '' });
+                const hours = positions[value?.id]?.attributes?.hours;
+                update({
+                  deviceId: value?.id, maintenanceId: 0, odometer: total ? Math.round(total / 1000) : '', hours: hours ? Math.round(hours / 3600000) : '',
+                });
               }}
               renderInput={(params) => <TextField {...params} label={t('reportDevice')} />}
             />
@@ -392,7 +431,11 @@ const ServiceDialog = ({ open, initial, items, currency, onClose, onSaved }) => 
             <TextField fullWidth type="datetime-local" label={t('expenseDate')} value={form.serviceTime} onChange={(event) => update({ serviceTime: event.target.value })} slotProps={{ inputLabel: { shrink: true } }} />
           </Grid>
           <Grid size={{ xs: 12, sm: 6 }}>
-            <TextField fullWidth type="number" label={t('expenseOdometer')} value={form.odometer} onChange={(event) => update({ odometer: event.target.value })} slotProps={{ input: { endAdornment: <InputAdornment position="end">km</InputAdornment> } }} />
+            {byHours ? (
+              <TextField fullWidth type="number" label={t('serviceKindHours')} value={form.hours} onChange={(event) => update({ hours: event.target.value })} slotProps={{ input: { endAdornment: <InputAdornment position="end">h</InputAdornment> } }} />
+            ) : (
+              <TextField fullWidth type="number" label={t('expenseOdometer')} value={form.odometer} onChange={(event) => update({ odometer: event.target.value })} slotProps={{ input: { endAdornment: <InputAdornment position="end">km</InputAdornment> } }} />
+            )}
           </Grid>
           <Grid size={{ xs: 12, sm: 6 }}>
             <TextField fullWidth type="number" label={t('expenseAmount')} value={form.cost} onChange={(event) => update({ cost: event.target.value })} slotProps={{ input: { startAdornment: <InputAdornment position="start">{currency}</InputAdornment> } }} />

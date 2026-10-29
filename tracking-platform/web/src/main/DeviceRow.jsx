@@ -19,6 +19,7 @@ import VideocamIcon from '@mui/icons-material/Videocam';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import InfoIcon from '@mui/icons-material/Info';
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
+import BuildIcon from '@mui/icons-material/Build';
 import dayjs from 'dayjs';
 import { devicesActions } from '../store';
 import { formatAlarm, formatBoolean } from '../common/util/formatter';
@@ -286,6 +287,12 @@ export const DeviceRow = ({ row, data }) => {
           <ListItemIcon><InfoIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('unitInfoTitle')}</ListItemText>
         </MenuItem>
+        {!readonly && (
+          <MenuItem onClick={action(() => navigate(`/maintenance?deviceId=${item.id}&add=1`))}>
+            <ListItemIcon><BuildIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('serviceAdd')}</ListItemText>
+          </MenuItem>
+        )}
         {fuelSensors(item).length > 0 && (
           <MenuItem onClick={action(() => navigate(`/reports/fuel?deviceId=${item.id}`))}>
             <ListItemIcon><LocalGasStationIcon fontSize="small" /></ListItemIcon>
