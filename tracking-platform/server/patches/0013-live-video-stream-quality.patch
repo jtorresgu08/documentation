@@ -1,0 +1,34 @@
+diff --git a/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java b/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
+index 5d0eebc..80262e9 100644
+--- a/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
++++ b/src/main/java/org/traccar/protocol/HuabaoProtocolEncoder.java
+@@ -57,6 +57,11 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+         return channel > 0 ? channel : 1;
+     }
+ 
++    // 0 main stream (HD), 1 sub stream
++    private static int liveStream(Command command) {
++        return command.hasAttribute("stream") ? command.getInteger("stream") : 1;
++    }
++
+     @Override
+     protected Object encodeCommand(Command command) {
+ 
+@@ -140,7 +145,7 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+                     data.writeShort(0); // udp
+                     data.writeByte(cameraChannel(command));
+                     data.writeByte(0); // audio and video
+-                    data.writeByte(1); // sub stream, less bandwidth
++                    data.writeByte(liveStream(command)); // sub stream by default, less bandwidth
+                     return HuabaoProtocolDecoder.formatMessage(
+                             0x7e, HuabaoProtocolDecoder.MSG_LIVE_VIDEO, id, false, data);
+                 case HuabaoProtocol.TYPE_VIDEO_RECORDINGS:
+@@ -189,7 +194,7 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
+                     data.writeByte(cameraChannel(command));
+                     data.writeByte(0); // close transmission
+                     data.writeByte(0); // close audio and video
+-                    data.writeByte(1); // sub stream
++                    data.writeByte(liveStream(command));
+                     return HuabaoProtocolDecoder.formatMessage(
+                             0x7e, HuabaoProtocolDecoder.MSG_LIVE_VIDEO_CONTROL, id, false, data);
+                 case Command.TYPE_ENGINE_STOP:

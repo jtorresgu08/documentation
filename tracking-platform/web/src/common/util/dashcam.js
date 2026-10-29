@@ -53,8 +53,16 @@ export const getCameraConfig = (device, position) => {
   };
 };
 
-// Command to send for an action ('live', 'liveStop', 'photo') on a channel
-export const buildCameraCommand = (deviceId, config, action, channel) => {
+// Stream address of a channel from the play URL template ({uniqueId}, {deviceId}, {channel}, {camera})
+export const cameraStreamUrl = (template, device, channel) => (template && device ? template
+  .replaceAll('{uniqueId}', device.uniqueId)
+  .replaceAll('{deviceId}', device.id)
+  .replaceAll('{channel}', channel)
+  .replaceAll('{camera}', jimiCamera(channel)) : null);
+
+// Command to send for an action ('live', 'liveStop', 'photo') on a channel; JT/T 1078 live video can ask for the
+// main stream (hd) instead of the default sub stream
+export const buildCameraCommand = (deviceId, config, action, channel, { hd = false } = {}) => {
   if (config.protocol === 'jimi') {
     const data = config.commands[action]
       .replaceAll('{camera}', jimiCamera(channel))
@@ -62,5 +70,5 @@ export const buildCameraCommand = (deviceId, config, action, channel) => {
     return { deviceId, type: 'custom', attributes: { data } };
   }
   const type = { live: 'liveVideo', liveStop: 'liveVideoStop', photo: 'requestPhoto' }[action];
-  return { deviceId, type, attributes: { index: channel } };
+  return { deviceId, type, attributes: action === 'photo' ? { index: channel } : { index: channel, stream: hd ? 0 : 1 } };
 };

@@ -174,6 +174,16 @@ alarmas, eventos y distancias), **recomprime** fotos y videos de más de 7 días
 un tope en GB, **sobrescribe lo más antiguo**. Resultado y botón *Ejecutar ahora* en *Estado del servidor*.
 Configuración en [infra/DEPLOY.md](infra/DEPLOY.md), sección 12.
 
+## Video flotante y estilo suave (parche `0013`)
+
+- **Ventana de video flotante** sobre el mapa (desde la tarjeta de la unidad → *Video* o el menú de la lista):
+  cuadrícula de 1, 4, 9 o 16 canales, cada panel con sus propios controles (reproducir/detener, foto, sonido,
+  ver solo ese canal, pantalla completa), reproducir o detener todos, **SD/HD** (subflujo o flujo principal JT/T
+  1078), encendido/corte de motor seguro, minimizar, maximizar, mover y cambiar el tamaño. Se pueden abrir hasta
+  4 ventanas (una por unidad) y siguen abiertas al cambiar de página.
+- **Estilo más suave** en toda la plataforma: esquinas más redondeadas, sombras ligeras, botones sin mayúsculas y
+  textos un punto más pequeños.
+
 ## Panel web
 
 Basado en tus capturas de referencia:

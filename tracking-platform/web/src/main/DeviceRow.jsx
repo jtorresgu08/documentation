@@ -16,6 +16,7 @@ import SendIcon from '@mui/icons-material/Send';
 import ShareIcon from '@mui/icons-material/Share';
 import EditIcon from '@mui/icons-material/Edit';
 import VideocamIcon from '@mui/icons-material/Videocam';
+import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import InfoIcon from '@mui/icons-material/Info';
 import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import dayjs from 'dayjs';
@@ -29,6 +30,7 @@ import { useAttributePreference } from '../common/util/preferences';
 import { fuelSensors } from '../common/util/sensors';
 import { mapIconKey, mapIcons } from '../map/core/preloadImages';
 import { openUnitInfo } from '../common/util/unitInfo';
+import { openVideoWindow } from '../common/util/videoWindows';
 
 export const GROUP_ROW_HEIGHT = 56;
 export const DEVICE_ROW_HEIGHT = 68;
@@ -298,12 +300,16 @@ export const DeviceRow = ({ row, data }) => {
           <ListItemIcon><HistoryIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('navHistory')}</ListItemText>
         </MenuItem>
+        <MenuItem onClick={action(() => openVideoWindow(item.id))}>
+          <ListItemIcon><VideocamIcon fontSize="small" /></ListItemIcon>
+          <ListItemText>{t('videoLiveFloating')}</ListItemText>
+        </MenuItem>
         <MenuItem onClick={action(() => {
           dispatch(devicesActions.selectId(item.id));
           navigate('/dashcam');
         })}
         >
-          <ListItemIcon><VideocamIcon fontSize="small" /></ListItemIcon>
+          <ListItemIcon><VideoLibraryIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('navCameras')}</ListItemText>
         </MenuItem>
         {!limitCommands && !readonly && (

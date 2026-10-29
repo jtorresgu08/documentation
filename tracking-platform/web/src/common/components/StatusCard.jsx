@@ -37,6 +37,7 @@ import RouteIcon from '@mui/icons-material/Route';
 import dayjs from 'dayjs';
 import CloseIcon from '@mui/icons-material/Close';
 import EditIcon from '@mui/icons-material/Edit';
+import VideocamIcon from '@mui/icons-material/Videocam';
 
 import { useTranslation } from './LocalizationProvider';
 import RemoveDialog from './RemoveDialog';
@@ -57,6 +58,7 @@ import { formatBoolean } from '../util/formatter';
 import { mapIconKey, mapIcons } from '../../map/core/preloadImages';
 import { map } from '../../map/core/MapView';
 import { formatPeriod, statusOf } from '../../main/DeviceRow';
+import { openVideoWindow } from '../util/videoWindows';
 
 const SENSOR_ICONS = {
   fuel: <LocalGasStationIcon />,
@@ -388,6 +390,11 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
                     {t('cardFollow')}
                   </Button>
                 )}
+                {(device.attributes?.['dashcam.kind'] || position?.protocol === 'huabao') && (
+                  <Button size="small" color="inherit" startIcon={<VideocamIcon />} onClick={() => openVideoWindow(deviceId)}>
+                    {t('videoTitle')}
+                  </Button>
+                )}
                 {!deviceReadonly && !disableActions && (
                   <Button size="small" color="inherit" startIcon={<EditIcon />} onClick={() => navigate(`/settings/device/${deviceId}`)}>
                     {t('sharedEdit')}
@@ -406,6 +413,7 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
       {device && (
         <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)} onClick={() => setAnchorEl(null)}>
           <MenuItem onClick={() => openUnitInfo(deviceId)}>{t('unitInfoTitle')}</MenuItem>
+          <MenuItem onClick={() => openVideoWindow(deviceId)}>{t('videoLiveFloating')}</MenuItem>
           {position && <MenuItem component={RouterLink} to={`/position/${position.id}`}>{t('sharedShowDetails')}</MenuItem>}
           {!disableActions && <MenuItem onClick={() => navigate(`/settings/device/${deviceId}/command`)}>{t('commandTitle')}</MenuItem>}
           {!disableActions && !readonly && !limitCommands && (
