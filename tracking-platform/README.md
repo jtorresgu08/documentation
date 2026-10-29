@@ -181,6 +181,9 @@ Configuración en [infra/DEPLOY.md](infra/DEPLOY.md), sección 12.
   ver solo ese canal, pantalla completa), reproducir o detener todos, **SD/HD** (subflujo o flujo principal JT/T
   1078), encendido/corte de motor seguro, minimizar, maximizar, mover y cambiar el tamaño. Se pueden abrir hasta
   4 ventanas (una por unidad) y siguen abiertas al cambiar de página.
+  La misma ventana tiene pestañas para las **grabaciones del equipo** (memoria/disco de la MDVR JT/T 1078 o de la
+  Jimi: línea de tiempo por canal y reproducción) y los **eventos guardados** en la plataforma (fotos, videos y
+  alarmas ADAS/DMS con su visor y descarga).
 - **Estilo más suave** en toda la plataforma: esquinas más redondeadas, sombras ligeras, botones sin mayúsculas y
   textos un punto más pequeños.
 

@@ -1111,5 +1111,10 @@
     "videoPhotoRequested": "Photo requested: it will arrive in Cameras › Events",
     "videoHint": "Drag the bar to move, the corner to resize; double-click to maximize",
     "videoOpenCameras": "Open in Cameras",
-    "videoAllChannels": "All channels"
+    "videoAllChannels": "All channels",
+    "videoTabLive": "Live",
+    "videoTabRecordings": "Device recordings",
+    "videoTabEvents": "Saved events",
+    "videoEvents": "Events",
+    "videoRefresh": "Refresh"
 }

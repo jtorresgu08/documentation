@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Button, ButtonGroup, IconButton, MenuItem, Select, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
+  Box, Button, ButtonGroup, IconButton, MenuItem, Select, Stack, Tab, Tabs, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
   useMediaQuery, useTheme,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
@@ -22,6 +22,8 @@ import { closeVideoWindow, focusVideoWindow, useVideoWindows } from '../common/u
 import { devicesActions } from '../store';
 import EngineCutDialog from '../common/components/EngineCutDialog';
 import VideoTile from '../dashcam/VideoTile';
+import PlaybackPanel from '../dashcam/PlaybackPanel';
+import EventsPanel from '../dashcam/EventsPanel';
 
 const LAYOUTS = [1, 4, 6, 8, 9, 12, 16];
 
@@ -51,7 +53,8 @@ const LayoutIcon = ({ size }) => {
   );
 };
 
-// Live video of one unit in a window floating over the platform: a grid of every assigned channel (or 1, 4, 6, 8, 9, 12, 16 at a time), each with its
+// Live video, recordings stored on the device and camera events stored in the platform, in one window floating over
+// the platform. Live: a grid of every assigned channel (or 1, 4, 6, 8, 9, 12, 16 at a time), each with its
 // own controls, plus play / stop all, HD or SD stream, engine on / off and minimize, maximize, move and resize.
 const VideoWindow = ({ deviceId, cascade, onTop }) => {
   const theme = useTheme();
@@ -68,6 +71,8 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
   const config = getCameraConfig(device, position);
   const template = config.playUrl
     || (config.protocol === 'jimi' && serverAttributes['dashcam.playUrlJimi']) || serverAttributes['dashcam.playUrl'];
+  const playbackTemplate = device?.attributes?.['dashcam.playbackUrl']
+    || (config.protocol === 'jimi' ? serverAttributes['dashcam.playbackUrlJimi'] : serverAttributes['dashcam.playbackUrl']);
   const channels = Array.from({ length: config.channels }, (_, index) => index + 1);
   const label = (channel) => config.channelName(channel) || `CH ${channel}`;
 
@@ -84,6 +89,8 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
   const [width, setWidth] = useState(() => Math.min(config.channels > 4 ? 1160 : 820, window.innerWidth - 140));
   const [message, setMessage] = useState(null);
   const [engineMode, setEngineMode] = useState(null);
+  const [tab, setTab] = useState('live');
+  const [eventsRefresh, setEventsRefresh] = useState(0);
   const drag = useRef(null);
   const resize = useRef(null);
   const playingRef = useRef(playing);
@@ -135,6 +142,15 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
     }
     setHd(value);
   });
+
+  // the device streams either live or recorded video: leaving the live tab frees its channels
+  const changeTab = (value) => {
+    if (value !== 'live' && playingRef.current.length) {
+      stop(playingRef.current);
+    }
+    setMessage(null);
+    setTab(value);
+  };
 
   const close = () => {
     playingRef.current.forEach((channel) => send('liveStop', channel).catch(() => {}));
@@ -249,7 +265,7 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
 
         {!minimized && (
           <>
-            {channels.length > size && (
+            {tab === 'live' && channels.length > size && (
               <Select
                 size="small"
                 value={single || first}
@@ -263,7 +279,7 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
                 ))}
               </Select>
             )}
-            {channels.length > 1 && (
+            {tab === 'live' && channels.length > 1 && (
               <ToggleButtonGroup
                 size="small"
                 exclusive
@@ -286,7 +302,7 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
                 ))}
               </ToggleButtonGroup>
             )}
-            {config.protocol === 'jt808' && (
+            {tab === 'live' && config.protocol === 'jt808' && (
               <ToggleButtonGroup
                 size="small"
                 exclusive
@@ -298,10 +314,12 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
                 <ToggleButton value="hd">HD</ToggleButton>
               </ToggleButtonGroup>
             )}
-            <ButtonGroup size="small" variant="contained" disableElevation sx={{ '& .MuiButton-root': headerButton }}>
-              <Tooltip title={t('videoPlayAll')}><Button color="success" onClick={() => start(visible)} aria-label={t('videoPlayAll')}><PlayArrowIcon fontSize="small" /></Button></Tooltip>
-              <Tooltip title={t('videoStopAll')}><Button color="inherit" onClick={() => stop(channels)} aria-label={t('videoStopAll')}><StopIcon fontSize="small" /></Button></Tooltip>
-            </ButtonGroup>
+            {tab === 'live' && (
+              <ButtonGroup size="small" variant="contained" disableElevation sx={{ '& .MuiButton-root': headerButton }}>
+                <Tooltip title={t('videoPlayAll')}><Button color="success" onClick={() => start(visible)} aria-label={t('videoPlayAll')}><PlayArrowIcon fontSize="small" /></Button></Tooltip>
+                <Tooltip title={t('videoStopAll')}><Button color="inherit" onClick={() => stop(channels)} aria-label={t('videoStopAll')}><StopIcon fontSize="small" /></Button></Tooltip>
+              </ButtonGroup>
+            )}
             {!readonly && (
               <Stack direction="row" spacing={0.5} alignItems="center" sx={{ pl: 1, borderLeft: `1px solid ${theme.palette.divider}` }}>
                 <Typography variant="caption" fontWeight={700} color="text.secondary">{t('videoEngine')}</Typography>
@@ -329,7 +347,42 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
       </Stack>
 
       {!minimized && (
+        <Tabs
+          value={tab}
+          onChange={(_, value) => changeTab(value)}
+          sx={{ px: 1.5, minHeight: 34, '& .MuiTab-root': { minHeight: 34, py: 0.5, px: 1.5, fontSize: 13 } }}
+        >
+          <Tab value="live" label={t('videoTabLive')} />
+          <Tab value="recordings" label={t('videoTabRecordings')} />
+          <Tab value="events" label={t('videoTabEvents')} />
+        </Tabs>
+      )}
+
+      {!minimized && tab !== 'live' && (
+        <Box sx={{
+          mx: 1.25, mt: 0.5, px: 0.5, pt: 1, overflowY: 'auto', ...(maximized && desktop ? { flex: 1, minHeight: 0 } : { maxHeight: '64vh' }),
+        }}
+        >
+          {tab === 'recordings' ? (
+            <PlaybackPanel
+              compact
+              device={device}
+              protocol={config.protocol}
+              channels={channels}
+              channelLabel={label}
+              onMessage={(text) => setMessage({ text })}
+              onMediaRequested={() => setTimeout(() => setEventsRefresh(Date.now()), 60000)}
+              resolveUrl={(channel) => cameraStreamUrl(playbackTemplate, device, channel) || cameraStreamUrl(template, device, channel)}
+            />
+          ) : (
+            <EventsPanel device={device} channelLabel={label} refresh={eventsRefresh} />
+          )}
+        </Box>
+      )}
+
+      {!minimized && (
         <>
+          {tab === 'live' && (
           <Box sx={{
             mx: 1.25,
             p: 0.75,
@@ -358,9 +411,10 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
               />
             ))}
           </Box>
+          )}
           <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 0.75 }}>
-            <Typography variant="caption" color={message?.error || !template ? 'error' : 'text.secondary'} sx={{ flexGrow: 1 }} noWrap>
-              {message?.text || (!template ? t('dashcamNoVideoServer') : t('videoHint'))}
+            <Typography variant="caption" color={message?.error || (!template && tab !== 'events') ? 'error' : 'text.secondary'} sx={{ flexGrow: 1 }} noWrap>
+              {message?.text || (!template && tab !== 'events' ? t('dashcamNoVideoServer') : t('videoHint'))}
             </Typography>
             <Button
               size="small"

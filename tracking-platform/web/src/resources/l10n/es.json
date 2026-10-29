@@ -1111,5 +1111,10 @@
     "videoPhotoRequested": "Foto pedida: llegará a Cámaras › Eventos",
     "videoHint": "Arrastra la barra para mover, la esquina para cambiar el tamaño; doble clic para maximizar",
     "videoOpenCameras": "Abrir en Cámaras",
-    "videoAllChannels": "Todos los canales"
+    "videoAllChannels": "Todos los canales",
+    "videoTabLive": "En vivo",
+    "videoTabRecordings": "Grabaciones del equipo",
+    "videoTabEvents": "Eventos guardados",
+    "videoEvents": "Eventos",
+    "videoRefresh": "Actualizar"
 }

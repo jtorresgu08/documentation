@@ -25,7 +25,7 @@ const JIMI_BATCH = 8; // REPLAYLIST streams at most eight one-minute files
 // and on-demand playback streamed by the device to the media server. JT/T 1078 adds pause, speed, seek and stop on the
 // device; Jimi plays one-minute files by name (REPLAYLIST, continued in batches) and can upload a minute (HVIDEO).
 const PlaybackPanel = ({
-  device, protocol = 'jt808', channels, channelLabel, resolveUrl, onMessage, onMediaRequested,
+  device, protocol = 'jt808', channels, channelLabel, resolveUrl, onMessage, onMediaRequested, compact = false,
 }) => {
   const jimi = protocol === 'jimi';
   const theme = useTheme();
@@ -209,7 +209,7 @@ const PlaybackPanel = ({
 
       {playing && (
         <Card variant="outlined" sx={{ borderRadius: 2, mb: 2, overflow: 'hidden' }}>
-          <Box sx={{ position: 'relative', overflow: 'hidden', height: { xs: 220, sm: 360, lg: 460 }, bgcolor: '#111', display: 'grid', placeItems: 'center' }}>
+          <Box sx={{ position: 'relative', overflow: 'hidden', height: compact ? { xs: 200, md: 300 } : { xs: 220, sm: 360, lg: 460 }, bgcolor: '#111', display: 'grid', placeItems: 'center' }}>
             {resolveUrl(playing.channel)
               ? <video ref={videoRef} muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
               : <Typography color="grey.500">{t('dashcamNoVideoServer')}</Typography>}
