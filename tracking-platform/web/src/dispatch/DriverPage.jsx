@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  Alert, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, LinearProgress, MenuItem, Stack, TextField, Typography,
+  Alert, Box, Button, Card, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, InputAdornment, LinearProgress, MenuItem,
+  Stack, Switch, TextField, Typography,
 } from '@mui/material';
+import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
+import PaymentsIcon from '@mui/icons-material/Payments';
 import { alpha, useTheme } from '@mui/material/styles';
 import PhoneIcon from '@mui/icons-material/Phone';
 import NavigationIcon from '@mui/icons-material/Navigation';
@@ -14,9 +17,10 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useBrandAttribute } from '../common/util/brand';
 import {
-  FAILURE_REASONS, STOP_COLORS, compressImage, formatHour, formatWindow, stopLabel, tripLabel,
+  FAILURE_REASONS, PAYMENT_METHODS, STOP_COLORS, compressImage, formatHour, formatWindow, money, splitList, stopLabel, tripLabel, typeLabel,
 } from './dispatchUtils';
 import SignaturePad from './SignaturePad';
+import ScanDialog from './ScanDialog';
 
 const locate = () => new Promise((resolve) => {
   if (!navigator.geolocation) {
@@ -43,7 +47,13 @@ const DriverPage = () => {
   const [failing, setFailing] = useState(null);
   const [recipient, setRecipient] = useState('');
   const [notes, setNotes] = useState('');
-  const [photo, setPhoto] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [checked, setChecked] = useState([]);
+  const [scanned, setScanned] = useState([]);
+  const [scanning, setScanning] = useState(false);
+  const [collected, setCollected] = useState('');
+  const [method, setMethod] = useState(PAYMENT_METHODS[0]);
+  const [partial, setPartial] = useState(false);
   const [signature, setSignature] = useState(null);
   const [reason, setReason] = useState(FAILURE_REASONS[0]);
   const [busy, setBusy] = useState(false);
@@ -82,8 +92,13 @@ const DriverPage = () => {
   const openDelivery = (stop) => {
     setRecipient(stop.contact || '');
     setNotes('');
-    setPhoto(null);
+    setPhotos([]);
     setSignature(null);
+    setChecked([]);
+    setScanned([]);
+    setCollected(stop.attributes?.codAmount ? String(stop.attributes.codAmount) : '');
+    setMethod(PAYMENT_METHODS[0]);
+    setPartial(false);
     setDelivering(stop);
   };
 
@@ -134,6 +149,11 @@ const DriverPage = () => {
                     <Typography variant="caption" fontWeight={700} sx={{ color: STOP_COLORS[stop.status] }}>{stopLabel(t, stop.status)}</Typography>
                   </Stack>
                   {stop.address && <Typography variant="body2" color="text.secondary">{stop.address}</Typography>}
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }} flexWrap="wrap" useFlexGap>
+                    {stop.attributes?.type && stop.attributes.type !== 'delivery' && <Chip size="small" color="secondary" label={typeLabel(t, stop.attributes.type)} />}
+                    {stop.attributes?.codAmount > 0 && <Chip size="small" color="warning" icon={<PaymentsIcon />} label={`${t('dispatchCollect')} ${money(stop.attributes.codAmount)}`} />}
+                    {stop.attributes?.packages && <Chip size="small" variant="outlined" label={`${splitList(stop.attributes.packages).length} ${t('dispatchPackagesLower')}`} />}
+                  </Stack>
                   <Stack direction="row" spacing={1.5} sx={{ mt: 0.5 }} flexWrap="wrap" useFlexGap>
                     {formatWindow(stop) && (
                       <Stack direction="row" spacing={0.5} alignItems="center"><ScheduleIcon sx={{ fontSize: 15 }} color="action" /><Typography variant="caption">{formatWindow(stop)}</Typography></Stack>
@@ -152,7 +172,7 @@ const DriverPage = () => {
                         <Button variant="outlined" color="warning" startIcon={<PlaceIcon />} disabled={busy} onClick={() => report(stop, 'arrived')} sx={{ borderRadius: 2 }}>{t('dispatchIArrived')}</Button>
                       )}
                       <Stack direction="row" spacing={1}>
-                        <Button variant="contained" color="success" startIcon={<CheckCircleIcon />} disabled={busy} onClick={() => openDelivery(stop)} sx={{ flex: 1, borderRadius: 2, py: 1.25, whiteSpace: 'nowrap' }}>{t('dispatchDelivered')}</Button>
+                        <Button variant="contained" color="success" startIcon={<CheckCircleIcon />} disabled={busy} onClick={() => openDelivery(stop)} sx={{ flex: 1, borderRadius: 2, py: 1.25, whiteSpace: 'nowrap' }}>{t(stop.attributes?.type === 'service' ? 'dispatchFinishService' : stop.attributes?.type === 'pickup' ? 'dispatchPickedUp' : 'dispatchDelivered')}</Button>
                         <Button variant="contained" color="error" startIcon={<CancelIcon />} disabled={busy} onClick={() => setFailing(stop)} sx={{ flex: 1, borderRadius: 2, whiteSpace: 'nowrap' }}>{t('dispatchNotDelivered')}</Button>
                       </Stack>
                     </Stack>
@@ -169,11 +189,43 @@ const DriverPage = () => {
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField label={t('dispatchRecipient')} value={recipient} onChange={(event) => setRecipient(event.target.value)} />
-            <Button variant="outlined" component="label" startIcon={<PhotoCameraIcon />}>
-              {photo ? t('dispatchPhotoReady') : t('dispatchTakePhoto')}
-              <input hidden type="file" accept="image/*" capture="environment" onChange={async (event) => { if (event.target.files[0]) setPhoto(await compressImage(event.target.files[0])); }} />
+            {delivering?.attributes?.checklist && (
+              <Box>
+                <Typography variant="body2" fontWeight={600}>{`${t('dispatchChecklist')} (${checked.length}/${splitList(delivering.attributes.checklist, /\n+/).length})`}</Typography>
+                {splitList(delivering.attributes.checklist, /\n+/).map((task) => (
+                  <FormControlLabel key={task} sx={{ display: 'flex' }} control={<Checkbox checked={checked.includes(task)} onChange={(event) => setChecked(event.target.checked ? [...checked, task] : checked.filter((item) => item !== task))} />} label={task} />
+                ))}
+              </Box>
+            )}
+            {delivering?.attributes?.packages && (
+              <Box>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Typography variant="body2" fontWeight={600} sx={{ flexGrow: 1 }}>{`${t('dispatchPackages')} (${scanned.length}/${splitList(delivering.attributes.packages).length})`}</Typography>
+                  <Button size="small" startIcon={<QrCodeScannerIcon />} onClick={() => setScanning(true)}>{t('dispatchScan')}</Button>
+                </Stack>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+                  {splitList(delivering.attributes.packages).map((code) => <Chip key={code} size="small" label={code} color={scanned.includes(code) ? 'success' : 'default'} variant={scanned.includes(code) ? 'filled' : 'outlined'} onClick={() => setScanned(scanned.includes(code) ? scanned.filter((item) => item !== code) : [...scanned, code])} />)}
+                </Stack>
+              </Box>
+            )}
+            {delivering?.attributes?.codAmount > 0 && (
+              <Stack direction="row" spacing={1}>
+                <TextField type="number" label={`${t('dispatchCollected')} (${money(delivering.attributes.codAmount)})`} value={collected} onChange={(event) => setCollected(event.target.value)} slotProps={{ input: { startAdornment: <InputAdornment position="start">S/</InputAdornment> } }} sx={{ flex: 1 }} />
+                <TextField select label={t('dispatchPaymentMethod')} value={method} onChange={(event) => setMethod(event.target.value)} sx={{ width: 150 }}>
+                  {PAYMENT_METHODS.map((key) => <MenuItem key={key} value={key}>{t(key)}</MenuItem>)}
+                </TextField>
+              </Stack>
+            )}
+            <Button variant="outlined" component="label" startIcon={<PhotoCameraIcon />} disabled={photos.length >= 3}>
+              {`${t('dispatchTakePhoto')} (${photos.length}/3)`}
+              <input hidden type="file" accept="image/*" capture="environment" onChange={async (event) => { if (event.target.files[0]) { const image = await compressImage(event.target.files[0]); setPhotos([...photos, image].slice(0, 3)); } event.target.value = ''; }} />
             </Button>
-            {photo && <Box component="img" src={photo} alt="" sx={{ maxHeight: 160, objectFit: 'contain', borderRadius: 2 }} />}
+            {photos.length > 0 && (
+              <Stack direction="row" spacing={1}>
+                {photos.map((image) => <Box key={image.slice(-40)} component="img" src={image} alt="" onClick={() => setPhotos(photos.filter((item) => item !== image))} sx={{ width: 84, height: 64, objectFit: 'cover', borderRadius: 1.5 }} />)}
+              </Stack>
+            )}
+            <FormControlLabel control={<Switch checked={partial} onChange={(event) => setPartial(event.target.checked)} />} label={t('dispatchPartial')} />
             <Typography variant="body2" fontWeight={600}>{t('dispatchSignature')}</Typography>
             <SignaturePad onChange={setSignature} clearLabel={t('dispatchClear')} />
             <TextField label={t('dispatchNotes')} value={notes} onChange={(event) => setNotes(event.target.value)} multiline minRows={2} />
@@ -186,8 +238,17 @@ const DriverPage = () => {
             color="success"
             disabled={busy}
             onClick={async () => {
+              const packages = splitList(delivering.attributes?.packages);
+              if (packages.length && scanned.length < packages.length && !partial && !window.confirm(t('dispatchMissingPackages'))) return;
               if (await report(delivering, 'delivered', {
-                recipient, notes, photo, signature,
+                recipient,
+                notes,
+                photos,
+                signature,
+                partial,
+                checklist: checked,
+                scanned,
+                ...(delivering.attributes?.codAmount > 0 ? { codCollected: Number(collected) || 0, codMethod: t(method) } : {}),
               })) setDelivering(null);
             }}
           >
@@ -195,6 +256,15 @@ const DriverPage = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ScanDialog
+        open={scanning}
+        onClose={() => setScanning(false)}
+        onCode={(code) => setScanned((list) => (list.includes(code) ? list : [...list, code]))}
+        labels={{
+          title: t('dispatchScan'), unsupported: t('dispatchScanUnsupported'), manual: t('dispatchCodeManual'), add: t('sharedAdd'), done: t('sharedHide'),
+        }}
+      />
 
       <Dialog open={!!failing} onClose={() => setFailing(null)} fullWidth>
         <DialogTitle>{t('dispatchNotDelivered')}</DialogTitle>

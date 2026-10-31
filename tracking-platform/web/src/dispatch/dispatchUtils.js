@@ -103,3 +103,19 @@ export const compressImage = (file) => new Promise((resolve, reject) => {
   reader.onerror = reject;
   reader.readAsDataURL(file);
 });
+
+export const ORDER_TYPES = ['delivery', 'pickup', 'service'];
+export const ORDER_STATUS_COLORS = {
+  unassigned: '#7a8394', assigned: '#2563c9', delivered: '#2f9e5b', failed: '#d9534f', cancelled: '#b0b7c3',
+};
+export const PAYMENT_METHODS = ['dispatchPayCash', 'dispatchPayYape', 'dispatchPayPlin', 'dispatchPayCard', 'dispatchPayTransfer'];
+export const ROUTE_COLORS = ['#2563c9', '#e67e22', '#2f9e5b', '#8e44ad', '#d9534f', '#1a9aa3', '#c0a000', '#5d6d7e'];
+
+const capitalize = (value) => value.charAt(0).toUpperCase() + value.slice(1);
+export const typeLabel = (t, type) => t(`dispatchType${capitalize(type || 'delivery')}`);
+export const orderStatusLabel = (t, status) => t(`dispatchOrder${capitalize(status)}`);
+export const reasonLabel = (t, reason) => t(`dispatchReason${capitalize(reason)}`);
+
+export const splitList = (value, separator = /[,;\n]+/) => String(value || '').split(separator).map((item) => item.trim()).filter(Boolean);
+
+export const money = (value) => `S/ ${Number(value || 0).toFixed(2)}`;

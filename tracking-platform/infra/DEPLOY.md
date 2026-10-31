@@ -384,3 +384,14 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
 - La hora estimada se calcula con la distancia en línea recta × 1,3, la velocidad actual (mínimo 25 km/h) y 10
   minutos por parada.
 
+## 19. Logística: pedidos y planificación
+
+- La tabla `tc_dispatch_orders` y la columna `orderid` de las paradas se crean solas al actualizar.
+- Almacenes: marca la geocerca del almacén con el atributo `dispatchDepot` = `true` para que aparezca primero en la
+  planificación (cualquier geocerca sirve; se usa su centro).
+- Capacidad de cada unidad (opcional): atributos `dispatchCapacityKg`, `dispatchCapacityM3`, `dispatchMaxStops`.
+- El planificador usa distancia en línea recta × 1,3 y la velocidad media que se indique (30 km/h por defecto); para
+  cientos de pedidos por día conviene dividir por zona o turno.
+- El escaneo con cámara usa el lector de códigos del navegador (Chrome en Android lo tiene); en otros navegadores el
+  conductor escribe el código. La página debe abrirse por HTTPS para usar la cámara.
+

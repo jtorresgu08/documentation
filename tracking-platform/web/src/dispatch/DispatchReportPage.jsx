@@ -12,7 +12,9 @@ import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import { PERIODS, downloadCsv, periodRange } from '../reports/reportPeriods';
-import { STOP_COLORS, tripLabel } from './dispatchUtils';
+import {
+  STOP_COLORS, money, tripLabel, typeLabel,
+} from './dispatchUtils';
 
 const capitalize = (value) => value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -76,6 +78,10 @@ const DispatchReportPage = () => {
           <Grid size={{ xs: 6, md: 3 }}>{kpi(t('dispatchOnTimeRate'), summary.onTimeRate != null ? `${summary.onTimeRate}%` : null, `${summary.onTime} ${t('dispatchOnTime')}`, '#2563c9')}</Grid>
           <Grid size={{ xs: 6, md: 3 }}>{kpi(t('dispatchFailedAndLate'), `${summary.failed} · ${summary.late}`, t('dispatchFailedAndLateHelp'), STOP_COLORS.failed)}</Grid>
           <Grid size={{ xs: 6, md: 3 }}>{kpi(t('dispatchServiceTime'), summary.avgServiceMinutes != null ? `${summary.avgServiceMinutes} min` : null, `${summary.trips} ${t('dispatchTripsLower')} · ${summary.completedTrips} ${t('dispatchCompletedLower')}`, '#232a38')}</Grid>
+          <Grid size={{ xs: 6, md: 3 }}>{kpi(t('dispatchCodCollected'), money(summary.codCollected), `${t('dispatchOf')} ${money(summary.codExpected)}`, '#b5701a')}</Grid>
+          <Grid size={{ xs: 6, md: 3 }}>{kpi(t('dispatchRatingAverage'), summary.ratingAverage != null ? `${summary.ratingAverage} ★` : null, `${summary.ratings} ${t('dispatchRatingsLower')}`, '#f5b301')}</Grid>
+          <Grid size={{ xs: 6, md: 3 }}>{kpi(t('dispatchOutOfPoint'), summary.outOfPoint, t('dispatchOutOfPointHelp'), '#d9534f')}</Grid>
+          <Grid size={{ xs: 6, md: 3 }}>{kpi(t('dispatchUnassignedOrders'), summary.unassignedOrders, `${summary.partial} ${t('dispatchPartialLower')} · ${Object.entries(report.byType).map(([type, count]) => `${typeLabel(t, type)} ${count}`).join(' · ')}`, '#7a8394')}</Grid>
           <Grid size={{ xs: 12, md: 8 }}>
             <Card variant="outlined" sx={{ borderRadius: 4 }}>
               <CardContent>
@@ -111,8 +117,15 @@ const DispatchReportPage = () => {
                 {report.byDriver.map((item) => (
                   <Stack key={item.name} direction="row" justifyContent="space-between" sx={{ py: 0.75, borderBottom: '1px solid', borderColor: 'divider' }}>
                     <Typography variant="body2">{item.name}</Typography>
-                    <Typography variant="body2" fontWeight={600}>{`${item.delivered}/${item.stops} · ${item.trips} ${t('dispatchTripsLower')}`}</Typography>
+                    <Typography variant="body2" fontWeight={600}>{`${item.delivered}/${item.stops} · ${item.trips} ${t('dispatchTripsLower')}${report.collectedByDriver[item.name] ? ` · ${money(report.collectedByDriver[item.name])}` : ''}`}</Typography>
                   </Stack>
+                ))}
+                {report.lowRatings.length > 0 && <Typography variant="subtitle1" fontWeight={700} sx={{ mt: 2 }} gutterBottom>{t('dispatchLowRatings')}</Typography>}
+                {report.lowRatings.map((item) => (
+                  <Box key={`${item.trip}-${item.stop}`} sx={{ py: 0.75, borderBottom: '1px solid', borderColor: 'divider' }}>
+                    <Typography variant="body2" fontWeight={600}>{`${'★'.repeat(item.rating)} ${item.stop}`}</Typography>
+                    {item.comment && <Typography variant="caption" color="text.secondary">{item.comment}</Typography>}
+                  </Box>
                 ))}
               </CardContent>
             </Card>

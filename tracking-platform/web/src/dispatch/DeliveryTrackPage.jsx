@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
-  Alert, Box, Card, LinearProgress, Stack, Typography,
+  Alert, Box, Button, Card, LinearProgress, Rating, Stack, TextField, Typography,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
@@ -28,6 +28,15 @@ const DeliveryTrackPage = () => {
   const brandLogo = useBrandAttribute('logo');
   const [data, setData] = useState(null);
   const [error, setError] = useState(false);
+  const [stars, setStars] = useState(0);
+  const [comment, setComment] = useState('');
+
+  const rate = async () => {
+    const response = await fetch(`/api/dispatch/track/${token}/rating`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rating: stars, comment }),
+    });
+    if (response.ok) setData(await response.json());
+  };
 
   useEffect(() => {
     // the map reads the user preferences: visitors get an empty guest profile
@@ -90,7 +99,7 @@ const DeliveryTrackPage = () => {
             <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 1.5, borderRadius: 3, bgcolor: alpha(color, 0.1) }}>
               <Icon sx={{ color, fontSize: 34 }} />
               <Box>
-                <Typography variant="body2" color="text.secondary">{data.name}</Typography>
+                <Typography variant="body2" color="text.secondary">{data.orderCode ? `${t('dispatchOrderCode')} ${data.orderCode}` : data.name}</Typography>
                 <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.25 }}>{headline}</Typography>
               </Box>
             </Stack>
@@ -105,6 +114,24 @@ const DeliveryTrackPage = () => {
             )}
             {data.recipient && <Typography variant="body2">{`${t('dispatchRecipient')}: ${data.recipient}`}</Typography>}
             {data.failureReason && <Typography variant="body2" sx={{ color: '#d9534f' }}>{data.failureReason}</Typography>}
+            {data.canRate && (
+              <Box sx={{ p: 1.5, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+                <Typography variant="body2" fontWeight={600}>{t('dispatchRateQuestion')}</Typography>
+                <Rating size="large" value={stars} onChange={(_, value) => setStars(value || 0)} />
+                {stars > 0 && (
+                  <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                    <TextField size="small" fullWidth placeholder={t('dispatchRateComment')} value={comment} onChange={(event) => setComment(event.target.value)} />
+                    <Button variant="contained" onClick={rate}>{t('dispatchRateSend')}</Button>
+                  </Stack>
+                )}
+              </Box>
+            )}
+            {data.rating && (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Rating size="small" readOnly value={data.rating} />
+                <Typography variant="caption" color="text.secondary">{t('dispatchRateThanks')}</Typography>
+              </Stack>
+            )}
             {(data.vehicle || data.driverName) && (
               <Typography variant="caption" color="text.secondary">{[data.vehicle, data.driverName].filter(Boolean).join(' · ')}</Typography>
             )}

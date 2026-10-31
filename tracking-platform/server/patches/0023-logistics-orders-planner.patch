@@ -1,0 +1,1484 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index 53185c1..e6a9942 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -298,4 +298,72 @@
+ 
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-dispatch-orders">
++
++    <createTable tableName="tc_dispatch_orders">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="code" type="VARCHAR(64)" />
++      <column name="type" type="VARCHAR(16)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="status" type="VARCHAR(16)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="name" type="VARCHAR(128)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="address" type="VARCHAR(512)" />
++      <column name="contact" type="VARCHAR(128)" />
++      <column name="phone" type="VARCHAR(32)" />
++      <column name="latitude" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="longitude" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="planneddate" type="TIMESTAMP" />
++      <column name="windowstart" type="TIMESTAMP" />
++      <column name="windowend" type="TIMESTAMP" />
++      <column name="serviceminutes" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="priority" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="weight" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="volume" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="codamount" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="packages" type="VARCHAR(1024)" />
++      <column name="checklist" type="VARCHAR(2048)" />
++      <column name="notes" type="VARCHAR(1024)" />
++      <column name="tripid" type="INT" />
++      <column name="stopid" type="INT" />
++      <column name="created" type="TIMESTAMP" />
++      <column name="attributes" type="VARCHAR(4000)" >
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_dispatch_orders" baseColumnNames="userid" constraintName="fk_dispatch_orders_userid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_users" />
++    <createIndex tableName="tc_dispatch_orders" indexName="idx_dispatch_orders_status">
++      <column name="status" />
++      <column name="planneddate" />
++    </createIndex>
++
++    <addColumn tableName="tc_dispatch_stops">
++      <column name="orderid" type="INT" />
++    </addColumn>
++
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/api/resource/DispatchResource.java b/src/main/java/org/traccar/api/resource/DispatchResource.java
+index 9ad13a9..545c8af 100644
+--- a/src/main/java/org/traccar/api/resource/DispatchResource.java
++++ b/src/main/java/org/traccar/api/resource/DispatchResource.java
+@@ -33,9 +33,13 @@ import jakarta.ws.rs.core.Response;
+ import org.traccar.api.BaseResource;
+ import org.traccar.config.Config;
+ import org.traccar.config.Keys;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.dispatch.DispatchPlanner;
+ import org.traccar.dispatch.DispatchService;
+ import org.traccar.model.Device;
++import org.traccar.model.DispatchOrder;
+ import org.traccar.model.DispatchStop;
++import org.traccar.model.Geofence;
+ import org.traccar.model.DispatchTrip;
+ import org.traccar.model.Position;
+ import org.traccar.model.User;
+@@ -88,6 +92,11 @@ public class DispatchResource extends BaseResource {
+     @Inject
+     private Config config;
+ 
++    @Inject
++    private HierarchyService hierarchyService;
++
++    private static final int MAX_PHOTOS = 3;
++
+     // ---------- helpers ----------
+ 
+     private Set<Long> accessibleDevices() throws StorageException {
+@@ -268,6 +277,34 @@ public class DispatchResource extends BaseResource {
+         if (signature != null) {
+             stop.setSignature(signature);
+         }
++        if (body.get("photos") instanceof List<?> photos) {
++            List<String> saved = new ArrayList<>();
++            for (Object item : photos.subList(0, Math.min(photos.size(), MAX_PHOTOS))) {
++                String path = saveImage(trip, stop, "photo" + saved.size(), item);
++                if (path != null) {
++                    saved.add(path);
++                }
++            }
++            if (!saved.isEmpty()) {
++                stop.setPhoto(saved.get(0));
++                stop.set("photos", String.join(",", saved));
++            }
++        }
++        if (body.get("checklist") instanceof List<?> checklist) {
++            stop.set("checklistDone", String.join("\n", checklist.stream().map(String::valueOf).toList()));
++        }
++        if (body.get("scanned") instanceof List<?> scanned) {
++            stop.set("scanned", String.join(",", scanned.stream().map(String::valueOf).map(String::trim).toList()));
++        }
++        if (body.get("codCollected") instanceof Number collected) {
++            stop.set("codCollected", collected.doubleValue());
++            if (body.get("codMethod") instanceof String method) {
++                stop.set("codMethod", method);
++            }
++        }
++        if (body.containsKey("partial")) {
++            stop.set("partial", Boolean.TRUE.equals(body.get("partial")));
++        }
+         dispatchService.setStopStatus(trip, stop, status, body);
+     }
+ 
+@@ -349,6 +386,7 @@ public class DispatchResource extends BaseResource {
+     public Response remove(@PathParam("id") long id) throws StorageException {
+         checkWritable();
+         DispatchTrip trip = checkTrip(id);
++        dispatchService.releaseOrders(id);
+         storage.removeObject(DispatchTrip.class, new Request(new Condition.Equals("id", id)));
+         dispatchService.invalidate(trip.getDeviceId());
+         return Response.noContent().build();
+@@ -361,7 +399,10 @@ public class DispatchResource extends BaseResource {
+         DispatchTrip trip = checkTrip(id);
+         switch (action) {
+             case "start" -> dispatchService.startTrip(trip, new Date());
+-            case "cancel" -> trip.setStatus(DispatchTrip.CANCELLED);
++            case "cancel" -> {
++                trip.setStatus(DispatchTrip.CANCELLED);
++                dispatchService.releaseOrders(trip.getId());
++            }
+             case "complete" -> {
+                 trip.setStatus(DispatchTrip.COMPLETED);
+                 trip.setEndTime(new Date());
+@@ -413,6 +454,29 @@ public class DispatchResource extends BaseResource {
+         return Response.ok(Files.readAllBytes(file), name.endsWith(".png") ? "image/png" : "image/jpeg").build();
+     }
+ 
++    @GET
++    @Path("stops/{id}/photos/{index}")
++    @Produces({"image/jpeg", "image/png"})
++    public Response extraPhoto(@PathParam("id") long id, @PathParam("index") int index) throws Exception {
++        DispatchStop stop = storage.getObject(DispatchStop.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (stop == null || stop.getString("photos") == null) {
++            return Response.status(Response.Status.NOT_FOUND).build();
++        }
++        checkTrip(stop.getTripId());
++        String[] photos = stop.getString("photos").split(",");
++        String mediaPath = config.getString(Keys.MEDIA_PATH);
++        if (index < 0 || index >= photos.length || mediaPath == null || photos[index].contains("..")) {
++            return Response.status(Response.Status.NOT_FOUND).build();
++        }
++        java.nio.file.Path file = Paths.get(mediaPath, photos[index]);
++        if (!Files.exists(file)) {
++            return Response.status(Response.Status.NOT_FOUND).build();
++        }
++        return Response.ok(Files.readAllBytes(file), photos[index].endsWith(".png") ? "image/png" : "image/jpeg")
++                .build();
++    }
++
+     /**
+      * Compliance: trips, delivered and failed stops, on time deliveries, late stops, service time, by unit and
+      * driver, and failure reasons.
+@@ -434,6 +498,15 @@ public class DispatchResource extends BaseResource {
+         long serviceMinutes = 0;
+         long serviceCount = 0;
+         long completed = 0;
++        double codExpected = 0;
++        double codCollected = 0;
++        long ratings = 0;
++        long ratingSum = 0;
++        long outOfPoint = 0;
++        long partial = 0;
++        Map<String, Long> byType = new TreeMap<>();
++        Map<String, Double> collectedByDriver = new TreeMap<>();
++        List<Map<String, Object>> lowRatings = new ArrayList<>();
+         for (Map<String, Object> trip : trips) {
+             if (DispatchTrip.CANCELLED.equals(trip.get("status"))) {
+                 continue;
+@@ -464,6 +537,31 @@ public class DispatchResource extends BaseResource {
+                 if (Boolean.TRUE.equals(stop.get("late"))) {
+                     late++;
+                 }
++                @SuppressWarnings("unchecked")
++                Map<String, Object> attributes = (Map<String, Object>) stop.getOrDefault("attributes", Map.of());
++                byType.merge(String.valueOf(attributes.getOrDefault("type", DispatchOrder.DELIVERY)), 1L, Long::sum);
++                if (attributes.get("codAmount") instanceof Number amount) {
++                    codExpected += amount.doubleValue();
++                }
++                if (attributes.get("codCollected") instanceof Number amount) {
++                    codCollected += amount.doubleValue();
++                    String driverName = (String) trip.get("driverName");
++                    collectedByDriver.merge(driverName != null ? driverName : "-", amount.doubleValue(), Double::sum);
++                }
++                if (attributes.get("rating") instanceof Number rating) {
++                    ratings++;
++                    ratingSum += rating.longValue();
++                    if (rating.intValue() <= 3) {
++                        lowRatings.add(Map.of("trip", String.valueOf(trip.get("name")), "stop", stop.get("name"),
++                                "rating", rating, "comment", attributes.getOrDefault("ratingComment", "")));
++                    }
++                }
++                if (Boolean.TRUE.equals(attributes.get("outOfPoint"))) {
++                    outOfPoint++;
++                }
++                if (Boolean.TRUE.equals(attributes.get("partial"))) {
++                    partial++;
++                }
+                 if (arrival != null && done != null && !done.before(arrival)) {
+                     serviceMinutes += (done.getTime() - arrival.getTime()) / 60000;
+                     serviceCount++;
+@@ -484,8 +582,18 @@ public class DispatchResource extends BaseResource {
+         summary.put("deliveryRate", stops > 0 ? Math.round(delivered * 1000.0 / stops) / 10.0 : null);
+         summary.put("avgServiceMinutes",
+                 serviceCount > 0 ? Math.round(serviceMinutes * 10.0 / serviceCount) / 10.0 : null);
++        summary.put("codExpected", codExpected);
++        summary.put("codCollected", codCollected);
++        summary.put("ratingAverage", ratings > 0 ? Math.round(ratingSum * 10.0 / ratings) / 10.0 : null);
++        summary.put("ratings", ratings);
++        summary.put("outOfPoint", outOfPoint);
++        summary.put("partial", partial);
++        summary.put("unassignedOrders", visibleOrders(from, to, DispatchOrder.UNASSIGNED).size());
+         Map<String, Object> result = new LinkedHashMap<>();
+         result.put("summary", summary);
++        result.put("byType", byType);
++        result.put("collectedByDriver", collectedByDriver);
++        result.put("lowRatings", lowRatings);
+         result.put("byUnit", byUnit.values());
+         result.put("byDriver", byDriver.values());
+         result.put("reasons", reasons);
+@@ -516,6 +624,409 @@ public class DispatchResource extends BaseResource {
+         item.put("delivered", (Long) item.get("delivered") + delivered);
+     }
+ 
++
++    // ---------- orders and planning ----------
++
++    private Set<Long> visibleOwners() throws StorageException {
++        if (!permissionsService.notAdmin(getUserId())) {
++            return null;
++        }
++        Set<Long> owners = new HashSet<>(hierarchyService.getDescendants(getUserId()));
++        owners.add(getUserId());
++        return owners;
++    }
++
++    private List<DispatchOrder> visibleOrders(Date from, Date to, String status) throws StorageException {
++        Set<Long> owners = visibleOwners();
++        List<DispatchOrder> result = new ArrayList<>();
++        for (DispatchOrder order : storage.getObjects(DispatchOrder.class, new Request(new Columns.All()))) {
++            if (owners != null && !owners.contains(order.getUserId())
++                    || status != null && !status.isEmpty() && !status.equals(order.getStatus())) {
++                continue;
++            }
++            Date date = order.getPlannedDate();
++            boolean open = DispatchOrder.UNASSIGNED.equals(order.getStatus());
++            if (date != null && (from != null && date.before(from) || to != null && date.after(to))
++                    && !(open && date.before(new Date()))) {
++                continue;
++            }
++            result.add(order);
++        }
++        result.sort(Comparator.comparing((DispatchOrder order) -> -order.getPriority())
++                .thenComparing(order -> order.getWindowEnd() != null
++                        ? order.getWindowEnd().getTime() : Long.MAX_VALUE));
++        return result;
++    }
++
++    private DispatchOrder checkOrder(long id) throws StorageException {
++        DispatchOrder order = storage.getObject(DispatchOrder.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        Set<Long> owners = visibleOwners();
++        if (order == null || owners != null && !owners.contains(order.getUserId())) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return order;
++    }
++
++    private DispatchOrder readOrder(Object value) {
++        Map<String, Object> copy = lenient().convertValue(value, new TypeReference<Map<String, Object>>() { });
++        for (String key : List.of("id", "userId", "status", "tripId", "stopId", "created")) {
++            copy.remove(key);
++        }
++        DispatchOrder order = lenient().convertValue(copy, DispatchOrder.class);
++        if (order.getName() == null || order.getName().isBlank() || Math.abs(order.getLatitude()) > 90
++                || Math.abs(order.getLongitude()) > 180 || order.getLatitude() == 0 && order.getLongitude() == 0) {
++            throw new IllegalArgumentException("Every order needs a name and valid coordinates");
++        }
++        if (order.getType() == null || !List.of(DispatchOrder.DELIVERY, DispatchOrder.PICKUP, DispatchOrder.SERVICE)
++                .contains(order.getType())) {
++            order.setType(DispatchOrder.DELIVERY);
++        }
++        if (order.getServiceMinutes() <= 0) {
++            order.setServiceMinutes(order.getType().equals(DispatchOrder.SERVICE) ? 30 : 10);
++        }
++        return order;
++    }
++
++    @GET
++    @Path("orders")
++    public List<DispatchOrder> orders(
++            @QueryParam("from") Date from, @QueryParam("to") Date to, @QueryParam("status") String status)
++            throws StorageException {
++        return visibleOrders(from, to, status);
++    }
++
++    @POST
++    @Path("orders")
++    public List<DispatchOrder> addOrders(Object body) throws Exception {
++        checkWritable();
++        List<?> items = body instanceof List<?> list ? list : List.of(body);
++        List<DispatchOrder> orders = new ArrayList<>();
++        for (Object item : items) {
++            orders.add(readOrder(item));
++        }
++        for (DispatchOrder order : orders) {
++            order.setUserId(getUserId());
++            order.setStatus(DispatchOrder.UNASSIGNED);
++            order.setCreated(new Date());
++            if (order.getPlannedDate() == null) {
++                order.setPlannedDate(new Date());
++            }
++            order.setId(storage.addObject(order, new Request(new Columns.Exclude("id"))));
++        }
++        return orders;
++    }
++
++    @PUT
++    @Path("orders/{id}")
++    public DispatchOrder updateOrder(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        checkWritable();
++        DispatchOrder order = checkOrder(id);
++        if (!DispatchOrder.UNASSIGNED.equals(order.getStatus())) {
++            throw new IllegalArgumentException("Only orders in the pool can be edited");
++        }
++        DispatchOrder changes = readOrder(body);
++        changes.setId(order.getId());
++        changes.setUserId(order.getUserId());
++        changes.setStatus(order.getStatus());
++        changes.setCreated(order.getCreated());
++        storage.updateObject(changes, new Request(new Columns.Exclude("id"), new Condition.Equals("id", id)));
++        return changes;
++    }
++
++    @DELETE
++    @Path("orders/{id}")
++    public Response removeOrder(@PathParam("id") long id) throws Exception {
++        checkWritable();
++        DispatchOrder order = checkOrder(id);
++        if (DispatchOrder.ASSIGNED.equals(order.getStatus())) {
++            throw new IllegalArgumentException("The order is in a trip");
++        }
++        storage.removeObject(DispatchOrder.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    /**
++     * Back to the pool for another day (failed, cancelled or still unassigned orders).
++     */
++    @POST
++    @Path("orders/{id}/reschedule")
++    public DispatchOrder reschedule(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        checkWritable();
++        DispatchOrder order = checkOrder(id);
++        if (DispatchOrder.ASSIGNED.equals(order.getStatus()) || DispatchOrder.DELIVERED.equals(order.getStatus())) {
++            throw new IllegalArgumentException("Only failed, cancelled or unassigned orders can be rescheduled");
++        }
++        Date date = lenient().convertValue(body.get("plannedDate"), Date.class);
++        order.setPlannedDate(date != null ? date : new Date());
++        if (body.get("windowStart") != null || body.get("windowEnd") != null) {
++            order.setWindowStart(lenient().convertValue(body.get("windowStart"), Date.class));
++            order.setWindowEnd(lenient().convertValue(body.get("windowEnd"), Date.class));
++        }
++        order.setStatus(DispatchOrder.UNASSIGNED);
++        order.setTripId(0);
++        order.setStopId(0);
++        order.set("attempts", order.getInteger("attempts") + 1);
++        storage.updateObject(order, new Request(new Columns.Exclude("id"), new Condition.Equals("id", id)));
++        return order;
++    }
++
++    @POST
++    @Path("orders/{id}/cancel")
++    public DispatchOrder cancelOrder(@PathParam("id") long id) throws Exception {
++        checkWritable();
++        DispatchOrder order = checkOrder(id);
++        if (!DispatchOrder.UNASSIGNED.equals(order.getStatus())) {
++            throw new IllegalArgumentException("Only orders in the pool can be cancelled");
++        }
++        order.setStatus(DispatchOrder.CANCELLED);
++        storage.updateObject(order, new Request(new Columns.Include("status"), new Condition.Equals("id", id)));
++        return order;
++    }
++
++    private static double[] center(String area) {
++        if (area == null) {
++            return null;
++        }
++        String numbers = area.replaceAll("[A-Za-z()]", " ");
++        if (area.trim().toUpperCase().startsWith("CIRCLE")) {
++            String[] parts = numbers.trim().split("[\\s,]+");
++            return new double[] {Double.parseDouble(parts[0]), Double.parseDouble(parts[1])};
++        }
++        double latitude = 0;
++        double longitude = 0;
++        int count = 0;
++        for (String pair : numbers.split(",")) {
++            String[] parts = pair.trim().split("\\s+");
++            if (parts.length >= 2) {
++                latitude += Double.parseDouble(parts[0]);
++                longitude += Double.parseDouble(parts[1]);
++                count++;
++            }
++        }
++        return count > 0 ? new double[] {latitude / count, longitude / count} : null;
++    }
++
++    /**
++     * Places trips can start from and return to: the caller's geofences (the ones marked "dispatchDepot" first).
++     */
++    @GET
++    @Path("depots")
++    public List<Map<String, Object>> depots() throws StorageException {
++        Collection<Geofence> geofences = permissionsService.notAdmin(getUserId())
++                ? storage.getObjects(Geofence.class, new Request(
++                        new Columns.All(), new Condition.Permission(User.class, getUserId(), Geofence.class)))
++                : storage.getObjects(Geofence.class, new Request(new Columns.All()));
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Geofence geofence : geofences) {
++            double[] center;
++            try {
++                center = center(geofence.getArea());
++            } catch (RuntimeException e) {
++                center = null;
++            }
++            if (center != null) {
++                Map<String, Object> item = new LinkedHashMap<>();
++                item.put("id", geofence.getId());
++                item.put("name", geofence.getName());
++                item.put("latitude", center[0]);
++                item.put("longitude", center[1]);
++                item.put("depot", geofence.getBoolean("dispatchDepot"));
++                result.add(item);
++            }
++        }
++        result.sort(Comparator.comparing((Map<String, Object> item) -> !(Boolean) item.get("depot"))
++                .thenComparing(item -> String.valueOf(item.get("name"))));
++        return result;
++    }
++
++    private static Date date(Object value, ObjectMapper mapper) {
++        return value == null ? null : mapper.convertValue(value, Date.class);
++    }
++
++    private static double number(Map<String, Object> map, String key) {
++        return map.get(key) instanceof Number number ? number.doubleValue() : 0;
++    }
++
++    /**
++     * Automatic planning: which vehicle visits which orders and in what order, with arrival times, distance and
++     * load of every route, and the orders that do not fit with the reason. Nothing is saved.
++     */
++    @POST
++    @Path("plan")
++    @SuppressWarnings("unchecked")
++    public Map<String, Object> plan(Map<String, Object> body) throws Exception {
++        ObjectMapper mapper = lenient();
++        List<Long> orderIds = ((List<Object>) body.getOrDefault("orderIds", List.of())).stream()
++                .map(item -> ((Number) item).longValue()).toList();
++        Map<Long, DispatchOrder> orders = new LinkedHashMap<>();
++        for (long id : orderIds) {
++            DispatchOrder order = checkOrder(id);
++            if (DispatchOrder.UNASSIGNED.equals(order.getStatus())) {
++                orders.put(id, order);
++            }
++        }
++        double[] depot = null;
++        if (body.get("depotId") instanceof Number depotId && depotId.longValue() > 0) {
++            permissionsService.checkPermission(Geofence.class, getUserId(), depotId.longValue());
++            Geofence geofence = storage.getObject(Geofence.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", depotId.longValue())));
++            depot = center(geofence.getArea());
++        }
++        boolean returnToDepot = depot != null && !Boolean.FALSE.equals(body.get("returnToDepot"));
++        List<DispatchPlanner.Vehicle> vehicles = new ArrayList<>();
++        for (Map<String, Object> item : (List<Map<String, Object>>) body.getOrDefault("vehicles", List.of())) {
++            long deviceId = ((Number) item.get("deviceId")).longValue();
++            permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++            Date shiftStart = date(item.get("shiftStart"), mapper);
++            Date shiftEnd = date(item.get("shiftEnd"), mapper);
++            double[] start = depot;
++            if (start == null) {
++                Position position = dispatchService.getPosition(deviceId);
++                if (position != null) {
++                    start = new double[] {position.getLatitude(), position.getLongitude()};
++                } else if (!orders.isEmpty()) {
++                    DispatchOrder first = orders.values().iterator().next();
++                    start = new double[] {first.getLatitude(), first.getLongitude()};
++                } else {
++                    continue;
++                }
++            }
++            long from = shiftStart != null ? shiftStart.getTime() : System.currentTimeMillis();
++            vehicles.add(new DispatchPlanner.Vehicle(deviceId, start[0], start[1], start[0], start[1], returnToDepot,
++                    from, shiftEnd != null ? shiftEnd.getTime() : from + 10 * 3_600_000L,
++                    number(item, "capacityWeight"), number(item, "capacityVolume"), (int) number(item, "maxStops")));
++        }
++        List<DispatchPlanner.Job> jobs = new ArrayList<>();
++        for (DispatchOrder order : orders.values()) {
++            jobs.add(new DispatchPlanner.Job(order.getId(), order.getLatitude(), order.getLongitude(),
++                    order.getWindowStart() != null ? order.getWindowStart().getTime() : null,
++                    order.getWindowEnd() != null ? order.getWindowEnd().getTime() : null,
++                    order.getServiceMinutes(), order.getPriority(), order.getWeight(), order.getVolume()));
++        }
++        double speed = body.get("speedKmh") instanceof Number value ? value.doubleValue() : 30;
++        DispatchPlanner.Result result = new DispatchPlanner(speed).plan(jobs, vehicles);
++        List<Map<String, Object>> routes = new ArrayList<>();
++        for (DispatchPlanner.Route route : result.routes()) {
++            Device device = dispatchService.getDevice(route.vehicleId());
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("deviceId", route.vehicleId());
++            item.put("deviceName", device != null ? device.getName() : null);
++            item.put("orderIds", route.visits().stream().map(DispatchPlanner.Visit::jobId).toList());
++            item.put("visits", route.visits().stream().map(visit -> Map.of(
++                    "orderId", visit.jobId(), "arrival", new Date(visit.arrival()), "start", new Date(visit.start()),
++                    "departure", new Date(visit.departure()))).toList());
++            item.put("distanceKm", Math.round(route.distance() / 100) / 10.0);
++            item.put("start", new Date(route.start()));
++            item.put("end", new Date(route.end()));
++            item.put("weight", route.weight());
++            item.put("volume", route.volume());
++            DispatchPlanner.Vehicle vehicle = vehicles.stream().filter(v -> v.id() == route.vehicleId())
++                    .findFirst().orElseThrow();
++            item.put("startPoint", List.of(vehicle.startLatitude(), vehicle.startLongitude()));
++            item.put("returnToDepot", vehicle.returnToEnd());
++            routes.add(item);
++        }
++        Map<String, Object> response = new LinkedHashMap<>();
++        response.put("routes", routes);
++        response.put("unassigned", result.unassigned().entrySet().stream()
++                .map(entry -> Map.of("orderId", entry.getKey(), "reason", entry.getValue())).toList());
++        return response;
++    }
++
++    /**
++     * Turns the accepted plan into trips: one per vehicle, with the orders as stops in the planned order.
++     */
++    @POST
++    @Path("plan/commit")
++    @SuppressWarnings("unchecked")
++    public List<Map<String, Object>> commit(Map<String, Object> body) throws Exception {
++        checkWritable();
++        ObjectMapper mapper = lenient();
++        Date plannedStart = date(body.get("plannedStart"), mapper);
++        List<Map<String, Object>> created = new ArrayList<>();
++        for (Map<String, Object> route : (List<Map<String, Object>>) body.getOrDefault("routes", List.of())) {
++            long deviceId = ((Number) route.get("deviceId")).longValue();
++            permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++            List<DispatchOrder> orders = new ArrayList<>();
++            for (Object id : (List<Object>) route.getOrDefault("orderIds", List.of())) {
++                DispatchOrder order = checkOrder(((Number) id).longValue());
++                if (!DispatchOrder.UNASSIGNED.equals(order.getStatus())) {
++                    throw new IllegalArgumentException("Order already assigned: " + order.getName());
++                }
++                orders.add(order);
++            }
++            if (orders.isEmpty()) {
++                continue;
++            }
++            Device device = dispatchService.getDevice(deviceId);
++            DispatchTrip trip = new DispatchTrip();
++            String name = route.get("name") instanceof String text && !text.isBlank() ? text
++                    : "Ruta " + (device != null ? device.getName() : deviceId);
++            trip.setName(name);
++            trip.setDeviceId(deviceId);
++            trip.setDriverName((String) route.get("driverName"));
++            trip.setDriverPhone((String) route.get("driverPhone"));
++            Date start = date(route.get("start"), mapper);
++            trip.setPlannedStart(start != null ? start : plannedStart != null ? plannedStart : new Date());
++            trip.setUserId(getUserId());
++            trip.setStatus(DispatchTrip.PLANNED);
++            trip.setDriverToken(DispatchService.token());
++            trip.setCreated(new Date());
++            if (route.get("depot") instanceof List<?> depot && depot.size() == 2) {
++                trip.set("depotLatitude", ((Number) depot.get(0)).doubleValue());
++                trip.set("depotLongitude", ((Number) depot.get(1)).doubleValue());
++            }
++            trip.setId(storage.addObject(trip, new Request(new Columns.Exclude("id"))));
++            int sequence = 1;
++            for (DispatchOrder order : orders) {
++                DispatchStop stop = new DispatchStop();
++                stop.setTripId(trip.getId());
++                stop.setOrderId(order.getId());
++                stop.setSequence(sequence++);
++                stop.setName(order.getCode() != null && !order.getCode().isBlank()
++                        ? order.getName() + " · " + order.getCode() : order.getName());
++                stop.setAddress(order.getAddress());
++                stop.setContact(order.getContact());
++                stop.setPhone(order.getPhone());
++                stop.setLatitude(order.getLatitude());
++                stop.setLongitude(order.getLongitude());
++                stop.setRadius(100);
++                stop.setWindowStart(order.getWindowStart());
++                stop.setWindowEnd(order.getWindowEnd());
++                stop.setNotes(order.getNotes());
++                stop.setStatus(DispatchStop.PENDING);
++                stop.setTrackingToken(DispatchService.token());
++                stop.set("type", order.getType());
++                stop.set("serviceMinutes", order.getServiceMinutes());
++                stop.set("priority", order.getPriority());
++                stop.set("weight", order.getWeight());
++                stop.set("volume", order.getVolume());
++                if (order.getCodAmount() > 0) {
++                    stop.set("codAmount", order.getCodAmount());
++                }
++                if (order.getPackages() != null && !order.getPackages().isBlank()) {
++                    stop.set("packages", order.getPackages());
++                }
++                if (order.getChecklist() != null && !order.getChecklist().isBlank()) {
++                    stop.set("checklist", order.getChecklist());
++                }
++                if (order.getCode() != null) {
++                    stop.set("orderCode", order.getCode());
++                }
++                stop.setId(storage.addObject(stop, new Request(new Columns.Exclude("id"))));
++                order.setStatus(DispatchOrder.ASSIGNED);
++                order.setTripId(trip.getId());
++                order.setStopId(stop.getId());
++                storage.updateObject(order, new Request(
++                        new Columns.Include("status", "tripId", "stopId"), new Condition.Equals("id", order.getId())));
++            }
++            dispatchService.invalidate(deviceId);
++            created.add(view(trip, true));
++        }
++        return created;
++    }
++
+     // ---------- public: driver ----------
+ 
+     private DispatchTrip tripByToken(String token) throws StorageException {
+@@ -570,6 +1081,28 @@ public class DispatchResource extends BaseResource {
+ 
+     // ---------- public: customer ----------
+ 
++    @POST
++    @PermitAll
++    @Path("track/{token}/rating")
++    public Map<String, Object> rate(@PathParam("token") String token, Map<String, Object> body) throws Exception {
++        DispatchStop stop = token == null || token.length() < 16 ? null : storage.getObject(DispatchStop.class,
++                new Request(new Columns.All(), new Condition.Equals("trackingToken", token)));
++        if (stop == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        int rating = body.get("rating") instanceof Number value ? value.intValue() : 0;
++        if (!stop.done() || stop.hasAttribute("rating") || rating < 1 || rating > 5) {
++            throw new IllegalArgumentException("Rating not allowed");
++        }
++        stop.set("rating", rating);
++        if (body.get("comment") instanceof String comment && !comment.isBlank()) {
++            stop.set("ratingComment", comment.trim().substring(0, Math.min(comment.trim().length(), 500)));
++        }
++        storage.updateObject(stop, new Request(new Columns.Include("attributes"),
++                new Condition.Equals("id", stop.getId())));
++        return track(token);
++    }
++
+     @GET
+     @PermitAll
+     @Path("track/{token}")
+@@ -604,6 +1137,11 @@ public class DispatchResource extends BaseResource {
+         result.put("stopsBefore", stops.stream().filter(item -> item.getSequence() < stop.getSequence()
+                 && !item.done()).count());
+         result.put("ownerId", trip.getUserId());
++        result.put("type", stop.getString("type"));
++        result.put("orderCode", stop.getString("orderCode"));
++        result.put("codAmount", stop.getAttributes().get("codAmount"));
++        result.put("rating", stop.getAttributes().get("rating"));
++        result.put("canRate", stop.done() && !stop.hasAttribute("rating"));
+         Position position = dispatchService.getPosition(trip.getDeviceId());
+         if (position != null && DispatchTrip.IN_PROGRESS.equals(trip.getStatus()) && !stop.done()) {
+             result.put("position", Map.of("latitude", position.getLatitude(), "longitude", position.getLongitude(),
+diff --git a/src/main/java/org/traccar/dispatch/DispatchPlanner.java b/src/main/java/org/traccar/dispatch/DispatchPlanner.java
+new file mode 100644
+index 0000000..b7182f8
+--- /dev/null
++++ b/src/main/java/org/traccar/dispatch/DispatchPlanner.java
+@@ -0,0 +1,227 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.dispatch;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Route planning for several vehicles: every order is inserted where it adds the least distance in a route that
++ * stays feasible (vehicle weight, volume and stop limits, customer time windows with waiting, service time, driver
++ * shift and return to the depot); higher priorities and earlier windows go first, then each route is improved with
++ * 2-opt. Orders that fit nowhere are reported with the reason.
++ */
++public final class DispatchPlanner {
++
++    public static final double ROAD_FACTOR = 1.3;
++
++    public static final String REASON_CAPACITY = "capacity";
++    public static final String REASON_STOPS = "maxStops";
++    public static final String REASON_WINDOW = "window";
++    public static final String REASON_SHIFT = "shift";
++    public static final String REASON_NO_VEHICLES = "noVehicles";
++
++    /** windows and times in epoch milliseconds, null when free; weight in kg and volume in m3 */
++    public record Job(
++            long id, double latitude, double longitude, Long windowStart, Long windowEnd, int serviceMinutes,
++            int priority, double weight, double volume) {
++    }
++
++    /** capacities and maximum stops of 0 mean unlimited */
++    public record Vehicle(
++            long id, double startLatitude, double startLongitude, double endLatitude, double endLongitude,
++            boolean returnToEnd, long shiftStart, long shiftEnd, double capacityWeight, double capacityVolume,
++            int maxStops) {
++    }
++
++    public record Visit(long jobId, long arrival, long start, long departure) {
++    }
++
++    public record Route(
++            long vehicleId, List<Visit> visits, double distance, long start, long end, double weight, double volume) {
++    }
++
++    public record Result(List<Route> routes, Map<Long, String> unassigned) {
++    }
++
++    private record Schedule(List<Visit> visits, double distance, long end) {
++    }
++
++    private final double speed;
++
++    /**
++     * @param speedKmh average speed between stops
++     */
++    public DispatchPlanner(double speedKmh) {
++        this.speed = Math.max(speedKmh, 5) / 3.6;
++    }
++
++    private static double meters(double lat1, double lon1, double lat2, double lon2) {
++        return DispatchService.distance(lat1, lon1, lat2, lon2) * ROAD_FACTOR;
++    }
++
++    private Schedule simulate(Vehicle vehicle, List<Job> jobs) {
++        long time = vehicle.shiftStart();
++        double latitude = vehicle.startLatitude();
++        double longitude = vehicle.startLongitude();
++        double distance = 0;
++        List<Visit> visits = new ArrayList<>();
++        for (Job job : jobs) {
++            double leg = meters(latitude, longitude, job.latitude(), job.longitude());
++            distance += leg;
++            time += (long) (leg / speed * 1000);
++            long arrival = time;
++            if (job.windowStart() != null && time < job.windowStart()) {
++                time = job.windowStart();
++            }
++            if (job.windowEnd() != null && time > job.windowEnd()) {
++                return null;
++            }
++            long start = time;
++            time += job.serviceMinutes() * 60_000L;
++            visits.add(new Visit(job.id(), arrival, start, time));
++            latitude = job.latitude();
++            longitude = job.longitude();
++        }
++        if (vehicle.returnToEnd()) {
++            double leg = meters(latitude, longitude, vehicle.endLatitude(), vehicle.endLongitude());
++            distance += leg;
++            time += (long) (leg / speed * 1000);
++        }
++        if (time > vehicle.shiftEnd()) {
++            return null;
++        }
++        return new Schedule(visits, distance, time);
++    }
++
++    private static double load(List<Job> jobs, boolean volume) {
++        return jobs.stream().mapToDouble(job -> volume ? job.volume() : job.weight()).sum();
++    }
++
++    private static String capacityProblem(Vehicle vehicle, List<Job> jobs, Job job) {
++        if (vehicle.capacityWeight() > 0 && load(jobs, false) + job.weight() > vehicle.capacityWeight()
++                || vehicle.capacityVolume() > 0 && load(jobs, true) + job.volume() > vehicle.capacityVolume()) {
++            return REASON_CAPACITY;
++        }
++        if (vehicle.maxStops() > 0 && jobs.size() >= vehicle.maxStops()) {
++            return REASON_STOPS;
++        }
++        return null;
++    }
++
++    public Result plan(List<Job> jobs, List<Vehicle> vehicles) {
++        Map<Long, List<Job>> sequences = new LinkedHashMap<>();
++        Map<Long, Schedule> schedules = new HashMap<>();
++        for (Vehicle vehicle : vehicles) {
++            sequences.put(vehicle.id(), new ArrayList<>());
++            schedules.put(vehicle.id(), simulate(vehicle, List.of()));
++        }
++        Map<Long, String> unassigned = new LinkedHashMap<>();
++        List<Job> ordered = new ArrayList<>(jobs);
++        ordered.sort(Comparator.comparing((Job job) -> -job.priority())
++                .thenComparing(job -> job.windowEnd() != null ? job.windowEnd() : Long.MAX_VALUE));
++        for (Job job : ordered) {
++            if (vehicles.isEmpty()) {
++                unassigned.put(job.id(), REASON_NO_VEHICLES);
++                continue;
++            }
++            Vehicle bestVehicle = null;
++            List<Job> bestSequence = null;
++            Schedule bestSchedule = null;
++            double bestCost = Double.MAX_VALUE;
++            String reason = null;
++            for (Vehicle vehicle : vehicles) {
++                List<Job> sequence = sequences.get(vehicle.id());
++                String problem = capacityProblem(vehicle, sequence, job);
++                if (problem != null) {
++                    reason = reason == null ? problem : reason;
++                    continue;
++                }
++                Schedule current = schedules.get(vehicle.id());
++                double base = current != null ? current.distance() : 0;
++                boolean fitted = false;
++                for (int position = 0; position <= sequence.size(); position++) {
++                    List<Job> candidate = new ArrayList<>(sequence);
++                    candidate.add(position, job);
++                    Schedule schedule = simulate(vehicle, candidate);
++                    if (schedule == null) {
++                        continue;
++                    }
++                    fitted = true;
++                    double cost = schedule.distance() - base;
++                    if (cost < bestCost) {
++                        bestCost = cost;
++                        bestVehicle = vehicle;
++                        bestSequence = candidate;
++                        bestSchedule = schedule;
++                    }
++                }
++                if (!fitted) {
++                    Schedule alone = simulate(vehicle, List.of(job));
++                    reason = alone == null && job.windowEnd() != null ? REASON_WINDOW : REASON_SHIFT;
++                }
++            }
++            if (bestVehicle == null) {
++                unassigned.put(job.id(), reason != null ? reason : REASON_SHIFT);
++            } else {
++                sequences.put(bestVehicle.id(), bestSequence);
++                schedules.put(bestVehicle.id(), bestSchedule);
++            }
++        }
++        List<Route> routes = new ArrayList<>();
++        for (Vehicle vehicle : vehicles) {
++            List<Job> sequence = improve(vehicle, sequences.get(vehicle.id()));
++            Schedule schedule = simulate(vehicle, sequence);
++            if (sequence.isEmpty() || schedule == null) {
++                continue;
++            }
++            routes.add(new Route(vehicle.id(), schedule.visits(), schedule.distance(), vehicle.shiftStart(),
++                    schedule.end(), load(sequence, false), load(sequence, true)));
++        }
++        return new Result(routes, unassigned);
++    }
++
++    private List<Job> improve(Vehicle vehicle, List<Job> sequence) {
++        List<Job> best = sequence;
++        Schedule bestSchedule = simulate(vehicle, best);
++        if (bestSchedule == null || best.size() < 3) {
++            return best;
++        }
++        boolean improved = true;
++        while (improved) {
++            improved = false;
++            for (int i = 0; i < best.size() - 1; i++) {
++                for (int j = i + 1; j < best.size(); j++) {
++                    List<Job> candidate = new ArrayList<>(best.subList(0, i));
++                    List<Job> middle = new ArrayList<>(best.subList(i, j + 1));
++                    java.util.Collections.reverse(middle);
++                    candidate.addAll(middle);
++                    candidate.addAll(best.subList(j + 1, best.size()));
++                    Schedule schedule = simulate(vehicle, candidate);
++                    if (schedule != null && schedule.distance() + 1 < bestSchedule.distance()) {
++                        best = candidate;
++                        bestSchedule = schedule;
++                        improved = true;
++                    }
++                }
++            }
++        }
++        return best;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/dispatch/DispatchService.java b/src/main/java/org/traccar/dispatch/DispatchService.java
+index b145073..d677ce3 100644
+--- a/src/main/java/org/traccar/dispatch/DispatchService.java
++++ b/src/main/java/org/traccar/dispatch/DispatchService.java
+@@ -22,6 +22,7 @@ import org.traccar.config.Keys;
+ import org.traccar.database.NotificationManager;
+ import org.traccar.helper.UnitsConverter;
+ import org.traccar.model.Device;
++import org.traccar.model.DispatchOrder;
+ import org.traccar.model.DispatchStop;
+ import org.traccar.model.DispatchTrip;
+ import org.traccar.model.Event;
+@@ -60,6 +61,8 @@ public class DispatchService {
+     public static final double MIN_ETA_SPEED_KMH = 25;
+     public static final double ROAD_FACTOR = 1.3;
+     public static final double DEFAULT_SERVICE_MINUTES = 10;
++    public static final long NEAR_MINUTES = 15;
++    public static final double OUT_OF_POINT_METERS = 300;
+ 
+     private static final SecureRandom RANDOM = new SecureRandom();
+ 
+@@ -241,6 +244,9 @@ public class DispatchService {
+             if (changed) {
+                 invalidate(deviceId);
+             }
++            if (DispatchTrip.IN_PROGRESS.equals(trip.getStatus())) {
++                notifyNear(trip, getStops(tripId), position);
++            }
+         }
+         return events;
+     }
+@@ -281,8 +287,15 @@ public class DispatchService {
+                 stop.setArrivalTime(now);
+             }
+         }
++        if (stop.done() && (stop.getProofLatitude() != 0 || stop.getProofLongitude() != 0)) {
++            double meters = distance(stop.getProofLatitude(), stop.getProofLongitude(),
++                    stop.getLatitude(), stop.getLongitude());
++            stop.set("proofDistance", Math.round(meters));
++            stop.set("outOfPoint", meters > Math.max(OUT_OF_POINT_METERS, stop.getRadius() * 3));
++        }
+         update(stop, "status", "recipient", "notes", "failureReason", "proofLatitude", "proofLongitude",
+-                "arrivalTime", "completedTime", "photo", "signature");
++                "arrivalTime", "completedTime", "photo", "signature", "attributes");
++        syncOrder(stop);
+         if (DispatchTrip.PLANNED.equals(trip.getStatus()) && !DispatchStop.PENDING.equals(status)) {
+             startTrip(trip, now);
+         }
+@@ -306,11 +319,14 @@ public class DispatchService {
+      * straight line, current speed (at least 25 km/h) and a service time at each stop.
+      */
+     public Map<Long, Date> estimate(DispatchTrip trip, List<DispatchStop> stops) {
++        return estimate(trip, stops, getPosition(trip.getDeviceId()));
++    }
++
++    public Map<Long, Date> estimate(DispatchTrip trip, List<DispatchStop> stops, Position position) {
+         Map<Long, Date> result = new LinkedHashMap<>();
+         if (!DispatchTrip.IN_PROGRESS.equals(trip.getStatus())) {
+             return result;
+         }
+-        Position position = getPosition(trip.getDeviceId());
+         if (position == null) {
+             return result;
+         }
+@@ -322,14 +338,18 @@ public class DispatchService {
+             if (stop.done()) {
+                 continue;
+             }
++            long service = (long) (serviceMinutes(stop) * 60_000);
+             if (DispatchStop.ARRIVED.equals(stop.getStatus())) {
+                 result.put(stop.getId(), stop.getArrivalTime());
+-                time += (long) (DEFAULT_SERVICE_MINUTES * 60_000);
++                time += service;
+             } else {
+                 double meters = distance(lat, lon, stop.getLatitude(), stop.getLongitude()) * ROAD_FACTOR;
+                 time += (long) (meters / (speed / 3.6) * 1000);
++                if (stop.getWindowStart() != null && time < stop.getWindowStart().getTime()) {
++                    time = stop.getWindowStart().getTime();
++                }
+                 result.put(stop.getId(), new Date(time));
+-                time += (long) (DEFAULT_SERVICE_MINUTES * 60_000);
++                time += service;
+             }
+             lat = stop.getLatitude();
+             lon = stop.getLongitude();
+@@ -337,6 +357,73 @@ public class DispatchService {
+         return result;
+     }
+ 
++    public static double serviceMinutes(DispatchStop stop) {
++        double minutes = stop.getDouble("serviceMinutes");
++        return minutes > 0 ? minutes : DEFAULT_SERVICE_MINUTES;
++    }
++
++    /**
++     * Keeps the order of a stop in step: delivered, failed, back to the pool when skipped, assigned otherwise.
++     */
++    public void syncOrder(DispatchStop stop) throws StorageException {
++        if (stop.getOrderId() <= 0) {
++            return;
++        }
++        DispatchOrder order = storage.getObject(DispatchOrder.class, new Request(
++                new Columns.All(), new Condition.Equals("id", stop.getOrderId())));
++        if (order == null || order.getStopId() != stop.getId()) {
++            return;
++        }
++        switch (stop.getStatus()) {
++            case DispatchStop.DELIVERED -> order.setStatus(DispatchOrder.DELIVERED);
++            case DispatchStop.FAILED -> order.setStatus(DispatchOrder.FAILED);
++            case DispatchStop.SKIPPED -> {
++                order.setStatus(DispatchOrder.UNASSIGNED);
++                order.setTripId(0);
++                order.setStopId(0);
++            }
++            default -> order.setStatus(DispatchOrder.ASSIGNED);
++        }
++        storage.updateObject(order, new Request(
++                new Columns.Include("status", "tripId", "stopId"), new Condition.Equals("id", order.getId())));
++    }
++
++    /**
++     * Orders of a trip that was cancelled or deleted go back to the pool, unless already delivered.
++     */
++    public void releaseOrders(long tripId) throws StorageException {
++        for (DispatchOrder order : storage.getObjects(DispatchOrder.class, new Request(
++                new Columns.All(), new Condition.Equals("tripId", tripId)))) {
++            if (!DispatchOrder.DELIVERED.equals(order.getStatus())) {
++                order.setStatus(DispatchOrder.UNASSIGNED);
++                order.setTripId(0);
++                order.setStopId(0);
++                storage.updateObject(order, new Request(
++                        new Columns.Include("status", "tripId", "stopId"), new Condition.Equals("id", order.getId())));
++            }
++        }
++    }
++
++    /**
++     * "Arriving soon" message to the customer of the next stop when it is a few minutes away.
++     */
++    private void notifyNear(DispatchTrip trip, List<DispatchStop> stops, Position position) throws StorageException {
++        DispatchStop next = stops.stream().filter(stop -> DispatchStop.PENDING.equals(stop.getStatus()))
++                .findFirst().orElse(null);
++        if (next == null || next.getBoolean("notifiedNear") || next.getPhone() == null) {
++            return;
++        }
++        Date eta = estimate(trip, stops, position).get(next.getId());
++        if (eta != null && eta.getTime() - System.currentTimeMillis() <= NEAR_MINUTES * 60_000) {
++            next.set("notifiedNear", true);
++            update(next, "attributes");
++            long minutes = Math.max(1, (eta.getTime() - System.currentTimeMillis()) / 60_000);
++            sendWhatsapp(trip, next.getPhone(), String.format(
++                    "Tu pedido «%s» llega en unos %d minutos. Síguelo aquí: %s", next.getName(), minutes,
++                    trackingUrl(next)));
++        }
++    }
++
+     public Device getDevice(long deviceId) {
+         Device device = cacheManager.getObject(Device.class, deviceId);
+         if (device == null) {
+diff --git a/src/main/java/org/traccar/model/DispatchOrder.java b/src/main/java/org/traccar/model/DispatchOrder.java
+new file mode 100644
+index 0000000..64302d9
+--- /dev/null
++++ b/src/main/java/org/traccar/model/DispatchOrder.java
+@@ -0,0 +1,277 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Order waiting to be delivered, picked up or serviced: customer, place, window, service time, priority, load
++ * (weight and volume), cash on delivery, package codes and checklist. Planning turns orders into stops of trips; a
++ * failed order can go back to the pool.
++ */
++@StorageName("tc_dispatch_orders")
++public class DispatchOrder extends ExtendedModel {
++
++    public static final String DELIVERY = "delivery";
++    public static final String PICKUP = "pickup";
++    public static final String SERVICE = "service";
++
++    public static final String UNASSIGNED = "unassigned";
++    public static final String ASSIGNED = "assigned";
++    public static final String DELIVERED = "delivered";
++    public static final String FAILED = "failed";
++    public static final String CANCELLED = "cancelled";
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String code;
++
++    public String getCode() {
++        return code;
++    }
++
++    public void setCode(String code) {
++        this.code = code;
++    }
++
++    private String type;
++
++    public String getType() {
++        return type;
++    }
++
++    public void setType(String type) {
++        this.type = type;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private String address;
++
++    public String getAddress() {
++        return address;
++    }
++
++    public void setAddress(String address) {
++        this.address = address;
++    }
++
++    private String contact;
++
++    public String getContact() {
++        return contact;
++    }
++
++    public void setContact(String contact) {
++        this.contact = contact;
++    }
++
++    private String phone;
++
++    public String getPhone() {
++        return phone;
++    }
++
++    public void setPhone(String phone) {
++        this.phone = phone;
++    }
++
++    private double latitude;
++
++    public double getLatitude() {
++        return latitude;
++    }
++
++    public void setLatitude(double latitude) {
++        this.latitude = latitude;
++    }
++
++    private double longitude;
++
++    public double getLongitude() {
++        return longitude;
++    }
++
++    public void setLongitude(double longitude) {
++        this.longitude = longitude;
++    }
++
++    private Date plannedDate;
++
++    public Date getPlannedDate() {
++        return plannedDate;
++    }
++
++    public void setPlannedDate(Date plannedDate) {
++        this.plannedDate = plannedDate;
++    }
++
++    private Date windowStart;
++
++    public Date getWindowStart() {
++        return windowStart;
++    }
++
++    public void setWindowStart(Date windowStart) {
++        this.windowStart = windowStart;
++    }
++
++    private Date windowEnd;
++
++    public Date getWindowEnd() {
++        return windowEnd;
++    }
++
++    public void setWindowEnd(Date windowEnd) {
++        this.windowEnd = windowEnd;
++    }
++
++    private int serviceMinutes;
++
++    public int getServiceMinutes() {
++        return serviceMinutes;
++    }
++
++    public void setServiceMinutes(int serviceMinutes) {
++        this.serviceMinutes = serviceMinutes;
++    }
++
++    private int priority;
++
++    public int getPriority() {
++        return priority;
++    }
++
++    public void setPriority(int priority) {
++        this.priority = priority;
++    }
++
++    private double weight;
++
++    public double getWeight() {
++        return weight;
++    }
++
++    public void setWeight(double weight) {
++        this.weight = weight;
++    }
++
++    private double volume;
++
++    public double getVolume() {
++        return volume;
++    }
++
++    public void setVolume(double volume) {
++        this.volume = volume;
++    }
++
++    private double codAmount;
++
++    public double getCodAmount() {
++        return codAmount;
++    }
++
++    public void setCodAmount(double codAmount) {
++        this.codAmount = codAmount;
++    }
++
++    private String packages;
++
++    public String getPackages() {
++        return packages;
++    }
++
++    public void setPackages(String packages) {
++        this.packages = packages;
++    }
++
++    private String checklist;
++
++    public String getChecklist() {
++        return checklist;
++    }
++
++    public void setChecklist(String checklist) {
++        this.checklist = checklist;
++    }
++
++    private String notes;
++
++    public String getNotes() {
++        return notes;
++    }
++
++    public void setNotes(String notes) {
++        this.notes = notes;
++    }
++
++    private long tripId;
++
++    public long getTripId() {
++        return tripId;
++    }
++
++    public void setTripId(long tripId) {
++        this.tripId = tripId;
++    }
++
++    private long stopId;
++
++    public long getStopId() {
++        return stopId;
++    }
++
++    public void setStopId(long stopId) {
++        this.stopId = stopId;
++    }
++
++    private Date created;
++
++    public Date getCreated() {
++        return created;
++    }
++
++    public void setCreated(Date created) {
++        this.created = created;
++    }
++}
+diff --git a/src/main/java/org/traccar/model/DispatchStop.java b/src/main/java/org/traccar/model/DispatchStop.java
+index 04e19f1..1f38cf3 100644
+--- a/src/main/java/org/traccar/model/DispatchStop.java
++++ b/src/main/java/org/traccar/model/DispatchStop.java
+@@ -34,6 +34,16 @@ public class DispatchStop extends ExtendedModel {
+         return DELIVERED.equals(status) || FAILED.equals(status) || SKIPPED.equals(status);
+     }
+ 
++    private long orderId;
++
++    public long getOrderId() {
++        return orderId;
++    }
++
++    public void setOrderId(long orderId) {
++        this.orderId = orderId;
++    }
++
+     private long tripId;
+ 
+     public long getTripId() {
+diff --git a/src/test/java/org/traccar/dispatch/DispatchPlannerTest.java b/src/test/java/org/traccar/dispatch/DispatchPlannerTest.java
+new file mode 100644
+index 0000000..ed5083f
+--- /dev/null
++++ b/src/test/java/org/traccar/dispatch/DispatchPlannerTest.java
+@@ -0,0 +1,72 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.dispatch;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class DispatchPlannerTest {
++
++    private static final long HOUR = 3_600_000L;
++
++    private static DispatchPlanner.Vehicle vehicle(long id, double capacity) {
++        return new DispatchPlanner.Vehicle(id, -12.05, -77.12, -12.05, -77.12, true, 8 * HOUR, 18 * HOUR,
++                capacity, 0, 0);
++    }
++
++    private static DispatchPlanner.Job job(long id, double lat, double lon, double weight, Long from, Long to) {
++        return new DispatchPlanner.Job(id, lat, lon, from, to, 10, 0, weight, 0);
++    }
++
++    @Test
++    public void testCapacitySplitsRoutes() {
++        List<DispatchPlanner.Job> jobs = new ArrayList<>();
++        for (int i = 0; i < 6; i++) {
++            jobs.add(job(i + 1, -12.06 - i * 0.01, -77.10 + i * 0.01, 100, null, null));
++        }
++        var result = new DispatchPlanner(30).plan(jobs, List.of(vehicle(1, 300), vehicle(2, 300)));
++        assertTrue(result.unassigned().isEmpty());
++        assertEquals(2, result.routes().size());
++        result.routes().forEach(route -> assertTrue(route.weight() <= 300));
++        assertEquals(6, result.routes().stream().mapToInt(route -> route.visits().size()).sum());
++    }
++
++    @Test
++    public void testUnassignedReasons() {
++        var jobs = List.of(
++                job(1, -12.06, -77.10, 500, null, null),
++                job(2, -12.07, -77.09, 10, 8 * HOUR, 8 * HOUR + 60_000L),
++                job(3, -12.08, -77.08, 10, null, null));
++        var result = new DispatchPlanner(30).plan(jobs, List.of(vehicle(1, 300)));
++        assertEquals(DispatchPlanner.REASON_CAPACITY, result.unassigned().get(1L));
++        assertEquals(DispatchPlanner.REASON_WINDOW, result.unassigned().get(2L));
++        assertEquals(1, result.routes().get(0).visits().size());
++    }
++
++    @Test
++    public void testTimeWindowsOrder() {
++        var jobs = List.of(
++                job(1, -12.06, -77.10, 0, 15 * HOUR, 17 * HOUR),
++                job(2, -12.20, -76.90, 0, 9 * HOUR, 11 * HOUR));
++        var route = new DispatchPlanner(30).plan(jobs, List.of(vehicle(1, 0))).routes().get(0);
++        assertEquals(2L, route.visits().get(0).jobId());
++        assertTrue(route.visits().get(1).start() >= 15 * HOUR);
++    }
++
++}

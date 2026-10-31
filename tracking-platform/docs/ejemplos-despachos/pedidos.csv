@@ -1,0 +1,5 @@
+codigo;tipo;nombre;direccion;contacto;telefono;latitud;longitud;fecha;desde;hasta;servicio_min;prioridad;peso;volumen;cobro;bultos;checklist;notas
+PD-2001;entrega;Bodega Santa Rosa;Av. Universitaria 1200, San Miguel;Rosa Paz;+51 911 000 111;-12.0790;-77.0840;;09:00;11:00;10;0;45;0.3;85.50;PK2001-1,PK2001-2;;3 cajas
+PD-2002;entrega;Farmacia Universal;Av. La Marina 2500, San Miguel;Q.F. Ruiz;+51 911 000 222;-12.0772;-77.0950;;;;10;1;20;0.1;;PK2002-1;;Urgente
+SV-310;servicio;Transportes Norte (instalación GPS);Av. Argentina 3200, Callao;Jorge Díaz;+51 911 000 333;-12.0480;-77.1040;;14:00;17:00;45;0;5;0;;;Revisar batería|Instalar GPS|Probar corte de motor|Firmar conformidad;Llevar 2 equipos
+RC-15;recojo;Devoluciones Plaza Norte;Av. Alfredo Mendiola 1400, Independencia;Almacén;+51 911 000 444;-12.0060;-77.0590;;;;15;0;120;1.2;;;;Pallets vacíos

@@ -23,6 +23,8 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import BarChartIcon from '@mui/icons-material/BarChart';
+import StarIcon from '@mui/icons-material/Star';
+import WrongLocationIcon from '@mui/icons-material/WrongLocation';
 import dayjs from 'dayjs';
 import MapView from '../map/core/MapView';
 import MapScale from '../map/MapScale';
@@ -31,8 +33,9 @@ import { useRestriction } from '../common/util/permissions';
 import DispatchMap from './DispatchMap';
 import TripDialog from './TripDialog';
 import {
-  FAILURE_REASONS, STOP_COLORS, TRIP_COLORS, formatHour, formatWindow, stopLabel, tripLabel,
+  FAILURE_REASONS, STOP_COLORS, TRIP_COLORS, formatHour, formatWindow, money, splitList, stopLabel, tripLabel, typeLabel,
 } from './dispatchUtils';
+import DispatchNav from './DispatchNav';
 
 const REFRESH = 15000;
 
@@ -132,6 +135,7 @@ const DispatchPage = () => {
           {!readonly && <Button variant="contained" size="small" startIcon={<AddIcon />} onClick={() => setEditing({})}>{t('dispatchNewTrip')}</Button>}
         </Stack>
         <Stack spacing={1.25} sx={{ p: 2, pb: 1 }}>
+          <DispatchNav />
           <TextField size="small" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
           <Stack direction="row" spacing={1}>
             {kpi(t('dispatchTrips'), totals.trips, theme.palette.primary.main)}
@@ -269,11 +273,25 @@ const DispatchPage = () => {
                         {stop.arrivalTime && <Typography variant="caption" color="text.secondary">{`${t('dispatchArrived')} ${formatHour(stop.arrivalTime)}`}</Typography>}
                         {stop.completedTime && stop.status !== 'arrived' && <Typography variant="caption" color="text.secondary">{`${stopLabel(t, stop.status)} ${formatHour(stop.completedTime)}`}</Typography>}
                       </Stack>
+                      <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }} flexWrap="wrap" useFlexGap>
+                        {stop.attributes?.type && stop.attributes.type !== 'delivery' && <Chip size="small" color="secondary" variant="outlined" label={typeLabel(t, stop.attributes.type)} />}
+                        {stop.attributes?.codAmount > 0 && (
+                          <Chip size="small" color={stop.attributes.codCollected >= stop.attributes.codAmount ? 'success' : 'warning'} variant="outlined" label={stop.attributes.codCollected !== undefined ? `${money(stop.attributes.codCollected)} / ${money(stop.attributes.codAmount)} · ${stop.attributes.codMethod || ''}` : `${t('dispatchCollect')} ${money(stop.attributes.codAmount)}`} />
+                        )}
+                        {stop.attributes?.packages && <Chip size="small" variant="outlined" label={`${t('dispatchPackages')} ${splitList(stop.attributes.scanned).length}/${splitList(stop.attributes.packages).length}`} />}
+                        {stop.attributes?.checklist && <Chip size="small" variant="outlined" label={`${t('dispatchChecklist')} ${splitList(stop.attributes.checklistDone, /\n+/).length}/${splitList(stop.attributes.checklist, /\n+/).length}`} />}
+                        {stop.attributes?.partial && <Chip size="small" color="warning" label={t('dispatchPartialShort')} />}
+                        {stop.attributes?.outOfPoint && <Chip size="small" color="error" icon={<WrongLocationIcon />} label={`${t('dispatchOutOfPoint')} ${stop.attributes.proofDistance} m`} />}
+                        {stop.attributes?.rating && <Chip size="small" icon={<StarIcon sx={{ color: '#f5b301 !important' }} />} label={`${stop.attributes.rating}/5${stop.attributes.ratingComment ? ` · ${stop.attributes.ratingComment}` : ''}`} />}
+                      </Stack>
                       {stop.recipient && <Typography variant="caption" component="div">{`${t('dispatchRecipient')}: ${stop.recipient}`}</Typography>}
                       {stop.failureReason && <Typography variant="caption" component="div" sx={{ color: '#d9534f' }}>{`${t('dispatchReason')}: ${stop.failureReason}`}</Typography>}
                       {(stop.photo || stop.signature) && (
                         <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
                           {stop.photo && <Box component="img" alt="" src={`/api/dispatch/stops/${stop.id}/photo`} onClick={() => setPreview(`/api/dispatch/stops/${stop.id}/photo`)} sx={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 1.5, cursor: 'zoom-in' }} />}
+                          {splitList(stop.attributes?.photos).slice(1).map((path, index) => (
+                            <Box key={path} component="img" alt="" src={`/api/dispatch/stops/${stop.id}/photos/${index + 1}`} onClick={() => setPreview(`/api/dispatch/stops/${stop.id}/photos/${index + 1}`)} sx={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 1.5, cursor: 'zoom-in' }} />
+                          ))}
                           {stop.signature && <Box component="img" alt="" src={`/api/dispatch/stops/${stop.id}/signature`} onClick={() => setPreview(`/api/dispatch/stops/${stop.id}/signature`)} sx={{
  width: 96, height: 48, objectFit: 'contain', borderRadius: 1.5, bgcolor: '#fff', border: '1px solid', borderColor: 'divider', cursor: 'zoom-in' 
 }} />}

@@ -37,6 +37,8 @@ import FuelEvidencePage from './reports/FuelEvidencePage';
 import TrackPage from './other/TrackPage';
 import DispatchPage from './dispatch/DispatchPage';
 import DispatchReportPage from './dispatch/DispatchReportPage';
+import OrdersPage from './dispatch/OrdersPage';
+import PlannerPage from './dispatch/PlannerPage';
 import DispatchDriverPage from './dispatch/DriverPage';
 import DeliveryTrackPage from './dispatch/DeliveryTrackPage';
 import DriversPage from './settings/DriversPage';
@@ -151,6 +153,8 @@ const Navigation = () => {
         <Route path="maintenance" element={<FleetMaintenancePage />} />
         <Route path="geofences" element={<GeofencesPage />} />
         <Route path="dispatch" element={<DispatchPage />} />
+        <Route path="dispatch/orders" element={<OrdersPage />} />
+        <Route path="dispatch/planner" element={<PlannerPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
         <Route path="admin" element={<ResellerDashboardPage />} />
         <Route path="dashcam" element={<DashcamPage />} />

@@ -416,6 +416,36 @@ Módulo **Despachos y entregas** (incluido en los planes Profesional, Video y Di
 - API: `/api/dispatch/trips`, `/api/dispatch/stops/{id}/status`, `/api/dispatch/report`, públicos
   `/api/dispatch/driver/{token}` y `/api/dispatch/track/{token}`.
 
+## Logística: pedidos, planificación automática y órdenes de servicio (parche `0023`)
+
+Mejoras inspiradas en Wialon Logistics y en sistemas de reparto y de servicio técnico (SimpliRoute, DispatchTrack,
+Onfleet, Track-POD):
+
+- **Bolsa de pedidos** (*Despachos → Pedidos*): entregas, **recojos** y **órdenes de servicio técnico** con código,
+  cliente, dirección, coordenadas, fecha, ventana horaria, tiempo de atención, **prioridad**, **peso y volumen**,
+  **cobro contra entrega**, **bultos** (códigos) y **lista de verificación**. Se crean a mano o se **importan desde
+  CSV** ([ejemplo](docs/ejemplos-despachos/pedidos.csv)); se editan, cancelan o **reprograman** a otro día (cuenta
+  los intentos). Pestañas por estado: sin asignar, en ruta, entregados, fallidos y cancelados.
+- **Planificación automática** (*Despachos → Planificar*): eliges los pedidos, las unidades (capacidad en kg y m³,
+  máximo de paradas, turno y conductor) y el almacén de salida (geocercas marcadas con el atributo `dispatchDepot`;
+  retorno opcional). El planificador reparte los pedidos entre las unidades respetando capacidad, ventanas (con
+  espera), tiempo de atención, turno y prioridad; muestra cada ruta en el mapa con su color, km, horario, carga y hora
+  de cada parada, y lista los pedidos que no entran con el motivo (capacidad, horario, turno). «Crear viajes» los
+  convierte en viajes; si un viaje se cancela o elimina, sus pedidos pendientes vuelven a la bolsa, y una parada
+  omitida también.
+- **Órdenes de servicio y prueba avanzada** en el enlace del conductor: lista de verificación a marcar, **escaneo de
+  bultos con la cámara** (lector de códigos del navegador o ingreso manual) con aviso si faltan, **cobro contra
+  entrega** con monto y medio de pago (efectivo, Yape, Plin, tarjeta, transferencia), **entrega parcial** y hasta
+  **3 fotos** además de la firma. Botones según el tipo: «Entregado», «Recogido», «Servicio terminado».
+- **Validación del punto**: si la entrega se registra lejos de la dirección (más de 300 m), la parada queda marcada
+  «Fuera del punto» con la distancia.
+- **Cliente**: aviso por WhatsApp «tu pedido llega en unos N minutos» cuando la unidad está a menos de 15 minutos, y
+  **calificación con estrellas y comentario** en el enlace de seguimiento tras la entrega.
+- **Reporte** ampliado: cobrado contra entrega frente a lo esperado (y por conductor), calificación promedio y
+  calificaciones bajas, entregas fuera del punto, parciales, pedidos sin asignar y entregas por tipo.
+- Capacidad por defecto de cada unidad en sus atributos `dispatchCapacityKg`, `dispatchCapacityM3` y
+  `dispatchMaxStops` (se puede cambiar en cada planificación).
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -497,6 +527,7 @@ python3 server/tests/test_geofence_speed.py
 python3 server/tests/test_routing.py   # con routing.url apuntando a un OSRM
 python3 server/tests/test_plans.py
 python3 server/tests/test_dispatch.py   # con media.path para las fotos y firmas
+python3 server/tests/test_logistics.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```
