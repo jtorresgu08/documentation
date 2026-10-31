@@ -327,3 +327,26 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
 - Los correos adicionales usan el SMTP del servidor y los números de WhatsApp la cuenta de la sección 10 (fuera de 24 h
   se usa la plantilla aprobada).
 
+## 16. Geocercas de ruta por coordenadas (OSRM)
+
+- *Geocercas → Crear por coordenadas → Ruta* calcula el recorrido por calles entre el inicio, las paradas y el fin
+  con un servicio **OSRM** (`routing.url`, variable `ROUTING_URL`). Las geocercas circulares no lo necesitan.
+- Por defecto usa la demo pública `https://router.project-osrm.org`: sirve para probar, pero no tiene garantía de
+  disponibilidad, limita las consultas y solo ofrece el perfil de vehículo (bicicleta y a pie devuelven lo mismo).
+- Para producción conviene un OSRM propio con el mapa de Perú (≈ 2 GB de RAM para el perfil de vehículo):
+
+  ```bash
+  mkdir -p /opt/osrm && cd /opt/osrm
+  wget https://download.geofabrik.de/south-america/peru-latest.osm.pbf
+  docker run -t -v $PWD:/data ghcr.io/project-osrm/osrm-backend osrm-extract -p /opt/car.lua /data/peru-latest.osm.pbf
+  docker run -t -v $PWD:/data ghcr.io/project-osrm/osrm-backend osrm-partition /data/peru-latest.osrm
+  docker run -t -v $PWD:/data ghcr.io/project-osrm/osrm-backend osrm-customize /data/peru-latest.osrm
+  docker run -d --restart unless-stopped --name osrm -p 127.0.0.1:5000:5000 -v $PWD:/data \
+    ghcr.io/project-osrm/osrm-backend osrm-routed --algorithm mld /data/peru-latest.osrm
+  ```
+
+  y en `infra/.env` pon `ROUTING_URL=http://host.docker.internal:5000` (o agrega el contenedor a la red de
+  `docker-compose.yml` y usa `http://osrm:5000`). Repite la descarga y el proceso cada pocos meses para actualizar calles.
+- La ruta se simplifica (Douglas-Peucker) para caber en el campo de la geocerca (4096 caracteres); el panel muestra
+  cuántos puntos quedaron. El ancho del corredor se guarda en `polylineDistance`.
+

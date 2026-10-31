@@ -10,6 +10,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { useNavigate } from 'react-router-dom';
 import MapView from '../map/core/MapView';
 import MapCurrentLocation from '../map/MapCurrentLocation';
+import GeofenceCreatePanel from './GeofenceCreatePanel';
 import MapGeofenceEdit from '../map/draw/MapGeofenceEdit';
 import GeofencesList from './GeofencesList';
 import { useTranslation } from '../common/components/LocalizationProvider';
@@ -62,6 +63,7 @@ const GeofencesPage = () => {
   const t = useTranslation();
 
   const [selectedGeofenceId, setSelectedGeofenceId] = useState();
+  const [creating, setCreating] = useState(false);
 
   const handleFile = (event) => {
     const files = Array.from(event.target.files);
@@ -116,8 +118,9 @@ const GeofencesPage = () => {
         </Paper>
         <div className={classes.mapContainer}>
           <MapView>
-            <MapGeofenceEdit selectedGeofenceId={selectedGeofenceId} />
+            <MapGeofenceEdit selectedGeofenceId={selectedGeofenceId} onCreateByCoordinates={() => setCreating(true)} />
           </MapView>
+          {creating && <GeofenceCreatePanel onClose={() => setCreating(false)} />}
           <MapScale />
           <MapCurrentLocation />
           <MapGeocoder />

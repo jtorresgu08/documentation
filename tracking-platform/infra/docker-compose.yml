@@ -46,6 +46,8 @@ services:
       RETENTION_MEDIA_MAX_SIZE: ${MEDIA_MAX_GB:-0}
       RETENTION_HOUR: ${RETENTION_HOUR:-8}
       JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx2g}
+      # Servicio OSRM para crear geocercas de ruta por coordenadas (ver DEPLOY.md, sección 16)
+      ROUTING_URL: ${ROUTING_URL:-https://router.project-osrm.org}
       # Canales de notificación y WhatsApp Cloud API (ver DEPLOY.md, sección 10); vacío = desactivado
       NOTIFICATOR_TYPES: ${NOTIFICATOR_TYPES:-web,mail}
       NOTIFICATOR_WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}

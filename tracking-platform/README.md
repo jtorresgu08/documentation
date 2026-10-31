@@ -334,6 +334,22 @@ unidad está *Panel de seguimiento*.
 - El límite propio es independiente del atributo `speedLimit` de Traccar (que sigue generando su evento estándar) y las
   alertas personalizadas de velocidad con «usar el límite de la geocerca» también lo usan.
 
+## Geocercas circulares y rutas por coordenadas (parche `0020`)
+
+- **Círculo dibujado**: botón de círculo en la barra de dibujo del mapa; primer clic en el centro, se mueve el mouse
+  para el radio (se ve en metros) y segundo clic para terminar. Se guarda como círculo real (`CIRCLE`), no como
+  polígono, y al editarlo sigue siendo círculo.
+- **Crear por coordenadas** (botón de la barra de dibujo), panel flotante con dos pestañas:
+  - **Ruta**: inicio y fin (pegando «lat, lon» desde Google Maps o eligiendo el punto en el mapa), hasta 8 paradas
+    intermedias, invertir, tipo de recorrido (vehículo, bicicleta, a pie) y ancho del corredor. «Calcular ruta por
+    calles» traza el recorrido real (servidor de rutas OSRM, ver DEPLOY sección 16) con distancia y tiempo estimados, y
+    se guarda como geocerca de línea con corredor: la unidad está dentro mientras circula por la ruta y sale al
+    desviarse.
+  - **Círculo**: centro por coordenadas o clic en el mapa y radio en metros, con vista previa.
+  - Ambas permiten poner nombre y el **límite de velocidad propio** (parche `0019`) al crearlas.
+- API: `GET /api/routing/route?point=lat,lon&point=lat,lon[&point=…]&profile=driving|bike|foot` devuelve distancia,
+  duración, coordenadas simplificadas y el área lista para guardar.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -380,7 +396,7 @@ Basado en tus capturas de referencia:
 | Dashcams: video en vivo | ✅ Comandos y reproductor; requiere un servidor de video JT/T 1078 |
 | Copias de seguridad / limpieza de datos | ✅ Scripts (`infra/`); 🔜 pantalla en el panel |
 | Ecodrive (puntuación de conducción) | 🔜 Fase 2, a partir de los eventos de frenado y aceleración |
-| Puntos de interés con icono, Rutas planificadas | 🔜 Fase 2 (hoy: geocercas de círculo o línea) |
+| Puntos de interés con icono, Rutas planificadas | ✅ Geocercas de ruta por coordenadas y círculos; 🔜 POI con icono |
 | Gastos (combustible, peajes…) | 🔜 Fase 2 (módulo propio) |
 | Chat | 🔜 Fase 3 |
 | Estado del sistema, cola de comandos | 🔜 Fase 2 |
@@ -412,6 +428,7 @@ python3 server/tests/test_services.py
 python3 server/tests/test_rules.py
 python3 server/tests/test_reports.py
 python3 server/tests/test_geofence_speed.py
+python3 server/tests/test_routing.py   # con routing.url apuntando a un OSRM
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

@@ -1,0 +1,304 @@
+diff --git a/src/main/java/org/traccar/api/resource/RoutingResource.java b/src/main/java/org/traccar/api/resource/RoutingResource.java
+new file mode 100644
+index 0000000..30ff8cd
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/RoutingResource.java
+@@ -0,0 +1,122 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.ServiceUnavailableException;
++import jakarta.ws.rs.client.Client;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.geofence.RouteSimplifier;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++
++/**
++ * Road route between a start and an end (and optional stops in between) from an OSRM compatible service, ready to
++ * be saved as a line geofence: distance, duration, the route's points and the simplified WKT area.
++ */
++@Path("routing")
++@Produces(MediaType.APPLICATION_JSON)
++public class RoutingResource extends BaseResource {
++
++    private static final int MAX_POINTS = 10;
++
++    @Inject
++    private Config config;
++
++    @Inject
++    private Client client;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    static double[] parse(String text) {
++        String[] parts = text.split(",");
++        if (parts.length != 2) {
++            throw new BadRequestException("Invalid point " + text);
++        }
++        try {
++            double latitude = Double.parseDouble(parts[0].trim());
++            double longitude = Double.parseDouble(parts[1].trim());
++            if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
++                throw new BadRequestException("Invalid point " + text);
++            }
++            return new double[] {longitude, latitude};
++        } catch (NumberFormatException e) {
++            throw new BadRequestException("Invalid point " + text);
++        }
++    }
++
++    @GET
++    @Path("route")
++    public Map<String, Object> route(
++            @QueryParam("point") List<String> points, @QueryParam("profile") String profile) throws Exception {
++        if (points.size() < 2 || points.size() > MAX_POINTS) {
++            throw new BadRequestException("A route needs a start, an end and at most 8 stops");
++        }
++        StringBuilder path = new StringBuilder();
++        for (String point : points) {
++            double[] coordinates = parse(point);
++            if (!path.isEmpty()) {
++                path.append(';');
++            }
++            path.append(String.format(Locale.ROOT, "%.6f,%.6f", coordinates[0], coordinates[1]));
++        }
++        String mode = "foot".equals(profile) || "bike".equals(profile) ? profile : "driving";
++        String url = config.getString(Keys.ROUTING_URL) + "/route/v1/" + mode + "/" + path
++                + "?overview=full&geometries=geojson&steps=false";
++        JsonNode body;
++        try (Response response = client.target(url).request().get()) {
++            if (response.getStatus() >= 300) {
++                throw new ServiceUnavailableException("Routing service error " + response.getStatus());
++            }
++            body = objectMapper.readTree(response.readEntity(String.class));
++        } catch (ServiceUnavailableException e) {
++            throw e;
++        } catch (Exception e) {
++            throw new ServiceUnavailableException("Routing service not available");
++        }
++        JsonNode route = body.path("routes").path(0);
++        if (!"Ok".equals(body.path("code").asText()) || route.isMissingNode()) {
++            throw new BadRequestException("No route found between the points");
++        }
++        List<double[]> coordinates = new ArrayList<>();
++        for (JsonNode point : route.path("geometry").path("coordinates")) {
++            coordinates.add(new double[] {point.path(0).asDouble(), point.path(1).asDouble()});
++        }
++        List<double[]> simplified = RouteSimplifier.fit(coordinates);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("distance", Math.round(route.path("distance").asDouble()));
++        result.put("duration", Math.round(route.path("duration").asDouble()));
++        result.put("points", coordinates.size());
++        result.put("coordinates", simplified);
++        result.put("area", RouteSimplifier.wkt(simplified));
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/config/Keys.java b/src/main/java/org/traccar/config/Keys.java
+index 3f7937b..9d662d2 100644
+--- a/src/main/java/org/traccar/config/Keys.java
++++ b/src/main/java/org/traccar/config/Keys.java
+@@ -2150,6 +2150,15 @@ public final class Keys {
+             List.of(KeyType.CONFIG),
+             "es");
+ 
++    /**
++     * OSRM compatible routing service used to build route geofences from a start and an end (the public demo by
++     * default; a self-hosted OSRM is recommended for commercial use).
++     */
++    public static final ConfigKey<String> ROUTING_URL = new StringConfigKey(
++            "routing.url",
++            List.of(KeyType.CONFIG),
++            "https://router.project-osrm.org");
++
+     /**
+      * Graph API base URL (Meta by default; a provider proxy can be used instead).
+      */
+diff --git a/src/main/java/org/traccar/geofence/RouteSimplifier.java b/src/main/java/org/traccar/geofence/RouteSimplifier.java
+new file mode 100644
+index 0000000..da5e545
+--- /dev/null
++++ b/src/main/java/org/traccar/geofence/RouteSimplifier.java
+@@ -0,0 +1,103 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.geofence;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Locale;
++
++/**
++ * Turns a road route into a line geofence that fits the geofence area column: Douglas-Peucker simplification in
++ * meters, raising the tolerance until the WKT (latitude longitude, 5 decimals, about 1 m) is short enough.
++ */
++public final class RouteSimplifier {
++
++    public static final int MAX_AREA = 4000;
++
++    private RouteSimplifier() {
++    }
++
++    private static double[] project(double[] point, double latitude) {
++        return new double[] {point[0] * 111320 * Math.cos(Math.toRadians(latitude)), point[1] * 110540};
++    }
++
++    private static double distance(double[] point, double[] start, double[] end) {
++        double dx = end[0] - start[0];
++        double dy = end[1] - start[1];
++        double length = dx * dx + dy * dy;
++        double k = length > 0
++                ? Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length)) : 0;
++        return Math.hypot(point[0] - (start[0] + k * dx), point[1] - (start[1] + k * dy));
++    }
++
++    private static void simplify(List<double[]> xy, int first, int last, double tolerance, boolean[] keep) {
++        double max = 0;
++        int index = -1;
++        for (int i = first + 1; i < last; i++) {
++            double value = distance(xy.get(i), xy.get(first), xy.get(last));
++            if (value > max) {
++                max = value;
++                index = i;
++            }
++        }
++        if (index >= 0 && max > tolerance) {
++            keep[index] = true;
++            simplify(xy, first, index, tolerance, keep);
++            simplify(xy, index, last, tolerance, keep);
++        }
++    }
++
++    /** Points [longitude, latitude] simplified with the tolerance in meters. */
++    public static List<double[]> simplify(List<double[]> points, double tolerance) {
++        if (points.size() < 3) {
++            return points;
++        }
++        double latitude = points.get(0)[1];
++        List<double[]> xy = points.stream().map(point -> project(point, latitude)).toList();
++        boolean[] keep = new boolean[points.size()];
++        keep[0] = true;
++        keep[points.size() - 1] = true;
++        simplify(xy, 0, points.size() - 1, tolerance, keep);
++        List<double[]> result = new ArrayList<>();
++        for (int i = 0; i < points.size(); i++) {
++            if (keep[i]) {
++                result.add(points.get(i));
++            }
++        }
++        return result;
++    }
++
++    public static String wkt(List<double[]> points) {
++        StringBuilder text = new StringBuilder("LINESTRING (");
++        for (int i = 0; i < points.size(); i++) {
++            if (i > 0) {
++                text.append(", ");
++            }
++            text.append(String.format(Locale.ROOT, "%.5f %.5f", points.get(i)[1], points.get(i)[0]));
++        }
++        return text.append(")").toString();
++    }
++
++    /** Simplest version of the route that fits the area column, starting at 2 m of tolerance. */
++    public static List<double[]> fit(List<double[]> points) {
++        double tolerance = 2;
++        List<double[]> result = simplify(points, tolerance);
++        while (wkt(result).length() > MAX_AREA && tolerance < 100000) {
++            tolerance *= 1.5;
++            result = simplify(points, tolerance);
++        }
++        return result;
++    }
++
++}
+diff --git a/src/test/java/org/traccar/geofence/RouteSimplifierTest.java b/src/test/java/org/traccar/geofence/RouteSimplifierTest.java
+new file mode 100644
+index 0000000..193fc00
+--- /dev/null
++++ b/src/test/java/org/traccar/geofence/RouteSimplifierTest.java
+@@ -0,0 +1,41 @@
++package org.traccar.geofence;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class RouteSimplifierTest {
++
++    @Test
++    public void testSimplifyKeepsCorners() {
++        List<double[]> points = new ArrayList<>();
++        for (int i = 0; i <= 10; i++) {
++            points.add(new double[] {-77.0 + i * 0.001, -12.0});
++        }
++        for (int i = 1; i <= 10; i++) {
++            points.add(new double[] {-76.99, -12.0 + i * 0.001});
++        }
++        List<double[]> simplified = RouteSimplifier.simplify(points, 2);
++        assertEquals(3, simplified.size());
++        assertEquals("LINESTRING (-12.00000 -77.00000, -12.00000 -76.99000, -11.99000 -76.99000)",
++                RouteSimplifier.wkt(simplified));
++    }
++
++    @Test
++    public void testFitLongRoute() {
++        List<double[]> points = new ArrayList<>();
++        for (int i = 0; i < 5000; i++) {
++            points.add(new double[] {-77.0 + i * 0.0002, -12.0 + Math.sin(i / 20.0) * 0.002});
++        }
++        List<double[]> fitted = RouteSimplifier.fit(points);
++        assertTrue(RouteSimplifier.wkt(fitted).length() <= RouteSimplifier.MAX_AREA);
++        assertTrue(fitted.size() > 50);
++        assertEquals(points.get(0), fitted.get(0));
++        assertEquals(points.get(points.size() - 1), fitted.get(fitted.size() - 1));
++    }
++
++}
