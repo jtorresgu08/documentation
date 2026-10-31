@@ -1,0 +1,2077 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index a77f69e..53185c1 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -193,4 +193,109 @@
+ 
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-dispatch">
++
++    <createTable tableName="tc_dispatch_trips">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="name" type="VARCHAR(128)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="deviceid" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="userid" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="drivername" type="VARCHAR(128)" />
++      <column name="driverphone" type="VARCHAR(32)" />
++      <column name="status" type="VARCHAR(16)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="plannedstart" type="TIMESTAMP" />
++      <column name="starttime" type="TIMESTAMP" />
++      <column name="endtime" type="TIMESTAMP" />
++      <column name="notes" type="VARCHAR(1024)" />
++      <column name="drivertoken" type="VARCHAR(64)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="created" type="TIMESTAMP" />
++      <column name="attributes" type="VARCHAR(4000)" >
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_dispatch_trips" baseColumnNames="deviceid" constraintName="fk_dispatch_trips_deviceid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_devices" />
++    <createIndex tableName="tc_dispatch_trips" indexName="idx_dispatch_trips_device">
++      <column name="deviceid" />
++      <column name="plannedstart" />
++    </createIndex>
++    <createIndex tableName="tc_dispatch_trips" indexName="idx_dispatch_trips_token" unique="true">
++      <column name="drivertoken" />
++    </createIndex>
++
++    <createTable tableName="tc_dispatch_stops">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="tripid" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="sequence" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="name" type="VARCHAR(128)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="address" type="VARCHAR(512)" />
++      <column name="contact" type="VARCHAR(128)" />
++      <column name="phone" type="VARCHAR(32)" />
++      <column name="latitude" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="longitude" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="radius" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="windowstart" type="TIMESTAMP" />
++      <column name="windowend" type="TIMESTAMP" />
++      <column name="status" type="VARCHAR(16)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="arrivaltime" type="TIMESTAMP" />
++      <column name="departuretime" type="TIMESTAMP" />
++      <column name="completedtime" type="TIMESTAMP" />
++      <column name="recipient" type="VARCHAR(128)" />
++      <column name="notes" type="VARCHAR(1024)" />
++      <column name="failurereason" type="VARCHAR(256)" />
++      <column name="photo" type="VARCHAR(256)" />
++      <column name="signature" type="VARCHAR(256)" />
++      <column name="prooflatitude" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="prooflongitude" type="DOUBLE" >
++        <constraints nullable="false" />
++      </column>
++      <column name="late" type="BOOLEAN" >
++        <constraints nullable="false" />
++      </column>
++      <column name="trackingtoken" type="VARCHAR(64)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)" >
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_dispatch_stops" baseColumnNames="tripid" constraintName="fk_dispatch_stops_tripid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_dispatch_trips" />
++    <createIndex tableName="tc_dispatch_stops" indexName="idx_dispatch_stops_trip">
++      <column name="tripid" />
++    </createIndex>
++    <createIndex tableName="tc_dispatch_stops" indexName="idx_dispatch_stops_token" unique="true">
++      <column name="trackingtoken" />
++    </createIndex>
++
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index 95ab149..4aa01b4 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -50,6 +50,7 @@ import org.traccar.handler.events.CommandResultEventHandler;
+ import org.traccar.handler.events.DriverEventHandler;
+ import org.traccar.handler.events.FuelEventHandler;
+ import org.traccar.handler.events.FuelSensorEventHandler;
++import org.traccar.handler.events.DispatchEventHandler;
+ import org.traccar.handler.events.GeofenceOverspeedEventHandler;
+ import org.traccar.handler.events.RuleEventHandler;
+ import org.traccar.handler.events.EngineStopEventHandler;
+@@ -127,6 +128,7 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 CommandResultEventHandler.class,
+                 OverspeedEventHandler.class,
+                 GeofenceOverspeedEventHandler.class,
++                DispatchEventHandler.class,
+                 BehaviorEventHandler.class,
+                 FuelEventHandler.class,
+                 FuelSensorEventHandler.class,
+diff --git a/src/main/java/org/traccar/api/resource/DispatchResource.java b/src/main/java/org/traccar/api/resource/DispatchResource.java
+new file mode 100644
+index 0000000..9ad13a9
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/DispatchResource.java
+@@ -0,0 +1,615 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.DeserializationFeature;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.annotation.security.PermitAll;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.dispatch.DispatchService;
++import org.traccar.model.Device;
++import org.traccar.model.DispatchStop;
++import org.traccar.model.DispatchTrip;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Paths;
++import java.time.OffsetDateTime;
++import java.time.format.DateTimeFormatter;
++import java.time.format.DateTimeParseException;
++import java.util.ArrayList;
++import java.util.Base64;
++import java.util.Collection;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.TreeMap;
++
++/**
++ * Dispatch and delivery: trips with ordered stops for a unit, public driver link to report deliveries (photo,
++ * signature, recipient), public customer tracking link per stop with the estimated arrival, and the compliance report.
++ */
++@Path("dispatch")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class DispatchResource extends BaseResource {
++
++    private static final int MAX_IMAGE = 3 * 1024 * 1024;
++    private static final Set<String> DRIVER_STATUSES = Set.of(
++            DispatchStop.ARRIVED, DispatchStop.DELIVERED, DispatchStop.FAILED);
++    private static final Set<String> STATUSES = Set.of(
++            DispatchStop.PENDING, DispatchStop.ARRIVED, DispatchStop.DELIVERED, DispatchStop.FAILED,
++            DispatchStop.SKIPPED);
++
++    @Inject
++    private DispatchService dispatchService;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    @Inject
++    private Config config;
++
++    // ---------- helpers ----------
++
++    private Set<Long> accessibleDevices() throws StorageException {
++        Collection<Device> devices = permissionsService.notAdmin(getUserId())
++                ? storage.getObjects(Device.class, new Request(
++                        new Columns.Include("id"), new Condition.Permission(User.class, getUserId(), Device.class)))
++                : storage.getObjects(Device.class, new Request(new Columns.Include("id")));
++        Set<Long> result = new HashSet<>();
++        devices.forEach(device -> result.add(device.getId()));
++        return result;
++    }
++
++    private DispatchTrip checkTrip(long tripId) throws StorageException {
++        DispatchTrip trip = dispatchService.getTrip(tripId);
++        if (trip == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        permissionsService.checkPermission(Device.class, getUserId(), trip.getDeviceId());
++        return trip;
++    }
++
++    private void checkWritable() throws StorageException {
++        if (permissionsService.getUser(getUserId()).getReadonly()) {
++            throw new SecurityException("Read-only user");
++        }
++    }
++
++    private Map<String, Object> view(DispatchTrip trip, boolean withStops) throws StorageException {
++        List<DispatchStop> stops = dispatchService.getStops(trip.getId());
++        Map<String, Object> result = objectMapper.convertValue(trip, new TypeReference<>() { });
++        Device device = dispatchService.getDevice(trip.getDeviceId());
++        result.put("deviceName", device != null ? device.getName() : null);
++        Map<String, Long> progress = new LinkedHashMap<>();
++        progress.put("total", (long) stops.size());
++        for (String status : STATUSES) {
++            progress.put(status, stops.stream().filter(stop -> status.equals(stop.getStatus())).count());
++        }
++        progress.put("late", stops.stream().filter(DispatchStop::getLate).count());
++        result.put("progress", progress);
++        Map<Long, Date> etas = dispatchService.estimate(trip, stops);
++        if (withStops) {
++            List<Map<String, Object>> items = new ArrayList<>();
++            for (DispatchStop stop : stops) {
++                Map<String, Object> item = objectMapper.convertValue(stop, new TypeReference<>() { });
++                Date eta = etas.get(stop.getId());
++                item.put("eta", eta);
++                item.put("atRisk", eta != null && stop.getWindowEnd() != null && eta.after(stop.getWindowEnd()));
++                items.add(item);
++            }
++            result.put("stops", items);
++        }
++        Position position = dispatchService.getPosition(trip.getDeviceId());
++        if (position != null && DispatchTrip.IN_PROGRESS.equals(trip.getStatus())) {
++            result.put("position", Map.of("latitude", position.getLatitude(), "longitude", position.getLongitude(),
++                    "course", position.getCourse(), "fixTime", position.getFixTime()));
++        }
++        return result;
++    }
++
++    private List<DispatchStop> readStops(Object value) {
++        List<DispatchStop> stops = value == null ? new ArrayList<>()
++                : lenient().convertValue(value, new TypeReference<List<DispatchStop>>() { });
++        if (stops.isEmpty()) {
++            throw new IllegalArgumentException("A trip needs at least one stop");
++        }
++        for (DispatchStop stop : stops) {
++            if (stop.getName() == null || stop.getName().isBlank()
++                    || Math.abs(stop.getLatitude()) > 90 || Math.abs(stop.getLongitude()) > 180
++                    || stop.getLatitude() == 0 && stop.getLongitude() == 0) {
++                throw new IllegalArgumentException("Every stop needs a name and valid coordinates");
++            }
++            if (stop.getRadius() <= 0) {
++                stop.setRadius(100);
++            }
++        }
++        return stops;
++    }
++
++    private ObjectMapper lenient() {
++        // the editor sends back computed fields (eta, progress...) that are not part of the models
++        return objectMapper.copy().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
++    }
++
++    private DispatchTrip readTrip(Map<String, Object> body) {
++        Map<String, Object> copy = new HashMap<>(body);
++        copy.remove("stops");
++        for (String key : List.of("id", "status", "startTime", "endTime", "driverToken", "userId", "created",
++                "deviceName", "progress", "position")) {
++            copy.remove(key);
++        }
++        DispatchTrip trip = lenient().convertValue(copy, DispatchTrip.class);
++        if (trip.getName() == null || trip.getName().isBlank() || trip.getDeviceId() <= 0) {
++            throw new IllegalArgumentException("A trip needs a name and a unit");
++        }
++        return trip;
++    }
++
++    private void saveStops(DispatchTrip trip, List<DispatchStop> stops) throws StorageException {
++        Map<Long, DispatchStop> existing = new HashMap<>();
++        for (DispatchStop stop : dispatchService.getStops(trip.getId())) {
++            existing.put(stop.getId(), stop);
++        }
++        int sequence = 1;
++        for (DispatchStop stop : stops) {
++            DispatchStop before = existing.remove(stop.getId());
++            stop.setTripId(trip.getId());
++            stop.setSequence(sequence++);
++            if (before != null) {
++                // progress and proof stay as they were, only the plan of the stop changes
++                stop.setStatus(before.getStatus());
++                stop.setArrivalTime(before.getArrivalTime());
++                stop.setDepartureTime(before.getDepartureTime());
++                stop.setCompletedTime(before.getCompletedTime());
++                stop.setRecipient(before.getRecipient());
++                stop.setFailureReason(before.getFailureReason());
++                stop.setPhoto(before.getPhoto());
++                stop.setSignature(before.getSignature());
++                stop.setProofLatitude(before.getProofLatitude());
++                stop.setProofLongitude(before.getProofLongitude());
++                stop.setLate(before.getLate());
++                stop.setTrackingToken(before.getTrackingToken());
++                storage.updateObject(stop, new Request(
++                        new Columns.Exclude("id"), new Condition.Equals("id", stop.getId())));
++            } else {
++                stop.setStatus(DispatchStop.PENDING);
++                stop.setTrackingToken(DispatchService.token());
++                stop.setLate(false);
++                stop.setId(storage.addObject(stop, new Request(new Columns.Exclude("id"))));
++            }
++        }
++        for (DispatchStop removed : existing.values()) {
++            storage.removeObject(DispatchStop.class, new Request(new Condition.Equals("id", removed.getId())));
++        }
++        dispatchService.invalidate(trip.getDeviceId());
++    }
++
++    private String saveImage(DispatchTrip trip, DispatchStop stop, String kind, Object value) throws IOException {
++        if (!(value instanceof String data) || !data.startsWith("data:image/")) {
++            return null;
++        }
++        String mediaPath = config.getString(Keys.MEDIA_PATH);
++        if (mediaPath == null) {
++            return null;
++        }
++        int comma = data.indexOf(',');
++        String extension = data.startsWith("data:image/png") ? "png" : "jpg";
++        byte[] bytes = Base64.getDecoder().decode(data.substring(comma + 1));
++        if (bytes.length > MAX_IMAGE) {
++            throw new IllegalArgumentException("Image too large");
++        }
++        String name = String.format("dispatch/%d/stop%d-%s-%d.%s",
++                trip.getId(), stop.getId(), kind, System.currentTimeMillis(), extension);
++        java.nio.file.Path file = Paths.get(mediaPath, name);
++        Files.createDirectories(file.getParent());
++        Files.write(file, bytes);
++        return name;
++    }
++
++    private DispatchStop findStop(DispatchTrip trip, long stopId) throws StorageException {
++        return dispatchService.getStops(trip.getId()).stream().filter(stop -> stop.getId() == stopId)
++                .findFirst().orElseThrow(() -> new WebApplicationException(
++                        Response.status(Response.Status.NOT_FOUND).build()));
++    }
++
++    private void applyStatus(DispatchTrip trip, DispatchStop stop, Map<String, Object> body) throws Exception {
++        String status = String.valueOf(body.getOrDefault("status", ""));
++        if (!STATUSES.contains(status)) {
++            throw new IllegalArgumentException("Invalid status");
++        }
++        if (DispatchTrip.CANCELLED.equals(trip.getStatus())) {
++            throw new IllegalArgumentException("Trip cancelled");
++        }
++        String photo = saveImage(trip, stop, "photo", body.get("photo"));
++        if (photo != null) {
++            stop.setPhoto(photo);
++        }
++        String signature = saveImage(trip, stop, "signature", body.get("signature"));
++        if (signature != null) {
++            stop.setSignature(signature);
++        }
++        dispatchService.setStopStatus(trip, stop, status, body);
++    }
++
++    // ---------- dispatcher ----------
++
++    @GET
++    @Path("trips")
++    public List<Map<String, Object>> trips(
++            @QueryParam("from") Date from, @QueryParam("to") Date to, @QueryParam("deviceId") long deviceId,
++            @QueryParam("status") String status) throws StorageException {
++        Set<Long> devices = accessibleDevices();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (DispatchTrip trip : storage.getObjects(DispatchTrip.class, new Request(new Columns.All()))) {
++            Date reference = trip.getPlannedStart() != null ? trip.getPlannedStart() : trip.getCreated();
++            boolean active = DispatchTrip.IN_PROGRESS.equals(trip.getStatus());
++            if (!devices.contains(trip.getDeviceId()) || deviceId > 0 && trip.getDeviceId() != deviceId
++                    || status != null && !status.isEmpty() && !status.equals(trip.getStatus())
++                    || !active && (from != null && reference != null && reference.before(from)
++                    || to != null && reference != null && reference.after(to))) {
++                continue;
++            }
++            result.add(view(trip, true));
++        }
++        result.sort(Comparator.comparing(item -> String.valueOf(item.get("plannedStart"))));
++        return result;
++    }
++
++    @GET
++    @Path("trips/{id}")
++    public Map<String, Object> trip(@PathParam("id") long id) throws StorageException {
++        return view(checkTrip(id), true);
++    }
++
++    @POST
++    @Path("trips")
++    public Map<String, Object> create(Map<String, Object> body) throws Exception {
++        checkWritable();
++        DispatchTrip trip = readTrip(body);
++        permissionsService.checkPermission(Device.class, getUserId(), trip.getDeviceId());
++        List<DispatchStop> stops = readStops(body.get("stops"));
++        trip.setUserId(getUserId());
++        trip.setStatus(DispatchTrip.PLANNED);
++        trip.setDriverToken(DispatchService.token());
++        trip.setCreated(new Date());
++        if (trip.getPlannedStart() == null) {
++            trip.setPlannedStart(new Date());
++        }
++        trip.setId(storage.addObject(trip, new Request(new Columns.Exclude("id"))));
++        stops.forEach(stop -> stop.setId(0));
++        saveStops(trip, stops);
++        return view(trip, true);
++    }
++
++    @PUT
++    @Path("trips/{id}")
++    public Map<String, Object> update(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        checkWritable();
++        DispatchTrip trip = checkTrip(id);
++        DispatchTrip changes = readTrip(body);
++        permissionsService.checkPermission(Device.class, getUserId(), changes.getDeviceId());
++        long previousDevice = trip.getDeviceId();
++        trip.setName(changes.getName());
++        trip.setDeviceId(changes.getDeviceId());
++        trip.setDriverName(changes.getDriverName());
++        trip.setDriverPhone(changes.getDriverPhone());
++        trip.setPlannedStart(changes.getPlannedStart());
++        trip.setNotes(changes.getNotes());
++        trip.setAttributes(changes.getAttributes());
++        storage.updateObject(trip, new Request(
++                new Columns.Include("name", "deviceId", "driverName", "driverPhone", "plannedStart", "notes",
++                        "attributes"), new Condition.Equals("id", trip.getId())));
++        saveStops(trip, readStops(body.get("stops")));
++        dispatchService.invalidate(previousDevice);
++        return view(trip, true);
++    }
++
++    @DELETE
++    @Path("trips/{id}")
++    public Response remove(@PathParam("id") long id) throws StorageException {
++        checkWritable();
++        DispatchTrip trip = checkTrip(id);
++        storage.removeObject(DispatchTrip.class, new Request(new Condition.Equals("id", id)));
++        dispatchService.invalidate(trip.getDeviceId());
++        return Response.noContent().build();
++    }
++
++    @POST
++    @Path("trips/{id}/{action: start|cancel|complete|reopen}")
++    public Map<String, Object> action(@PathParam("id") long id, @PathParam("action") String action) throws Exception {
++        checkWritable();
++        DispatchTrip trip = checkTrip(id);
++        switch (action) {
++            case "start" -> dispatchService.startTrip(trip, new Date());
++            case "cancel" -> trip.setStatus(DispatchTrip.CANCELLED);
++            case "complete" -> {
++                trip.setStatus(DispatchTrip.COMPLETED);
++                trip.setEndTime(new Date());
++            }
++            default -> {
++                trip.setStatus(DispatchTrip.PLANNED);
++                trip.setEndTime(null);
++            }
++        }
++        storage.updateObject(trip, new Request(
++                new Columns.Include("status", "endTime"), new Condition.Equals("id", trip.getId())));
++        dispatchService.invalidate(trip.getDeviceId());
++        return view(trip, true);
++    }
++
++    @POST
++    @Path("stops/{id}/status")
++    public Map<String, Object> stopStatus(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        checkWritable();
++        DispatchStop stop = storage.getObject(DispatchStop.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (stop == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        DispatchTrip trip = checkTrip(stop.getTripId());
++        applyStatus(trip, stop, body);
++        return view(dispatchService.getTrip(trip.getId()), true);
++    }
++
++    @GET
++    @Path("stops/{id}/{kind: photo|signature}")
++    @Produces({"image/jpeg", "image/png"})
++    public Response proof(@PathParam("id") long id, @PathParam("kind") String kind) throws Exception {
++        DispatchStop stop = storage.getObject(DispatchStop.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (stop == null) {
++            return Response.status(Response.Status.NOT_FOUND).build();
++        }
++        checkTrip(stop.getTripId());
++        String name = "photo".equals(kind) ? stop.getPhoto() : stop.getSignature();
++        String mediaPath = config.getString(Keys.MEDIA_PATH);
++        if (name == null || mediaPath == null || name.contains("..")) {
++            return Response.status(Response.Status.NOT_FOUND).build();
++        }
++        java.nio.file.Path file = Paths.get(mediaPath, name);
++        if (!Files.exists(file)) {
++            return Response.status(Response.Status.NOT_FOUND).build();
++        }
++        return Response.ok(Files.readAllBytes(file), name.endsWith(".png") ? "image/png" : "image/jpeg").build();
++    }
++
++    /**
++     * Compliance: trips, delivered and failed stops, on time deliveries, late stops, service time, by unit and
++     * driver, and failure reasons.
++     */
++    @GET
++    @Path("report")
++    public Map<String, Object> report(
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        List<Map<String, Object>> trips = trips(from, to, 0, null);
++        Map<String, Object> summary = new LinkedHashMap<>();
++        Map<String, Map<String, Object>> byUnit = new TreeMap<>();
++        Map<String, Map<String, Object>> byDriver = new TreeMap<>();
++        Map<String, Long> reasons = new TreeMap<>();
++        long stops = 0;
++        long delivered = 0;
++        long failed = 0;
++        long onTime = 0;
++        long late = 0;
++        long serviceMinutes = 0;
++        long serviceCount = 0;
++        long completed = 0;
++        for (Map<String, Object> trip : trips) {
++            if (DispatchTrip.CANCELLED.equals(trip.get("status"))) {
++                continue;
++            }
++            if (DispatchTrip.COMPLETED.equals(trip.get("status"))) {
++                completed++;
++            }
++            long tripDelivered = 0;
++            long tripTotal = 0;
++            @SuppressWarnings("unchecked")
++            List<Map<String, Object>> items = (List<Map<String, Object>>) trip.get("stops");
++            for (Map<String, Object> stop : items) {
++                tripTotal++;
++                stops++;
++                Date window = toDate(stop.get("windowEnd"));
++                Date done = toDate(stop.get("completedTime"));
++                Date arrival = toDate(stop.get("arrivalTime"));
++                if (DispatchStop.DELIVERED.equals(stop.get("status"))) {
++                    delivered++;
++                    tripDelivered++;
++                    if (window == null || done != null && !done.after(window)) {
++                        onTime++;
++                    }
++                } else if (DispatchStop.FAILED.equals(stop.get("status"))) {
++                    failed++;
++                    reasons.merge(String.valueOf(stop.getOrDefault("failureReason", "-")), 1L, Long::sum);
++                }
++                if (Boolean.TRUE.equals(stop.get("late"))) {
++                    late++;
++                }
++                if (arrival != null && done != null && !done.before(arrival)) {
++                    serviceMinutes += (done.getTime() - arrival.getTime()) / 60000;
++                    serviceCount++;
++                }
++            }
++            accumulate(byUnit, String.valueOf(trip.get("deviceName")), tripTotal, tripDelivered);
++            String driver = (String) trip.get("driverName");
++            accumulate(byDriver, driver != null && !driver.isBlank() ? driver : "-", tripTotal, tripDelivered);
++        }
++        summary.put("trips", trips.stream().filter(trip -> !DispatchTrip.CANCELLED.equals(trip.get("status"))).count());
++        summary.put("completedTrips", completed);
++        summary.put("stops", stops);
++        summary.put("delivered", delivered);
++        summary.put("failed", failed);
++        summary.put("onTime", onTime);
++        summary.put("late", late);
++        summary.put("onTimeRate", delivered > 0 ? Math.round(onTime * 1000.0 / delivered) / 10.0 : null);
++        summary.put("deliveryRate", stops > 0 ? Math.round(delivered * 1000.0 / stops) / 10.0 : null);
++        summary.put("avgServiceMinutes",
++                serviceCount > 0 ? Math.round(serviceMinutes * 10.0 / serviceCount) / 10.0 : null);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("summary", summary);
++        result.put("byUnit", byUnit.values());
++        result.put("byDriver", byDriver.values());
++        result.put("reasons", reasons);
++        result.put("trips", trips);
++        return result;
++    }
++
++    private static Date toDate(Object value) {
++        if (value instanceof Date date) {
++            return date;
++        } else if (value instanceof Number number) {
++            return new Date(number.longValue());
++        } else if (value instanceof String text && !text.isEmpty()) {
++            try {
++                return Date.from(OffsetDateTime.parse(text, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant());
++            } catch (DateTimeParseException e) {
++                return null;
++            }
++        }
++        return null;
++    }
++
++    private static void accumulate(Map<String, Map<String, Object>> map, String name, long stops, long delivered) {
++        Map<String, Object> item = map.computeIfAbsent(name, key -> new LinkedHashMap<>(Map.of(
++                "name", key, "trips", 0L, "stops", 0L, "delivered", 0L)));
++        item.put("trips", (Long) item.get("trips") + 1);
++        item.put("stops", (Long) item.get("stops") + stops);
++        item.put("delivered", (Long) item.get("delivered") + delivered);
++    }
++
++    // ---------- public: driver ----------
++
++    private DispatchTrip tripByToken(String token) throws StorageException {
++        DispatchTrip trip = token == null || token.length() < 16 ? null : storage.getObject(DispatchTrip.class,
++                new Request(new Columns.All(), new Condition.Equals("driverToken", token)));
++        if (trip == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return trip;
++    }
++
++    @GET
++    @PermitAll
++    @Path("driver/{token}")
++    public Map<String, Object> driver(@PathParam("token") String token) throws StorageException {
++        Map<String, Object> result = view(tripByToken(token), true);
++        result.remove("driverToken");
++        result.remove("userId");
++        @SuppressWarnings("unchecked")
++        List<Map<String, Object>> stops = (List<Map<String, Object>>) result.get("stops");
++        stops.forEach(stop -> {
++            stop.remove("trackingToken");
++            stop.remove("photo");
++            stop.remove("signature");
++        });
++        return result;
++    }
++
++    @POST
++    @PermitAll
++    @Path("driver/{token}/start")
++    public Map<String, Object> driverStart(@PathParam("token") String token) throws StorageException {
++        DispatchTrip trip = tripByToken(token);
++        if (DispatchTrip.PLANNED.equals(trip.getStatus())) {
++            dispatchService.startTrip(trip, new Date());
++        }
++        return driver(token);
++    }
++
++    @POST
++    @PermitAll
++    @Path("driver/{token}/stops/{id}")
++    public Map<String, Object> driverStop(
++            @PathParam("token") String token, @PathParam("id") long id, Map<String, Object> body) throws Exception {
++        DispatchTrip trip = tripByToken(token);
++        if (!DRIVER_STATUSES.contains(String.valueOf(body.get("status")))) {
++            throw new IllegalArgumentException("Invalid status");
++        }
++        applyStatus(trip, findStop(trip, id), body);
++        return driver(token);
++    }
++
++    // ---------- public: customer ----------
++
++    @GET
++    @PermitAll
++    @Path("track/{token}")
++    public Map<String, Object> track(@PathParam("token") String token) throws StorageException {
++        DispatchStop stop = token == null || token.length() < 16 ? null : storage.getObject(DispatchStop.class,
++                new Request(new Columns.All(), new Condition.Equals("trackingToken", token)));
++        if (stop == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        DispatchTrip trip = dispatchService.getTrip(stop.getTripId());
++        List<DispatchStop> stops = dispatchService.getStops(trip.getId());
++        Date eta = dispatchService.estimate(trip, stops).get(stop.getId());
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("name", stop.getName());
++        result.put("address", stop.getAddress());
++        result.put("latitude", stop.getLatitude());
++        result.put("longitude", stop.getLongitude());
++        result.put("status", stop.getStatus());
++        result.put("windowStart", stop.getWindowStart());
++        result.put("windowEnd", stop.getWindowEnd());
++        result.put("arrivalTime", stop.getArrivalTime());
++        result.put("completedTime", stop.getCompletedTime());
++        result.put("recipient", stop.getRecipient());
++        result.put("failureReason", stop.getFailureReason());
++        result.put("eta", eta);
++        result.put("tripStatus", trip.getStatus());
++        result.put("plannedStart", trip.getPlannedStart());
++        String driver = trip.getDriverName();
++        result.put("driverName", driver != null ? driver.trim().split("\\s+")[0] : null);
++        Device device = dispatchService.getDevice(trip.getDeviceId());
++        result.put("vehicle", device != null ? device.getName() : null);
++        result.put("stopsBefore", stops.stream().filter(item -> item.getSequence() < stop.getSequence()
++                && !item.done()).count());
++        result.put("ownerId", trip.getUserId());
++        Position position = dispatchService.getPosition(trip.getDeviceId());
++        if (position != null && DispatchTrip.IN_PROGRESS.equals(trip.getStatus()) && !stop.done()) {
++            result.put("position", Map.of("latitude", position.getLatitude(), "longitude", position.getLongitude(),
++                    "course", position.getCourse(), "fixTime", position.getFixTime()));
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/PlanResource.java b/src/main/java/org/traccar/api/resource/PlanResource.java
+index df776a6..ccacfaf 100644
+--- a/src/main/java/org/traccar/api/resource/PlanResource.java
++++ b/src/main/java/org/traccar/api/resource/PlanResource.java
+@@ -97,6 +97,7 @@ public class PlanResource extends BaseResource {
+         }
+         Server server = planService.getServer();
+         server.set(PlanService.SERVER_PLANS, planService.toJson(plans));
++        server.set(PlanService.SERVER_PLANS_MODULES, String.join(",", PlanService.MODULES));
+         storage.updateObject(server, new Request(
+                 new Columns.Include("attributes"), new Condition.Equals("id", server.getId())));
+         cacheManager.invalidateObject(true, Server.class, server.getId(), ObjectOperation.UPDATE);
+diff --git a/src/main/java/org/traccar/dispatch/DispatchService.java b/src/main/java/org/traccar/dispatch/DispatchService.java
+new file mode 100644
+index 0000000..b145073
+--- /dev/null
++++ b/src/main/java/org/traccar/dispatch/DispatchService.java
+@@ -0,0 +1,372 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.dispatch;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.database.NotificationManager;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Device;
++import org.traccar.model.DispatchStop;
++import org.traccar.model.DispatchTrip;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.plans.PlanService;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++import org.traccar.whatsapp.WhatsappClient;
++
++import java.security.SecureRandom;
++import java.util.ArrayList;
++import java.util.Base64;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Dispatch logic: arrival at stops detected from the unit position (inside the stop radius), departure, late stops
++ * (delivery window missed), estimated arrival times, trip start and completion, delivery events and WhatsApp
++ * messages to the customer (tracking link when the trip starts, confirmation when delivered).
++ */
++@Singleton
++public class DispatchService {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(DispatchService.class);
++
++    public static final String MODULE = "dispatch";
++    public static final double MIN_ETA_SPEED_KMH = 25;
++    public static final double ROAD_FACTOR = 1.3;
++    public static final double DEFAULT_SERVICE_MINUTES = 10;
++
++    private static final SecureRandom RANDOM = new SecureRandom();
++
++    private final Storage storage;
++    private final CacheManager cacheManager;
++    private final NotificationManager notificationManager;
++    private final WhatsappClient whatsappClient;
++    private final PlanService planService;
++    private final String webUrl;
++
++    /** device id to the ids of its planned and in progress trips (null = not loaded) */
++    private final Map<Long, List<Long>> activeTrips = new ConcurrentHashMap<>();
++
++    @Inject
++    public DispatchService(
++            Config config, Storage storage, CacheManager cacheManager, NotificationManager notificationManager,
++            WhatsappClient whatsappClient, PlanService planService) {
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++        this.notificationManager = notificationManager;
++        this.whatsappClient = whatsappClient;
++        this.planService = planService;
++        String url = config.getString(Keys.WEB_URL);
++        this.webUrl = url != null ? url.replaceAll("/+$", "") : null;
++    }
++
++    public static String token() {
++        byte[] bytes = new byte[18];
++        RANDOM.nextBytes(bytes);
++        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
++    }
++
++    public static double distance(double lat1, double lon1, double lat2, double lon2) {
++        double rad = Math.PI / 180;
++        double a = Math.pow(Math.sin((lat2 - lat1) * rad / 2), 2)
++                + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.pow(Math.sin((lon2 - lon1) * rad / 2), 2);
++        return 2 * 6371008.8 * Math.asin(Math.sqrt(a));
++    }
++
++    public void invalidate(long deviceId) {
++        activeTrips.remove(deviceId);
++    }
++
++    public DispatchTrip getTrip(long tripId) throws StorageException {
++        return storage.getObject(DispatchTrip.class, new Request(
++                new Columns.All(), new Condition.Equals("id", tripId)));
++    }
++
++    public List<DispatchStop> getStops(long tripId) throws StorageException {
++        return storage.getObjects(DispatchStop.class, new Request(
++                new Columns.All(), new Condition.Equals("tripId", tripId), new Order("sequence")));
++    }
++
++    private List<Long> loadActive(long deviceId) throws StorageException {
++        List<Long> result = new ArrayList<>();
++        for (DispatchTrip trip : storage.getObjects(DispatchTrip.class, new Request(
++                new Columns.All(), new Condition.Equals("deviceId", deviceId)))) {
++            if (DispatchTrip.IN_PROGRESS.equals(trip.getStatus())
++                    || DispatchTrip.PLANNED.equals(trip.getStatus()) && trip.getPlannedStart() != null
++                    && Math.abs(trip.getPlannedStart().getTime() - System.currentTimeMillis()) < 86_400_000L) {
++                result.add(trip.getId());
++            }
++        }
++        return result;
++    }
++
++    private void update(Object model, String... columns) throws StorageException {
++        long id = model instanceof DispatchTrip trip ? trip.getId() : ((DispatchStop) model).getId();
++        storage.updateObject(model, new Request(new Columns.Include(columns), new Condition.Equals("id", id)));
++    }
++
++    private Event event(String type, DispatchTrip trip, DispatchStop stop, Position position) {
++        Event event = position != null ? new Event(type, position) : new Event(type, trip.getDeviceId());
++        event.set("tripId", trip.getId());
++        event.set("tripName", trip.getName());
++        event.set("stopId", stop.getId());
++        event.set("stopName", stop.getName());
++        event.set("stopSequence", stop.getSequence());
++        if (stop.getRecipient() != null) {
++            event.set("recipient", stop.getRecipient());
++        }
++        if (stop.getFailureReason() != null) {
++            event.set("reason", stop.getFailureReason());
++        }
++        event.set("severity", switch (type) {
++            case Event.TYPE_DISPATCH_FAILED, Event.TYPE_DISPATCH_LATE -> "high";
++            default -> "low";
++        });
++        return event;
++    }
++
++    public void startTrip(DispatchTrip trip, Date time) throws StorageException {
++        trip.setStatus(DispatchTrip.IN_PROGRESS);
++        trip.setStartTime(time);
++        update(trip, "status", "startTime");
++        invalidate(trip.getDeviceId());
++        for (DispatchStop stop : getStops(trip.getId())) {
++            sendWhatsapp(trip, stop.getPhone(), String.format(
++                    "Tu pedido «%s» ya está en camino. Síguelo en vivo: %s", stop.getName(), trackingUrl(stop)));
++        }
++    }
++
++    private void checkCompleted(DispatchTrip trip, Date time) throws StorageException {
++        if (getStops(trip.getId()).stream().allMatch(DispatchStop::done)) {
++            trip.setStatus(DispatchTrip.COMPLETED);
++            trip.setEndTime(time);
++            update(trip, "status", "endTime");
++            invalidate(trip.getDeviceId());
++        }
++    }
++
++    public String trackingUrl(DispatchStop stop) {
++        return webUrl != null ? webUrl + "/track/" + stop.getTrackingToken() : null;
++    }
++
++    private void sendWhatsapp(DispatchTrip trip, String phone, String text) {
++        if (phone == null || WhatsappClient.normalize(phone).isEmpty() || !whatsappClient.configured()
++                || text.contains("null")) {
++            return;
++        }
++        try {
++            if (planService.hasModule(trip.getUserId(), "whatsapp")) {
++                whatsappClient.sendText(phone, text);
++            }
++        } catch (Exception e) {
++            LOGGER.warn("Dispatch WhatsApp message failed", e);
++        }
++    }
++
++    /**
++     * Arrival (entering the stop radius) and departure from the position of the unit, plus late stops.
++     */
++    public List<Event> onPosition(Position position) throws StorageException {
++        List<Event> events = new ArrayList<>();
++        long deviceId = position.getDeviceId();
++        List<Long> tripIds = activeTrips.get(deviceId);
++        if (tripIds == null) {
++            tripIds = loadActive(deviceId);
++            activeTrips.put(deviceId, tripIds);
++        }
++        Date time = position.getFixTime();
++        for (long tripId : tripIds) {
++            DispatchTrip trip = getTrip(tripId);
++            if (trip == null) {
++                continue;
++            }
++            boolean changed = false;
++            for (DispatchStop stop : getStops(tripId)) {
++                if (stop.done()) {
++                    continue;
++                }
++                double meters = distance(position.getLatitude(), position.getLongitude(),
++                        stop.getLatitude(), stop.getLongitude());
++                boolean inside = meters <= Math.max(stop.getRadius(), 30);
++                if (DispatchStop.PENDING.equals(stop.getStatus()) && inside) {
++                    if (DispatchTrip.PLANNED.equals(trip.getStatus())) {
++                        startTrip(trip, time);
++                    }
++                    stop.setStatus(DispatchStop.ARRIVED);
++                    stop.setArrivalTime(time);
++                    update(stop, "status", "arrivalTime");
++                    events.add(event(Event.TYPE_DISPATCH_ARRIVAL, trip, stop, position));
++                    changed = true;
++                } else if (DispatchStop.ARRIVED.equals(stop.getStatus()) && !inside
++                        && stop.getDepartureTime() == null && meters > Math.max(stop.getRadius(), 30) * 1.5) {
++                    stop.setDepartureTime(time);
++                    update(stop, "departureTime");
++                } else if (DispatchStop.ARRIVED.equals(stop.getStatus()) && inside && stop.getDepartureTime() != null) {
++                    stop.setDepartureTime(null);
++                    update(stop, "departureTime");
++                }
++                if (!stop.getLate() && stop.getWindowEnd() != null && DispatchStop.PENDING.equals(stop.getStatus())
++                        && time.after(stop.getWindowEnd())) {
++                    stop.setLate(true);
++                    update(stop, "late");
++                    events.add(event(Event.TYPE_DISPATCH_LATE, trip, stop, position));
++                }
++            }
++            if (changed) {
++                invalidate(deviceId);
++            }
++        }
++        return events;
++    }
++
++    /**
++     * Delivery reported by the driver or the dispatcher: delivered, failed, skipped, arrived or back to pending.
++     */
++    public void setStopStatus(
++            DispatchTrip trip, DispatchStop stop, String status, Map<String, Object> details) throws StorageException {
++        Date now = new Date();
++        Position position = getPosition(trip.getDeviceId());
++        stop.setStatus(status);
++        if (details.get("recipient") instanceof String recipient && !recipient.isBlank()) {
++            stop.setRecipient(recipient.trim());
++        }
++        if (details.get("notes") instanceof String notes) {
++            stop.setNotes(notes.trim());
++        }
++        if (details.get("failureReason") instanceof String reason && !reason.isBlank()) {
++            stop.setFailureReason(reason.trim());
++        }
++        if (details.get("latitude") instanceof Number latitude
++                && details.get("longitude") instanceof Number longitude) {
++            stop.setProofLatitude(latitude.doubleValue());
++            stop.setProofLongitude(longitude.doubleValue());
++        } else if (position != null && stop.done()) {
++            stop.setProofLatitude(position.getLatitude());
++            stop.setProofLongitude(position.getLongitude());
++        }
++        if (DispatchStop.ARRIVED.equals(status) && stop.getArrivalTime() == null) {
++            stop.setArrivalTime(now);
++        }
++        if (DispatchStop.PENDING.equals(status)) {
++            stop.setCompletedTime(null);
++        } else if (stop.done()) {
++            stop.setCompletedTime(now);
++            if (stop.getArrivalTime() == null) {
++                stop.setArrivalTime(now);
++            }
++        }
++        update(stop, "status", "recipient", "notes", "failureReason", "proofLatitude", "proofLongitude",
++                "arrivalTime", "completedTime", "photo", "signature");
++        if (DispatchTrip.PLANNED.equals(trip.getStatus()) && !DispatchStop.PENDING.equals(status)) {
++            startTrip(trip, now);
++        }
++        Map<Event, Position> events = new HashMap<>();
++        if (DispatchStop.DELIVERED.equals(status)) {
++            events.put(event(Event.TYPE_DISPATCH_DELIVERED, trip, stop, position), position);
++            sendWhatsapp(trip, stop.getPhone(), String.format("Pedido «%s» entregado%s. ¡Gracias!", stop.getName(),
++                    stop.getRecipient() != null ? " a " + stop.getRecipient() : ""));
++        } else if (DispatchStop.FAILED.equals(status)) {
++            events.put(event(Event.TYPE_DISPATCH_FAILED, trip, stop, position), position);
++        }
++        if (!events.isEmpty()) {
++            notificationManager.updateEvents(events);
++        }
++        checkCompleted(trip, now);
++        invalidate(trip.getDeviceId());
++    }
++
++    /**
++     * Estimated arrival at every pending stop, in order, from the last position: road distance estimated from the
++     * straight line, current speed (at least 25 km/h) and a service time at each stop.
++     */
++    public Map<Long, Date> estimate(DispatchTrip trip, List<DispatchStop> stops) {
++        Map<Long, Date> result = new LinkedHashMap<>();
++        if (!DispatchTrip.IN_PROGRESS.equals(trip.getStatus())) {
++            return result;
++        }
++        Position position = getPosition(trip.getDeviceId());
++        if (position == null) {
++            return result;
++        }
++        double speed = Math.max(UnitsConverter.kphFromKnots(position.getSpeed()), MIN_ETA_SPEED_KMH);
++        double lat = position.getLatitude();
++        double lon = position.getLongitude();
++        long time = Math.max(System.currentTimeMillis(), position.getFixTime().getTime());
++        for (DispatchStop stop : stops) {
++            if (stop.done()) {
++                continue;
++            }
++            if (DispatchStop.ARRIVED.equals(stop.getStatus())) {
++                result.put(stop.getId(), stop.getArrivalTime());
++                time += (long) (DEFAULT_SERVICE_MINUTES * 60_000);
++            } else {
++                double meters = distance(lat, lon, stop.getLatitude(), stop.getLongitude()) * ROAD_FACTOR;
++                time += (long) (meters / (speed / 3.6) * 1000);
++                result.put(stop.getId(), new Date(time));
++                time += (long) (DEFAULT_SERVICE_MINUTES * 60_000);
++            }
++            lat = stop.getLatitude();
++            lon = stop.getLongitude();
++        }
++        return result;
++    }
++
++    public Device getDevice(long deviceId) {
++        Device device = cacheManager.getObject(Device.class, deviceId);
++        if (device == null) {
++            try {
++                device = storage.getObject(Device.class, new Request(
++                        new Columns.All(), new Condition.Equals("id", deviceId)));
++            } catch (StorageException e) {
++                LOGGER.warn("Device lookup failed", e);
++            }
++        }
++        return device;
++    }
++
++    /**
++     * Last position of the unit: from the cache when the unit is connected, otherwise from the database.
++     */
++    public Position getPosition(long deviceId) {
++        Position position = cacheManager.getPosition(deviceId);
++        if (position == null) {
++            Device device = getDevice(deviceId);
++            if (device != null && device.getPositionId() > 0) {
++                try {
++                    position = storage.getObject(Position.class, new Request(
++                            new Columns.All(), new Condition.Equals("id", device.getPositionId())));
++                } catch (StorageException e) {
++                    LOGGER.warn("Position lookup failed", e);
++                }
++            }
++        }
++        return position;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/events/DispatchEventHandler.java b/src/main/java/org/traccar/handler/events/DispatchEventHandler.java
+new file mode 100644
+index 0000000..392d6cf
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/DispatchEventHandler.java
+@@ -0,0 +1,56 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.dispatch.DispatchService;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++
++/**
++ * Dispatch events from positions: arrival at a stop and stops whose delivery window was missed.
++ */
++public class DispatchEventHandler extends BaseEventHandler {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(DispatchEventHandler.class);
++
++    private final CacheManager cacheManager;
++    private final DispatchService dispatchService;
++
++    @Inject
++    public DispatchEventHandler(CacheManager cacheManager, DispatchService dispatchService) {
++        this.cacheManager = cacheManager;
++        this.dispatchService = dispatchService;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        if (!PositionUtil.isLatest(cacheManager, position) || !position.getValid()) {
++            return;
++        }
++        try {
++            for (Event event : dispatchService.onPosition(position)) {
++                callback.eventDetected(event);
++            }
++        } catch (StorageException e) {
++            LOGGER.warn("Dispatch processing failed", e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/DispatchStop.java b/src/main/java/org/traccar/model/DispatchStop.java
+new file mode 100644
+index 0000000..04e19f1
+--- /dev/null
++++ b/src/main/java/org/traccar/model/DispatchStop.java
+@@ -0,0 +1,276 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Stop of a dispatch trip: where and when to deliver, arrival detected by GPS and the proof of delivery (photo,
++ * signature, recipient, location); the tracking token gives the customer a public link.
++ */
++@StorageName("tc_dispatch_stops")
++public class DispatchStop extends ExtendedModel {
++
++    public static final String PENDING = "pending";
++    public static final String ARRIVED = "arrived";
++    public static final String DELIVERED = "delivered";
++    public static final String FAILED = "failed";
++    public static final String SKIPPED = "skipped";
++
++    public boolean done() {
++        return DELIVERED.equals(status) || FAILED.equals(status) || SKIPPED.equals(status);
++    }
++
++    private long tripId;
++
++    public long getTripId() {
++        return tripId;
++    }
++
++    public void setTripId(long tripId) {
++        this.tripId = tripId;
++    }
++
++    private int sequence;
++
++    public int getSequence() {
++        return sequence;
++    }
++
++    public void setSequence(int sequence) {
++        this.sequence = sequence;
++    }
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private String address;
++
++    public String getAddress() {
++        return address;
++    }
++
++    public void setAddress(String address) {
++        this.address = address;
++    }
++
++    private String contact;
++
++    public String getContact() {
++        return contact;
++    }
++
++    public void setContact(String contact) {
++        this.contact = contact;
++    }
++
++    private String phone;
++
++    public String getPhone() {
++        return phone;
++    }
++
++    public void setPhone(String phone) {
++        this.phone = phone;
++    }
++
++    private double latitude;
++
++    public double getLatitude() {
++        return latitude;
++    }
++
++    public void setLatitude(double latitude) {
++        this.latitude = latitude;
++    }
++
++    private double longitude;
++
++    public double getLongitude() {
++        return longitude;
++    }
++
++    public void setLongitude(double longitude) {
++        this.longitude = longitude;
++    }
++
++    private double radius;
++
++    public double getRadius() {
++        return radius;
++    }
++
++    public void setRadius(double radius) {
++        this.radius = radius;
++    }
++
++    private Date windowStart;
++
++    public Date getWindowStart() {
++        return windowStart;
++    }
++
++    public void setWindowStart(Date windowStart) {
++        this.windowStart = windowStart;
++    }
++
++    private Date windowEnd;
++
++    public Date getWindowEnd() {
++        return windowEnd;
++    }
++
++    public void setWindowEnd(Date windowEnd) {
++        this.windowEnd = windowEnd;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private Date arrivalTime;
++
++    public Date getArrivalTime() {
++        return arrivalTime;
++    }
++
++    public void setArrivalTime(Date arrivalTime) {
++        this.arrivalTime = arrivalTime;
++    }
++
++    private Date departureTime;
++
++    public Date getDepartureTime() {
++        return departureTime;
++    }
++
++    public void setDepartureTime(Date departureTime) {
++        this.departureTime = departureTime;
++    }
++
++    private Date completedTime;
++
++    public Date getCompletedTime() {
++        return completedTime;
++    }
++
++    public void setCompletedTime(Date completedTime) {
++        this.completedTime = completedTime;
++    }
++
++    private String recipient;
++
++    public String getRecipient() {
++        return recipient;
++    }
++
++    public void setRecipient(String recipient) {
++        this.recipient = recipient;
++    }
++
++    private String notes;
++
++    public String getNotes() {
++        return notes;
++    }
++
++    public void setNotes(String notes) {
++        this.notes = notes;
++    }
++
++    private String failureReason;
++
++    public String getFailureReason() {
++        return failureReason;
++    }
++
++    public void setFailureReason(String failureReason) {
++        this.failureReason = failureReason;
++    }
++
++    private String photo;
++
++    public String getPhoto() {
++        return photo;
++    }
++
++    public void setPhoto(String photo) {
++        this.photo = photo;
++    }
++
++    private String signature;
++
++    public String getSignature() {
++        return signature;
++    }
++
++    public void setSignature(String signature) {
++        this.signature = signature;
++    }
++
++    private double proofLatitude;
++
++    public double getProofLatitude() {
++        return proofLatitude;
++    }
++
++    public void setProofLatitude(double proofLatitude) {
++        this.proofLatitude = proofLatitude;
++    }
++
++    private double proofLongitude;
++
++    public double getProofLongitude() {
++        return proofLongitude;
++    }
++
++    public void setProofLongitude(double proofLongitude) {
++        this.proofLongitude = proofLongitude;
++    }
++
++    private boolean late;
++
++    public boolean getLate() {
++        return late;
++    }
++
++    public void setLate(boolean late) {
++        this.late = late;
++    }
++
++    private String trackingToken;
++
++    public String getTrackingToken() {
++        return trackingToken;
++    }
++
++    public void setTrackingToken(String trackingToken) {
++        this.trackingToken = trackingToken;
++    }
++}
+diff --git a/src/main/java/org/traccar/model/DispatchTrip.java b/src/main/java/org/traccar/model/DispatchTrip.java
+new file mode 100644
+index 0000000..af22068
+--- /dev/null
++++ b/src/main/java/org/traccar/model/DispatchTrip.java
+@@ -0,0 +1,151 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Dispatch trip: a unit (and its driver) visiting several stops; the driver link token lets the driver report
++ * deliveries without an account.
++ */
++@StorageName("tc_dispatch_trips")
++public class DispatchTrip extends ExtendedModel {
++
++    public static final String PLANNED = "planned";
++    public static final String IN_PROGRESS = "inProgress";
++    public static final String COMPLETED = "completed";
++    public static final String CANCELLED = "cancelled";
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String driverName;
++
++    public String getDriverName() {
++        return driverName;
++    }
++
++    public void setDriverName(String driverName) {
++        this.driverName = driverName;
++    }
++
++    private String driverPhone;
++
++    public String getDriverPhone() {
++        return driverPhone;
++    }
++
++    public void setDriverPhone(String driverPhone) {
++        this.driverPhone = driverPhone;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private Date plannedStart;
++
++    public Date getPlannedStart() {
++        return plannedStart;
++    }
++
++    public void setPlannedStart(Date plannedStart) {
++        this.plannedStart = plannedStart;
++    }
++
++    private Date startTime;
++
++    public Date getStartTime() {
++        return startTime;
++    }
++
++    public void setStartTime(Date startTime) {
++        this.startTime = startTime;
++    }
++
++    private Date endTime;
++
++    public Date getEndTime() {
++        return endTime;
++    }
++
++    public void setEndTime(Date endTime) {
++        this.endTime = endTime;
++    }
++
++    private String notes;
++
++    public String getNotes() {
++        return notes;
++    }
++
++    public void setNotes(String notes) {
++        this.notes = notes;
++    }
++
++    private String driverToken;
++
++    public String getDriverToken() {
++        return driverToken;
++    }
++
++    public void setDriverToken(String driverToken) {
++        this.driverToken = driverToken;
++    }
++
++    private Date created;
++
++    public Date getCreated() {
++        return created;
++    }
++
++    public void setCreated(Date created) {
++        this.created = created;
++    }
++}
+diff --git a/src/main/java/org/traccar/model/Event.java b/src/main/java/org/traccar/model/Event.java
+index 471a5b5..592c909 100644
+--- a/src/main/java/org/traccar/model/Event.java
++++ b/src/main/java/org/traccar/model/Event.java
+@@ -53,6 +53,10 @@ public class Event extends Message {
+ 
+     public static final String TYPE_DEVICE_OVERSPEED = "deviceOverspeed";
+     public static final String TYPE_GEOFENCE_OVERSPEED = "geofenceOverspeed";
++    public static final String TYPE_DISPATCH_ARRIVAL = "dispatchArrival";
++    public static final String TYPE_DISPATCH_DELIVERED = "dispatchDelivered";
++    public static final String TYPE_DISPATCH_FAILED = "dispatchFailed";
++    public static final String TYPE_DISPATCH_LATE = "dispatchLate";
+     public static final String TYPE_DEVICE_FUEL_DROP = "deviceFuelDrop";
+     public static final String TYPE_DEVICE_FUEL_INCREASE = "deviceFuelIncrease";
+ 
+diff --git a/src/main/java/org/traccar/plans/ModuleRequestFilter.java b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+index 6e13369..f99c2ba 100644
+--- a/src/main/java/org/traccar/plans/ModuleRequestFilter.java
++++ b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+@@ -44,6 +44,7 @@ public class ModuleRequestFilter implements ContainerRequestFilter {
+             Map.entry("expenses", "expenses"),
+             Map.entry("maintenance-plans", "maintenance"),
+             Map.entry("report-templates", "reports"),
++            Map.entry("dispatch", "dispatch"),
+             Map.entry("hierarchy/domains", "whitelabel"));
+ 
+     @Inject
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+index 5bd7008..c15c51c 100644
+--- a/src/main/java/org/traccar/plans/PlanService.java
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -48,10 +48,16 @@ public class PlanService {
+     public static final String ATTRIBUTE_PLAN = "plan";
+     public static final String ATTRIBUTE_MODULES = "modules";
+     public static final String SERVER_PLANS = "plans";
++    public static final String SERVER_PLANS_MODULES = "plansModules";
+     public static final String CUSTOM = "custom";
+ 
+     public static final List<String> MODULES = List.of(
+             "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
++            "driving", "expenses", "maintenance", "reports", "dispatch", "whitelabel");
++
++    /** modules that existed before the catalog recorded which modules it knew */
++    private static final List<String> LEGACY_MODULES = List.of(
++            "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "safety", "whatsapp", "chat",
+             "driving", "expenses", "maintenance", "reports", "whitelabel");
+ 
+     public static final List<Plan> DEFAULT_PLANS = List.of(
+@@ -59,10 +65,10 @@ public class PlanService {
+                     List.of("geofenceSpeed")),
+             new Plan("pro", "Profesional", "Flotas: sensores, combustible, alertas personalizadas y reportes",
+                     "#2563c9", 0, List.of("fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+-                    "whatsapp", "driving", "expenses", "maintenance", "reports")),
++                    "whatsapp", "driving", "expenses", "maintenance", "reports", "dispatch")),
+             new Plan("video", "Video", "Profesional más dashcams, video y chat con conductores", "#8e44ad", 0,
+                     List.of("video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+-                    "whatsapp", "chat", "driving", "expenses", "maintenance", "reports")),
++                    "whatsapp", "chat", "driving", "expenses", "maintenance", "reports", "dispatch")),
+             new Plan("reseller", "Distribuidor", "Todos los módulos y marca blanca para revender", "#1a9aa3", 0,
+                     MODULES));
+ 
+@@ -89,12 +95,22 @@ public class PlanService {
+     }
+ 
+     public List<Plan> getPlans() throws StorageException {
+-        String json = getServer().getString(SERVER_PLANS);
++        Server server = getServer();
++        String json = server.getString(SERVER_PLANS);
+         if (json != null && !json.isBlank()) {
+             try {
+                 List<Plan> plans = objectMapper.readValue(json, new TypeReference<>() { });
+-                // modules no longer offered are dropped so they never block assigning a plan
+-                plans.forEach(plan -> plan.setModules(plan.getModules().stream().filter(MODULES::contains).toList()));
++                // modules no longer offered are dropped so they never block assigning a plan, and modules added
++                // after the catalog was saved join the default plans that include them
++                String saved = server.getString(SERVER_PLANS_MODULES);
++                List<String> known = saved != null ? Arrays.asList(saved.split(",")) : LEGACY_MODULES;
++                for (Plan plan : plans) {
++                    Set<String> modules = new LinkedHashSet<>(plan.getModules());
++                    DEFAULT_PLANS.stream().filter(item -> item.getId().equals(plan.getId())).findFirst()
++                            .ifPresent(item -> item.getModules().stream().filter(module -> !known.contains(module))
++                                    .forEach(modules::add));
++                    plan.setModules(modules.stream().filter(MODULES::contains).toList());
++                }
+                 return plans;
+             } catch (JsonProcessingException e) {
+                 return DEFAULT_PLANS;
+diff --git a/templates/notifications/de/dispatchArrival.vm b/templates/notifications/de/dispatchArrival.vm
+new file mode 100644
+index 0000000..da8dcb5
+--- /dev/null
++++ b/templates/notifications/de/dispatchArrival.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: Ankunft am Stopp - $event.getString('stopName')")
++#set($digest = "$device.name ist angekommen bei $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Ankunft am Stopp<br>
++Fahrt: $event.getString('tripName')<br>
++Stopp: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/dispatchDelivered.vm b/templates/notifications/de/dispatchDelivered.vm
+new file mode 100644
+index 0000000..368679e
+--- /dev/null
++++ b/templates/notifications/de/dispatchDelivered.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: Lieferung erfolgt - $event.getString('stopName')")
++#set($digest = "$device.name hat geliefert bei $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('recipient')) ($event.getString('recipient'))#end")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Lieferung erfolgt<br>
++Fahrt: $event.getString('tripName')<br>
++Stopp: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('recipient'))Empfangen von: $event.getString('recipient')<br>#end
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/dispatchFailed.vm b/templates/notifications/de/dispatchFailed.vm
+new file mode 100644
+index 0000000..fe66735
+--- /dev/null
++++ b/templates/notifications/de/dispatchFailed.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: Lieferung fehlgeschlagen - $event.getString('stopName')")
++#set($digest = "$device.name konnte nicht liefern bei $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('reason')): $event.getString('reason')#end")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Lieferung fehlgeschlagen<br>
++Fahrt: $event.getString('tripName')<br>
++Stopp: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('reason'))Grund: $event.getString('reason')<br>#end
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/dispatchLate.vm b/templates/notifications/de/dispatchLate.vm
+new file mode 100644
+index 0000000..220cdbf
+--- /dev/null
++++ b/templates/notifications/de/dispatchLate.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: Verspäteter Stopp - $event.getString('stopName')")
++#set($digest = "$device.name ist verspätet für $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Verspäteter Stopp<br>
++Fahrt: $event.getString('tripName')<br>
++Stopp: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/dispatchArrival.vm b/templates/notifications/en/dispatchArrival.vm
+new file mode 100644
+index 0000000..e176ba3
+--- /dev/null
++++ b/templates/notifications/en/dispatchArrival.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: stop arrival - $event.getString('stopName')")
++#set($digest = "$device.name arrived at stop $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Stop arrival<br>
++Trip: $event.getString('tripName')<br>
++Stop: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/dispatchDelivered.vm b/templates/notifications/en/dispatchDelivered.vm
+new file mode 100644
+index 0000000..1ceb793
+--- /dev/null
++++ b/templates/notifications/en/dispatchDelivered.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: delivery completed - $event.getString('stopName')")
++#set($digest = "$device.name delivered at $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('recipient')) ($event.getString('recipient'))#end")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Delivery completed<br>
++Trip: $event.getString('tripName')<br>
++Stop: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('recipient'))Received by: $event.getString('recipient')<br>#end
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/dispatchFailed.vm b/templates/notifications/en/dispatchFailed.vm
+new file mode 100644
+index 0000000..91eeb4e
+--- /dev/null
++++ b/templates/notifications/en/dispatchFailed.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: delivery failed - $event.getString('stopName')")
++#set($digest = "$device.name could not deliver at $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('reason')): $event.getString('reason')#end")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Delivery failed<br>
++Trip: $event.getString('tripName')<br>
++Stop: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('reason'))Reason: $event.getString('reason')<br>#end
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/dispatchLate.vm b/templates/notifications/en/dispatchLate.vm
+new file mode 100644
+index 0000000..e6c4d48
+--- /dev/null
++++ b/templates/notifications/en/dispatchLate.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: late stop - $event.getString('stopName')")
++#set($digest = "$device.name is late for $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Late stop<br>
++Trip: $event.getString('tripName')<br>
++Stop: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/dispatchArrival.vm b/templates/notifications/es/dispatchArrival.vm
+new file mode 100644
+index 0000000..aba4a80
+--- /dev/null
++++ b/templates/notifications/es/dispatchArrival.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: llegada a parada - $event.getString('stopName')")
++#set($digest = "$device.name llegó a la parada $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Llegada a parada<br>
++Viaje: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/dispatchDelivered.vm b/templates/notifications/es/dispatchDelivered.vm
+new file mode 100644
+index 0000000..c8708b4
+--- /dev/null
++++ b/templates/notifications/es/dispatchDelivered.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: entrega realizada - $event.getString('stopName')")
++#set($digest = "$device.name entregó en $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('recipient')) ($event.getString('recipient'))#end")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Entrega realizada<br>
++Viaje: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('recipient'))Recibió: $event.getString('recipient')<br>#end
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/dispatchFailed.vm b/templates/notifications/es/dispatchFailed.vm
+new file mode 100644
+index 0000000..9231cee
+--- /dev/null
++++ b/templates/notifications/es/dispatchFailed.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: entrega fallida - $event.getString('stopName')")
++#set($digest = "$device.name no pudo entregar en $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('reason')): $event.getString('reason')#end")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Entrega fallida<br>
++Viaje: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('reason'))Motivo: $event.getString('reason')<br>#end
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/dispatchLate.vm b/templates/notifications/es/dispatchLate.vm
+new file mode 100644
+index 0000000..f62f3e5
+--- /dev/null
++++ b/templates/notifications/es/dispatchLate.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: parada con retraso - $event.getString('stopName')")
++#set($digest = "$device.name va tarde a $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Parada con retraso<br>
++Viaje: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/dispatchArrival.vm b/templates/notifications/pt_BR/dispatchArrival.vm
+new file mode 100644
+index 0000000..c0dc44e
+--- /dev/null
++++ b/templates/notifications/pt_BR/dispatchArrival.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: chegada na parada - $event.getString('stopName')")
++#set($digest = "$device.name chegou à parada $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Chegada na parada<br>
++Viagem: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/dispatchDelivered.vm b/templates/notifications/pt_BR/dispatchDelivered.vm
+new file mode 100644
+index 0000000..40b56b2
+--- /dev/null
++++ b/templates/notifications/pt_BR/dispatchDelivered.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: entrega realizada - $event.getString('stopName')")
++#set($digest = "$device.name entregou em $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('recipient')) ($event.getString('recipient'))#end")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Entrega realizada<br>
++Viagem: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('recipient'))Recebido por: $event.getString('recipient')<br>#end
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/dispatchFailed.vm b/templates/notifications/pt_BR/dispatchFailed.vm
+new file mode 100644
+index 0000000..7275ca6
+--- /dev/null
++++ b/templates/notifications/pt_BR/dispatchFailed.vm
+@@ -0,0 +1,16 @@
++#set($subject = "$device.name: entrega falhou - $event.getString('stopName')")
++#set($digest = "$device.name não conseguiu entregar em $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))#if($event.getString('reason')): $event.getString('reason')#end")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Entrega falhou<br>
++Viagem: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++#if($event.getString('reason'))Motivo: $event.getString('reason')<br>#end
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/dispatchLate.vm b/templates/notifications/pt_BR/dispatchLate.vm
+new file mode 100644
+index 0000000..55900ec
+--- /dev/null
++++ b/templates/notifications/pt_BR/dispatchLate.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: parada atrasada - $event.getString('stopName')")
++#set($digest = "$device.name está atrasado para $event.getString('stopSequence'). $event.getString('stopName') ($event.getString('tripName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Parada atrasada<br>
++Viagem: $event.getString('tripName')<br>
++Parada: $event.getString('stopSequence'). $event.getString('stopName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>

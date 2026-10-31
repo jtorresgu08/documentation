@@ -1,0 +1,5 @@
+nombre;direccion;contacto;telefono;latitud;longitud;desde;hasta;notas
+Bodega Santa Rosa;Av. Universitaria 1200, San Miguel;Rosa Paz;+51 911 000 111;-12.0790;-77.0840;09:00;11:00;3 cajas
+Farmacia Universal;Av. La Marina 2500, San Miguel;Q.F. Ruiz;+51 911 000 222;-12.0772;-77.0950;;;
+Minimarket Las Flores;Jr. Huancayo 300, Breña;Carmen Díaz;;-12.0600;-77.0500;10:00;13:00;
+Ferretería El Clavo;Av. Venezuela 1500, Lima;Juan Pérez;+51 911 000 333;-12.0560;-77.0700;;;Cobrar contra entrega

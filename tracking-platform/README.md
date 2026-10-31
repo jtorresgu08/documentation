@@ -371,7 +371,7 @@ unidad está *Panel de seguimiento*.
 
 ## Planes, dominios automáticos y panel del distribuidor (parche `0021`)
 
-- **Planes con módulos heredables**: catálogo editable (*Administración → Planes*) con 13 módulos: dashcams y video,
+- **Planes con módulos heredables**: catálogo editable (*Administración → Planes*) con 14 módulos (incluye despachos): dashcams y video,
   combustible, sensores avanzados, alertas personalizadas, velocidad por geocerca, rutas por calles, alertas por
   WhatsApp, chat con conductores, puntaje de conducción, gastos, servicios, reportes configurables y marca blanca.
   - Cada cuenta hereda, tiene un plan o una selección personalizada; lo que usa es la **intersección con todos sus
@@ -386,6 +386,35 @@ unidad está *Panel de seguimiento*.
   sus cuentas directas (plan, unidades, en línea, sin señal, usuarios, caducidad) y sus dominios.
 - API: `GET/PUT /api/plans`, `GET /api/plans/modules`, `GET /api/reseller/summary`,
   `GET/POST/DELETE /api/hierarchy/domains`, `GET /api/hierarchy/domain-check`.
+
+## Despachos y entregas (parche `0022`)
+
+Módulo **Despachos y entregas** (incluido en los planes Profesional, Video y Distribuidor):
+
+- **Panel de despachos** (*Despachos*): viajes del día con su avance, unidades en curso, entregas y retrasos. El viaje
+  elegido se ve en el mapa (paradas numeradas por estado, la unidad y el recorrido pendiente) con cada parada: horario,
+  **hora estimada de llegada** (y aviso «fuera de horario» si no llegará a tiempo), llegada, entrega, quién recibió,
+  motivo de no entrega, **foto y firma**. Desde ahí se marca una parada a mano, se copia o envía por WhatsApp el
+  enlace del conductor o el de cada cliente, y se inicia, edita, cancela o elimina el viaje.
+- **Editor de viajes**: unidad, conductor, salida programada y paradas con cliente, dirección, contacto, teléfono,
+  coordenadas y ventana horaria; **importar paradas desde CSV** ([ejemplo](docs/ejemplos-despachos/paradas.csv)) y
+  **optimizar el orden** (ruta más corta desde la unidad). Al editar un viaje en curso las paradas ya atendidas
+  conservan su estado y pruebas.
+- **Automático por GPS**: al entrar en el radio de una parada se marca la llegada (y se inicia el viaje si estaba
+  planificado); si pasa la hora límite sin llegar, la parada queda «con retraso». El viaje se cierra solo cuando todas
+  las paradas están atendidas.
+- **Enlace del conductor** (sin cuenta, para el celular): paradas en orden con llamar y navegar (Google Maps),
+  «Llegué», «Entregado» con nombre de quien recibe, **foto** (se comprime en el teléfono), **firma con el dedo** y
+  ubicación, o «No entregado» con motivo.
+- **Enlace del cliente** (uno por parada, solo ve su pedido): estado, hora estimada, cuántas entregas faltan antes,
+  la unidad en el mapa mientras va en camino y quién recibió. Con WhatsApp configurado y `web.url`, el cliente recibe
+  el enlace al iniciar el viaje y la confirmación al entregar.
+- **Alertas**: «Llegada a parada», «Entrega realizada», «Entrega fallida» y «Parada con retraso», en el centro de
+  alertas y como notificación (correo, push, WhatsApp).
+- **Reporte de despachos**: % de entregas, % a tiempo, fallidas y retrasos, tiempo en cada parada, entregas por
+  unidad y por conductor, motivos de no entrega y todos los viajes, con CSV e impresión.
+- API: `/api/dispatch/trips`, `/api/dispatch/stops/{id}/status`, `/api/dispatch/report`, públicos
+  `/api/dispatch/driver/{token}` y `/api/dispatch/track/{token}`.
 
 ## Panel web
 
@@ -467,6 +496,7 @@ python3 server/tests/test_reports.py
 python3 server/tests/test_geofence_speed.py
 python3 server/tests/test_routing.py   # con routing.url apuntando a un OSRM
 python3 server/tests/test_plans.py
+python3 server/tests/test_dispatch.py   # con media.path para las fotos y firmas
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

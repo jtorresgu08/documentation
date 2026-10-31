@@ -35,6 +35,10 @@ import ReportBuilderPage from './operations/ReportBuilderPage';
 import DrivingScorePage from './reports/DrivingScorePage';
 import FuelEvidencePage from './reports/FuelEvidencePage';
 import TrackPage from './other/TrackPage';
+import DispatchPage from './dispatch/DispatchPage';
+import DispatchReportPage from './dispatch/DispatchReportPage';
+import DispatchDriverPage from './dispatch/DriverPage';
+import DeliveryTrackPage from './dispatch/DeliveryTrackPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -133,6 +137,8 @@ const Navigation = () => {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/change-server" element={<ChangeServerPage />} />
       <Route path="/track" element={<TrackPage />} />
+      <Route path="/conductor/:token" element={<DispatchDriverPage />} />
+      <Route path="/entrega/:token" element={<DeliveryTrackPage />} />
       <Route path="/" element={<App />}>
         <Route index element={<MainPage />} />
 
@@ -144,6 +150,7 @@ const Navigation = () => {
         <Route path="alert-rules" element={<AlertRulesPage />} />
         <Route path="maintenance" element={<FleetMaintenancePage />} />
         <Route path="geofences" element={<GeofencesPage />} />
+        <Route path="dispatch" element={<DispatchPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
         <Route path="admin" element={<ResellerDashboardPage />} />
         <Route path="dashcam" element={<DashcamPage />} />
@@ -204,6 +211,7 @@ const Navigation = () => {
           <Route path="sensors" element={<SensorReportPage />} />
           <Route path="custom-alerts" element={<CustomAlertsReportPage />} />
           <Route path="geofence-speed" element={<GeofenceSpeedReportPage />} />
+          <Route path="dispatch" element={<DispatchReportPage />} />
           <Route path="builder" element={<ReportBuilderPage />} />
           <Route path="events" element={<EventReportPage />} />
           <Route path="route" element={<PositionsReportPage />} />

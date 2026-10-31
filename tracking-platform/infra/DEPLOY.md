@@ -370,3 +370,17 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
   solo si el plan del destinatario lo incluye. El rastreo básico (mapa, historial, geocercas, alertas y reportes
   estándar, corte seguro de motor) está en todos los planes.
 
+## 18. Despachos y entregas
+
+- Las tablas `tc_dispatch_trips` y `tc_dispatch_stops` se crean solas al actualizar.
+- Las fotos y firmas de entrega se guardan en `media.path` (carpeta `dispatch/`), que ya está en el volumen
+  `traccar-media` del `docker-compose.yml`; entra en las copias de seguridad y en la limpieza por antigüedad.
+- Los enlaces del conductor (`/conductor/…`) y del cliente (`/entrega/…`) no requieren cuenta y no se pueden adivinar
+  (18 bytes aleatorios). El del cliente solo muestra su parada; la ubicación de la unidad se ve solo mientras su pedido
+  está en camino.
+- Para que el cliente reciba el enlace por WhatsApp hace falta la cuenta de WhatsApp de la sección 10, que la
+  plataforma tenga `web.url` (p. ej. `https://rastreo.tuempresa.com`) y que el plan del dueño del viaje incluya
+  WhatsApp. Fuera de la ventana de 24 h de WhatsApp el mensaje necesita una plantilla aprobada.
+- La hora estimada se calcula con la distancia en línea recta × 1,3, la velocidad actual (mínimo 25 km/h) y 10
+  minutos por parada.
+

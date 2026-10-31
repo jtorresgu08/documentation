@@ -25,6 +25,7 @@ import FolderIcon from '@mui/icons-material/Folder';
 import TuneIcon from '@mui/icons-material/Tune';
 import PaletteIcon from '@mui/icons-material/Palette';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
+import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PeopleIcon from '@mui/icons-material/People';
 import SpeedIcon from '@mui/icons-material/Speed';
@@ -281,6 +282,9 @@ const AppSidebar = () => {
     !disableReports && {
       key: 'history', title: t('navHistory'), icon: <HistoryIcon />, href: '/replay',
     },
+    hasModule('dispatch') && {
+      key: 'dispatch', title: t('dispatchTitle'), icon: <LocalShippingIcon />, href: '/dispatch', match: /^\/(dispatch|reports\/dispatch)/,
+    },
     hasModule('video') && {
       key: 'cameras', title: t('navCameras'), icon: <VideocamIcon />, href: '/dashcam',
     },
@@ -306,7 +310,7 @@ const AppSidebar = () => {
       match: /\/settings\/device\/\d+\/command/,
     },
     !disableReports && {
-      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel|driving|expenses|quality|builder)/,
+      key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel|driving|expenses|quality|builder|dispatch)/,
     },
     !disableReports && hasModule('reports') && {
       key: 'reportBuilder', title: t('reportBuilderTitle'), icon: <TableChartIcon />, href: '/reports/builder', match: /^\/reports\/builder/,

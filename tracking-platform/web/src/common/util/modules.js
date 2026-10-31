@@ -12,6 +12,7 @@ export const MODULE_LABELS = {
   expenses: 'moduleExpenses',
   maintenance: 'moduleMaintenance',
   reports: 'moduleReports',
+  dispatch: 'moduleDispatch',
   whitelabel: 'moduleWhitelabel',
 };
 
