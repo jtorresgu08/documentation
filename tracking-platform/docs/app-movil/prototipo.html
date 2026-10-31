@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App móvil Andes Tracking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --brand: #0b4ea2; --brand-2: #0e7c86; --ok: #2e7d32; --warn: #ed8b00; --bad: #c62828; --idle: #6b7280;
+  --bg: #eef2f7; --card: #ffffff; --text: #1d2433; --muted: #6b7380; --line: #e4e8ef;
+  --map-land: #f2efe9; --map-road: #ffffff; --map-water: #aad3df; --map-park: #d8ecd0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; }
+header.page { max-width: 1320px; margin: 0 auto; padding: 28px 16px 8px; }
+header.page h1 { margin: 0 0 6px; font-size: 26px; }
+header.page p { margin: 0; color: var(--muted); max-width: 820px; line-height: 1.5; }
+h2.group { max-width: 1320px; margin: 26px auto 8px; padding: 0 16px; font-size: 15px; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); }
+.grid { max-width: 1320px; margin: 0 auto; padding: 8px 16px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 28px 20px; justify-items: center; }
+figure { margin: 0; }
+figcaption { text-align: center; margin-top: 10px; font-size: 13px; color: var(--muted); }
+figcaption b { color: var(--text); display: block; font-size: 14px; margin-bottom: 2px; }
+
+.phone { width: 300px; height: 620px; border-radius: 42px; background: #0f1115; padding: 10px; box-shadow: 0 18px 40px rgba(16, 24, 40, .18); }
+.screen { position: relative; width: 100%; height: 100%; border-radius: 33px; overflow: hidden; background: #f6f8fb; display: flex; flex-direction: column; font-size: 13px; }
+.status { height: 34px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 12px; font-weight: 600; position: relative; z-index: 3; }
+.status::after { content: ""; position: absolute; left: 50%; top: 8px; width: 86px; height: 22px; margin-left: -43px; background: #0f1115; border-radius: 12px; }
+.status .icons { display: flex; gap: 4px; align-items: center; }
+.bar { height: 8px; width: 3px; background: currentColor; border-radius: 1px; display: inline-block; }
+.appbar { display: flex; align-items: center; gap: 10px; padding: 6px 16px 10px; }
+.appbar h3 { margin: 0; font-size: 18px; flex: 1; }
+.appbar .sub { font-size: 12px; color: var(--muted); font-weight: 500; }
+.icon-btn { width: 34px; height: 34px; border-radius: 50%; background: var(--card); display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.08); flex-shrink: 0; }
+.content { flex: 1; overflow: hidden; padding: 0 14px; display: flex; flex-direction: column; gap: 10px; }
+.tabbar { height: 64px; flex-shrink: 0; background: var(--card); border-top: 1px solid var(--line); display: flex; justify-content: space-around; align-items: center; padding-bottom: 8px; }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10px; color: var(--muted); font-weight: 500; position: relative; }
+.tab.on { color: var(--brand); }
+.tab .badge { position: absolute; top: -4px; right: -2px; background: var(--bad); color: #fff; border-radius: 8px; font-size: 9px; padding: 1px 5px; }
+svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+svg.s { width: 16px; height: 16px; }
+.card { background: var(--card); border-radius: 16px; padding: 12px; box-shadow: 0 1px 3px rgba(16,24,40,.06); }
+.row { display: flex; align-items: center; gap: 10px; }
+.grow { flex: 1; min-width: 0; }
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; background: #e8eef8; color: var(--brand); white-space: nowrap; }
+.chip.ok { background: #e6f4e7; color: var(--ok); } .chip.warn { background: #fff1de; color: #b06200; } .chip.bad { background: #fde8e8; color: var(--bad); } .chip.idle { background: #eef0f3; color: var(--idle); }
+.btn { border: 0; border-radius: 12px; padding: 11px; font: 600 13px Inter, sans-serif; background: var(--brand); color: #fff; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.btn.outline { background: transparent; color: var(--brand); box-shadow: inset 0 0 0 1.5px var(--brand); }
+.btn.danger { background: var(--bad); }
+.btn.light { background: #e8eef8; color: var(--brand); }
+.truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map { position: absolute; inset: 0; }
+.float { position: absolute; z-index: 2; }
+.search { left: 14px; right: 14px; top: 40px; background: var(--card); border-radius: 14px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; color: var(--muted); box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+.filters { left: 14px; right: 0; top: 88px; display: flex; gap: 6px; overflow: hidden; }
+.filters .chip { background: var(--card); box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+.sheet { left: 0; right: 0; bottom: 64px; background: var(--card); border-radius: 22px 22px 0 0; padding: 8px 14px 12px; box-shadow: 0 -4px 16px rgba(0,0,0,.08); }
+.grab { width: 38px; height: 4px; background: #d5dae2; border-radius: 3px; margin: 0 auto 10px; }
+.unit-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.unit-row:last-child { border-bottom: 0; }
+.avatar { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; color: #fff; flex-shrink: 0; }
+.speed { font-weight: 700; font-size: 14px; text-align: right; }
+.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.kpi { background: var(--card); border-radius: 14px; padding: 10px; box-shadow: 0 1px 3px rgba(16,24,40,.06); }
+.kpi b { display: block; font-size: 16px; white-space: nowrap; }
+.kpi span { font-size: 10.5px; color: var(--muted); }
+.actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.action { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 500; text-align: center; }
+.action .ic { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: #e8eef8; color: var(--brand); }
+.action.red .ic { background: #fde8e8; color: var(--bad); }
+.alert-item { display: flex; gap: 10px; padding: 10px 12px; background: var(--card); border-radius: 14px; box-shadow: 0 1px 3px rgba(16,24,40,.06); border-left: 4px solid var(--warn); }
+.alert-item.critical { border-left-color: var(--bad); } .alert-item.medium { border-left-color: var(--brand); } .alert-item.low { border-left-color: var(--idle); }
+.alert-item .t { font-weight: 600; font-size: 12.5px; }
+.thumb { width: 54px; height: 40px; border-radius: 8px; flex-shrink: 0; background: linear-gradient(135deg, #3d4756, #1c222b); position: relative; overflow: hidden; }
+.thumb::after { content: ""; position: absolute; left: 21px; top: 13px; border-left: 12px solid rgba(255,255,255,.85); border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
+.seg { display: flex; background: #e9edf3; border-radius: 12px; padding: 3px; }
+.seg span { flex: 1; text-align: center; padding: 6px 0; border-radius: 9px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.seg span.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 90px; padding-top: 6px; }
+.bars div { flex: 1; border-radius: 5px 5px 2px 2px; background: var(--brand); opacity: .85; position: relative; }
+.bars div.hi { background: var(--brand-2); opacity: 1; }
+.axis { display: flex; gap: 6px; font-size: 10px; color: var(--muted); margin-top: 4px; }
+.axis span { flex: 1; text-align: center; }
+.list-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.list-item:last-child { border-bottom: 0; }
+.stop { display: flex; gap: 10px; position: relative; padding-bottom: 12px; }
+.stop .rail { display: flex; flex-direction: column; align-items: center; }
+.stop .rail i { width: 14px; height: 14px; border-radius: 50%; border: 3px solid var(--brand); background: #fff; display: block; }
+.stop.done .rail i { background: var(--ok); border-color: var(--ok); }
+.stop.now .rail i { background: var(--brand); box-shadow: 0 0 0 5px rgba(11,78,162,.18); }
+.stop .rail u { width: 2px; flex: 1; background: #d5dae2; margin-top: 3px; text-decoration: none; }
+.stop:last-child .rail u { display: none; }
+.bubble { max-width: 78%; padding: 8px 11px; border-radius: 16px; font-size: 12.5px; line-height: 1.4; }
+.bubble.me { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 5px; }
+.bubble.them { align-self: flex-start; background: var(--card); border-bottom-left-radius: 5px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.bubble .tm { display: block; font-size: 9.5px; opacity: .7; margin-top: 3px; text-align: right; }
+.composer { display: flex; gap: 8px; align-items: center; padding: 8px 12px 12px; background: var(--card); border-top: 1px solid var(--line); }
+.composer .in { flex: 1; background: #f0f3f7; border-radius: 20px; padding: 9px 12px; color: var(--muted); }
+.field { background: var(--card); border-radius: 12px; padding: 8px 12px; box-shadow: inset 0 0 0 1px var(--line); }
+.field label { display: block; font-size: 10.5px; color: var(--muted); }
+.field div { font-weight: 600; font-size: 13.5px; margin-top: 1px; }
+.receipt { height: 120px; border-radius: 14px; background: repeating-linear-gradient(0deg, #fff 0 9px, #f1f1f1 9px 10px); box-shadow: inset 0 0 0 1px var(--line); position: relative; display: grid; place-items: center; }
+.receipt .paper { width: 92px; height: 108px; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.18); transform: rotate(-4deg); padding: 9px; font-size: 7px; line-height: 1.6; color: #555; font-family: monospace; }
+.panic { width: 168px; height: 168px; border-radius: 50%; margin: 6px auto; background: radial-gradient(circle at 50% 40%, #ef5350, #b71c1c); color: #fff; display: grid; place-items: center; text-align: center; font-weight: 700; font-size: 17px; box-shadow: 0 0 0 14px rgba(198,40,40,.13), 0 0 0 28px rgba(198,40,40,.07), 0 12px 24px rgba(183,28,28,.35); }
+.login-bg { position: absolute; inset: 0; background: linear-gradient(160deg, var(--brand) 0%, #083a7a 55%, var(--brand-2) 130%); }
+.toast { left: 12px; right: 12px; top: 44px; background: rgba(255,255,255,.96); border-radius: 18px; padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.18); display: flex; gap: 10px; }
+.toast .app { width: 30px; height: 30px; border-radius: 8px; background: var(--brand); display: grid; place-items: center; flex-shrink: 0; }
+.video { height: 150px; border-radius: 14px; background: linear-gradient(180deg, #59667a 0%, #2d343f 60%, #1f252d 100%); position: relative; overflow: hidden; }
+.video .road { position: absolute; left: 50%; bottom: 0; width: 0; height: 0; border-left: 110px solid transparent; border-right: 110px solid transparent; border-bottom: 90px solid #3a404a; margin-left: -110px; }
+.video .lane { position: absolute; left: 50%; bottom: 0; width: 4px; height: 80px; margin-left: -2px; background: repeating-linear-gradient(0deg, #e6c34a 0 12px, transparent 12px 24px); clip-path: polygon(30% 0, 70% 0, 100% 100%, 0 100%); }
+.video .tag { position: absolute; left: 8px; top: 8px; background: var(--bad); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 5px; }
+.video .ch { position: absolute; right: 8px; top: 8px; color: #fff; font-size: 10px; background: rgba(0,0,0,.45); padding: 2px 6px; border-radius: 5px; }
+.video .ts { position: absolute; left: 8px; bottom: 8px; color: #fff; font-size: 10px; font-family: monospace; }
+.note { max-width: 1320px; margin: 0 auto 40px; padding: 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18 9 12l6-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
+    <symbol id="i-cam" viewBox="0 0 24 24"><path d="M23 7 16 12l7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></symbol>
+    <symbol id="i-hist" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></symbol>
+    <symbol id="i-fuel" viewBox="0 0 24 24"><path d="M3 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18M3 22h12M3 11h12"/><path d="M15 8h2a2 2 0 0 1 2 2v7a1.5 1.5 0 0 0 3 0V9l-3-3"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.7A8 8 0 1 1 21 12z"/></symbol>
+    <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M5 2h14v20l-3-2-2 2-2-2-2 2-2-2-3 2V2z"/><path d="M9 7h6M9 11h6M9 15h4"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><circle cx="18" cy="5" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7l10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m6 4 14 8-14 8z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L2 10l8-8z"/></symbol>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="M5 17h14M3 13l2-6h14l2 6v5H3z"/><circle cx="7.5" cy="16.5" r="1.5"/><circle cx="16.5" cy="16.5" r="1.5"/></symbol>
+    <symbol id="truck" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M2 6h11v9H2zM13 9h4l3 3v3h-7zM6 18.5a1.8 1.8 0 1 0 0-.01zM17 18.5a1.8 1.8 0 1 0 0-.01z"/></symbol>
+    <g id="mapbase">
+      <rect width="300" height="620" fill="#f2efe9"/>
+      <path d="M0 0h58l-14 120 24 130-30 150 20 220H0z" fill="#aad3df"/>
+      <path d="M150 210h80v60h-80zM196 430h64v52h-64z" fill="#d8ecd0"/>
+      <rect x="92" y="330" width="46" height="38" fill="#e6dfd2"/>
+      <g stroke="#fff" stroke-linecap="round">
+        <path stroke-width="10" d="M56 140 300 112M48 300l252-20M60 470l240-36M120 0l18 620M222 0l-14 620" stroke="#fde7a8"/>
+        <path stroke-width="5" d="M70 60 300 40M66 210l234-16M52 390l248-30M58 550l242-40M80 0l10 620M175 0l2 620M262 0l-6 620"/>
+        <path stroke-width="2.5" d="M64 250h236M60 340l240-14M66 430l234-20M96 100l200-10M150 0v620M200 0v620M240 0v620M110 520l190-30"/>
+      </g>
+      <path d="M56 140 300 112M48 300l252-20M60 470l240-36M120 0l18 620M222 0l-14 620" stroke="#f4c95d" stroke-width="1" fill="none" opacity=".7"/>
+    </g>
+  </defs>
+</svg>
+
+<header class="page">
+  <h1>App móvil Andes Tracking: prototipo de pantallas</h1>
+  <p>Así se vería la app para Android e iOS con la marca de la plataforma (o la del distribuidor). Una sola app: al
+    ingresar, el <b>cliente</b> ve su flota y el <b>conductor</b> ve su turno, ruta y chat. Los datos son de ejemplo.</p>
+</header>
+
+<h2 class="group">Cliente / gerente de flota</h2>
+<div class="grid">
+
+  <!-- 1 Login -->
+  <figure>
+    <div class="phone"><div class="screen" style="color:#fff">
+      <div class="login-bg"></div>
+      <div class="status" style="color:#fff"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div style="position:relative;z-index:2;flex:1;display:flex;flex-direction:column;padding:40px 26px 30px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z" fill="#fff"/><circle cx="12" cy="10" r="3" fill="#0b4ea2"/></svg>
+          <div><div style="font-weight:700;font-size:22px;letter-spacing:.02em">ANDES</div><div style="font-size:11px;letter-spacing:.3em;color:#9fe3e6">TRACKING</div></div>
+        </div>
+        <div style="margin-top:46px;font-size:24px;font-weight:700;line-height:1.25">Tu flota,<br>siempre a la vista</div>
+        <div style="margin-top:8px;font-size:13px;opacity:.8">Ingresa con la cuenta de tu empresa</div>
+        <div style="margin-top:28px;display:flex;flex-direction:column;gap:10px">
+          <div style="background:rgba(255,255,255,.14);border-radius:12px;padding:12px 14px;font-size:13px">gerencia@transandinos.pe</div>
+          <div style="background:rgba(255,255,255,.14);border-radius:12px;padding:12px 14px;font-size:13px;letter-spacing:.2em">••••••••</div>
+          <button class="btn" style="background:#fff;color:var(--brand);margin-top:6px">Ingresar</button>
+          <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;opacity:.9;margin-top:6px">
+            <svg class="i s" style="stroke:#fff"><use href="#i-shield"/></svg> Ingresar con huella o Face ID</div>
+        </div>
+        <div style="margin-top:auto;text-align:center;font-size:11px;opacity:.6">¿Olvidaste tu contraseña? · Soporte</div>
+      </div>
+    </div></div>
+    <figcaption><b>Ingreso</b>Marca blanca: logo y colores del distribuidor; huella o Face ID</figcaption>
+  </figure>
+
+  <!-- 2 Mapa en vivo -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <svg class="map" viewBox="0 0 300 620" preserveAspectRatio="xMidYMid slice">
+        <use href="#mapbase"/>
+        <circle cx="185" cy="248" r="34" fill="rgba(11,78,162,.08)" stroke="#0b4ea2" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <g transform="translate(130 160)"><circle r="15" fill="#2e7d32" stroke="#fff" stroke-width="3"/><path d="M0-7 5 5 0 2-5 5z" fill="#fff" transform="rotate(40)"/></g>
+        <g transform="translate(205 300)"><circle r="15" fill="#2e7d32" stroke="#fff" stroke-width="3"/><path d="M0-7 5 5 0 2-5 5z" fill="#fff" transform="rotate(170)"/></g>
+        <g transform="translate(96 352)"><circle r="15" fill="#ed8b00" stroke="#fff" stroke-width="3"/><rect x="-4" y="-4" width="8" height="8" rx="1" fill="#fff"/></g>
+        <g transform="translate(250 215)"><circle r="15" fill="#6b7280" stroke="#fff" stroke-width="3"/><rect x="-4" y="-4" width="8" height="8" rx="1" fill="#fff"/></g>
+        <g transform="translate(160 420)"><circle r="18" fill="#0b4ea2" stroke="#fff" stroke-width="3"/><text y="5" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="Inter">4</text></g>
+        <g font-family="Inter" font-size="9" font-weight="600" fill="#1d2433"><text x="148" y="164">ABC-123</text><text x="222" y="304">BXR-845</text></g>
+      </svg>
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="float search"><svg class="i s"><use href="#i-search"/></svg><span class="grow">Buscar unidad, placa o conductor</span><svg class="i s"><use href="#i-layers"/></svg></div>
+      <div class="float filters"><span class="chip" style="background:var(--brand);color:#fff">Todas 24</span><span class="chip ok"><i class="dot" style="background:var(--ok)"></i>En ruta 15</span><span class="chip warn"><i class="dot" style="background:var(--warn)"></i>Detenidas 6</span><span class="chip idle">Sin señal 3</span></div>
+      <div class="float" style="right:14px;top:300px;display:flex;flex-direction:column;gap:8px"><div class="icon-btn"><svg class="i s"><use href="#i-target"/></svg></div></div>
+      <div class="float sheet">
+        <div class="grab"></div>
+        <div class="unit-row"><div class="avatar" style="background:var(--ok)"><svg class="i s" style="stroke:none;width:20px;height:20px;color:#fff"><use href="#truck"/></svg></div>
+          <div class="grow"><b>ABC-123 · Volvo FH</b><div class="small muted truncate">Av. Javier Prado Este · J. Pérez</div></div><div class="speed">62<div class="small muted" style="font-weight:500">km/h</div></div></div>
+        <div class="unit-row"><div class="avatar" style="background:var(--warn)"><svg class="i s" style="stroke:none;width:20px;height:20px;color:#fff"><use href="#truck"/></svg></div>
+          <div class="grow"><b>CDF-452 · Hino 500</b><div class="small muted truncate">Detenido 1 h 12 min · Almacén Callao</div></div><div class="speed">0<div class="small muted" style="font-weight:500">km/h</div></div></div>
+      </div>
+      <div class="float tabbar" style="left:0;right:0;bottom:0;position:absolute">
+        <div class="tab on"><svg class="i"><use href="#i-map"/></svg>Mapa</div>
+        <div class="tab"><svg class="i"><use href="#i-list"/></svg>Unidades</div>
+        <div class="tab"><span class="badge">3</span><svg class="i"><use href="#i-bell"/></svg>Alertas</div>
+        <div class="tab"><svg class="i"><use href="#i-chart"/></svg>Reportes</div>
+        <div class="tab"><svg class="i"><use href="#i-user"/></svg>Cuenta</div>
+      </div>
+    </div></div>
+    <figcaption><b>Mapa en vivo</b>Estados por color, filtros rápidos, agrupación y geocercas</figcaption>
+  </figure>
+
+  <!-- 3 Detalle de unidad -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div style="position:relative;height:170px;flex-shrink:0">
+        <svg class="map" viewBox="0 0 300 170" preserveAspectRatio="xMidYMid slice"><svg viewBox="40 80 300 170" width="300" height="170"><use href="#mapbase"/></svg>
+          <path d="M40 150 C 90 140, 110 100, 160 96 S 230 90, 250 70" fill="none" stroke="#0b4ea2" stroke-width="4" stroke-linecap="round" opacity=".85"/>
+          <g transform="translate(160 96)"><circle r="14" fill="#2e7d32" stroke="#fff" stroke-width="3"/><path d="M0-7 5 5 0 2-5 5z" fill="#fff" transform="rotate(70)"/></g></svg>
+        <div class="status" style="position:absolute;left:0;right:0;top:0"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+        <div style="position:absolute;left:14px;top:40px" class="icon-btn"><svg class="i s"><use href="#i-back"/></svg></div>
+        <div style="position:absolute;right:14px;top:40px" class="icon-btn"><svg class="i s"><use href="#i-more"/></svg></div>
+      </div>
+      <div class="content" style="margin-top:-18px;position:relative;z-index:2">
+        <div class="card">
+          <div class="row"><div class="grow"><div style="font-size:17px;font-weight:700">ABC-123</div><div class="small muted">Volvo FH · Juan Pérez · hace 5 s</div></div><span class="chip ok"><i class="dot" style="background:var(--ok)"></i>En ruta</span></div>
+          <div class="small muted" style="margin-top:6px">Av. Javier Prado Este 4200, Santiago de Surco</div>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><b>62</b><span>km/h</span></div>
+          <div class="kpi"><b>68%</b><span>Combustible · 204 L</span></div>
+          <div class="kpi"><b>186</b><span>km hoy</span></div>
+        </div>
+        <div class="card actions">
+          <div class="action"><span class="ic"><svg class="i"><use href="#i-hist"/></svg></span>Historial</div>
+          <div class="action"><span class="ic"><svg class="i"><use href="#i-cam"/></svg></span>Cámaras</div>
+          <div class="action"><span class="ic"><svg class="i"><use href="#i-share"/></svg></span>Compartir</div>
+          <div class="action red"><span class="ic"><svg class="i"><use href="#i-power"/></svg></span>Cortar motor</div>
+        </div>
+        <div class="card" style="padding:4px 12px">
+          <div class="list-item"><svg class="i s muted"><use href="#i-key"/></svg><span class="grow">Motor encendido</span><b>3 h 40 min</b></div>
+          <div class="list-item"><svg class="i s muted"><use href="#i-gauge"/></svg><span class="grow">Puntaje de conducción</span><b style="color:var(--ok)">92 / 100</b></div>
+          <div class="list-item"><svg class="i s muted"><use href="#i-wrench"/></svg><span class="grow">Cambio de aceite</span><b style="color:var(--warn)">en 850 km</b></div>
+        </div>
+      </div>
+    </div></div>
+    <figcaption><b>Detalle de la unidad</b>Datos en vivo, sensores, accesos a historial, video y corte seguro</figcaption>
+  </figure>
+
+  <!-- 4 Corte de motor -->
+  <figure>
+    <div class="phone"><div class="screen" style="background:#3c4350">
+      <div style="position:absolute;inset:0;opacity:.35"><svg class="map" viewBox="0 0 300 620" preserveAspectRatio="xMidYMid slice"><use href="#mapbase"/></svg></div>
+      <div class="status" style="color:#fff"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="float sheet" style="bottom:0;padding:10px 18px 26px">
+        <div class="grab"></div>
+        <div style="width:56px;height:56px;border-radius:18px;background:#fde8e8;color:var(--bad);display:grid;place-items:center;margin:4px auto 10px"><svg class="i" style="width:28px;height:28px"><use href="#i-power"/></svg></div>
+        <div style="text-align:center;font-size:17px;font-weight:700">Cortar motor de ABC-123</div>
+        <div style="text-align:center;font-size:12.5px;color:var(--muted);margin:6px 0 14px;line-height:1.45">La unidad va a <b style="color:var(--text)">62 km/h</b>. Por seguridad el corte se ejecutará cuando baje de <b style="color:var(--text)">10 km/h</b>.</div>
+        <div class="card" style="box-shadow:inset 0 0 0 1px var(--line);padding:4px 12px;margin-bottom:12px">
+          <div class="list-item"><svg class="i s" style="color:var(--ok)"><use href="#i-check"/></svg><span class="grow">Confirmación con huella</span></div>
+          <div class="list-item"><svg class="i s" style="color:var(--ok)"><use href="#i-check"/></svg><span class="grow">Aviso al conductor por WhatsApp</span></div>
+          <div class="list-item"><svg class="i s" style="color:var(--ok)"><use href="#i-check"/></svg><span class="grow">Registro en auditoría</span></div>
+        </div>
+        <div class="field" style="margin-bottom:12px"><label>Motivo</label><div>Uso fuera de horario</div></div>
+        <button class="btn danger"><svg class="i s" style="stroke:#fff"><use href="#i-shield"/></svg>Confirmar con huella</button>
+        <button class="btn outline" style="margin-top:8px;box-shadow:none;color:var(--muted)">Cancelar</button>
+      </div>
+    </div></div>
+    <figcaption><b>Corte de motor seguro</b>Confirmación biométrica y espera a baja velocidad</figcaption>
+  </figure>
+
+  <!-- 5 Alertas -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="float toast"><div class="app"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z" fill="#fff"/></svg></div>
+        <div class="grow"><div class="small" style="font-weight:700">Andes Tracking <span class="muted" style="font-weight:400">· ahora</span></div><div style="font-size:12px;line-height:1.35"><b>Posible robo de combustible</b> en CDF-452: −38 L detenido en Av. Argentina</div></div></div>
+      <div class="appbar" style="margin-top:96px"><h3>Alertas</h3><div class="icon-btn"><svg class="i s"><use href="#i-search"/></svg></div></div>
+      <div class="content">
+        <div class="seg"><span class="on">Abiertas 12</span><span>Atendidas</span><span>Todas</span></div>
+        <div class="alert-item critical"><div class="grow"><div class="row"><span class="t grow">Robo de combustible −38 L</span><span class="chip bad">Crítica</span></div><div class="small muted">CDF-452 · hace 1 min · con evidencia</div></div></div>
+        <div class="alert-item"><div class="thumb"></div><div class="grow"><div class="t">Fatiga del conductor</div><div class="small muted">ABC-123 · dashcam · hace 9 min</div></div></div>
+        <div class="alert-item"><div class="grow"><div class="row"><span class="t grow">Exceso en geocerca</span><span class="chip warn">Peligroso</span></div><div class="small muted">BXR-845 · 52 km/h en Colegio (40) · 14 min</div></div></div>
+        <div class="alert-item medium"><div class="grow"><div class="t">Salida de geocerca de ruta</div><div class="small muted">FGH-778 · Ruta Centro - La Victoria · 32 min</div></div></div>
+        <div class="alert-item low"><div class="grow"><div class="t">Sin señal más de 2 h</div><div class="small muted">JKL-102 · última posición Ate · 2 h</div></div></div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg class="i"><use href="#i-map"/></svg>Mapa</div>
+        <div class="tab"><svg class="i"><use href="#i-list"/></svg>Unidades</div>
+        <div class="tab on"><span class="badge">3</span><svg class="i"><use href="#i-bell"/></svg>Alertas</div>
+        <div class="tab"><svg class="i"><use href="#i-chart"/></svg>Reportes</div>
+        <div class="tab"><svg class="i"><use href="#i-user"/></svg>Cuenta</div>
+      </div>
+    </div></div>
+    <figcaption><b>Centro de alertas</b>Push con prioridad, video de la dashcam y atención desde el celular</figcaption>
+  </figure>
+
+  <!-- 6 Historial -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <svg class="map" viewBox="0 0 300 620" preserveAspectRatio="xMidYMid slice">
+        <use href="#mapbase"/>
+        <path d="M80 520 C 100 470, 130 450, 138 400 S 120 320, 150 290 S 210 260, 212 210 S 190 130, 240 110" fill="none" stroke="#0b4ea2" stroke-width="5" stroke-linecap="round" opacity=".85"/>
+        <path d="M138 400 C 134 370, 126 345, 132 330" fill="none" stroke="#c62828" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="80" cy="520" r="7" fill="#2e7d32" stroke="#fff" stroke-width="2.5"/><circle cx="240" cy="110" r="7" fill="#c62828" stroke="#fff" stroke-width="2.5"/>
+        <g transform="translate(150 290)"><circle r="10" fill="#ed8b00" stroke="#fff" stroke-width="2.5"/><text y="4" text-anchor="middle" font-size="10" font-weight="700" fill="#fff" font-family="Inter">P</text></g>
+        <g transform="translate(212 210)"><circle r="13" fill="#0b4ea2" stroke="#fff" stroke-width="3"/><path d="M0-6 4.5 4.5 0 2-4.5 4.5z" fill="#fff" transform="rotate(15)"/></g>
+      </svg>
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="float search" style="color:var(--text)"><svg class="i s"><use href="#i-back"/></svg><div class="grow"><b>ABC-123</b> <span class="muted small">· Hoy 06:00 – 12:30</span></div><svg class="i s"><use href="#i-download"/></svg></div>
+      <div class="float sheet" style="bottom:0;padding-bottom:22px">
+        <div class="grab"></div>
+        <div class="row" style="margin-bottom:10px"><div class="icon-btn" style="background:var(--brand);color:#fff"><svg class="i s" style="fill:#fff;stroke:none"><use href="#i-play"/></svg></div>
+          <div class="grow"><div style="height:5px;background:#e4e8ef;border-radius:3px;position:relative"><div style="width:58%;height:100%;background:var(--brand);border-radius:3px"></div><div style="position:absolute;left:58%;top:-5px;width:15px;height:15px;margin-left:-7px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div></div>
+            <div class="row small muted" style="margin-top:5px"><span class="grow">09:47 · 48 km/h</span><span>×8</span></div></div></div>
+        <div class="kpis">
+          <div class="kpi" style="box-shadow:inset 0 0 0 1px var(--line)"><b>142 km</b><span>Recorrido</span></div>
+          <div class="kpi" style="box-shadow:inset 0 0 0 1px var(--line)"><b>4 h 05</b><span>En movimiento</span></div>
+          <div class="kpi" style="box-shadow:inset 0 0 0 1px var(--line)"><b style="color:var(--bad)">2</b><span>Excesos</span></div>
+        </div>
+      </div>
+    </div></div>
+    <figcaption><b>Historial y reproducción</b>Recorrido con paradas y excesos marcados, velocidad ×1 a ×16</figcaption>
+  </figure>
+
+  <!-- 7 Cámaras -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><div class="icon-btn"><svg class="i s"><use href="#i-back"/></svg></div><div class="grow"><h3 style="font-size:16px">Cámaras ABC-123</h3><div class="sub">MDVR 4 canales · en línea</div></div></div>
+      <div class="content">
+        <div class="video"><div class="road"></div><div class="lane"></div><span class="tag">● EN VIVO</span><span class="ch">CH1 Frontal</span><span class="ts">31/10/2026 09:41:12 · 62 km/h</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+          <div class="video" style="height:58px;background:linear-gradient(180deg,#6b5a4a,#2b2420)"><span class="ch" style="font-size:9px">CH2 Cabina</span></div>
+          <div class="video" style="height:58px;background:linear-gradient(180deg,#4b5565,#262c35)"><span class="ch" style="font-size:9px">CH3 Carga</span></div>
+          <div class="video" style="height:58px;background:linear-gradient(180deg,#556070,#2a313b)"><span class="ch" style="font-size:9px">CH4 Atrás</span></div>
+        </div>
+        <div class="row" style="gap:8px"><button class="btn light"><svg class="i s"><use href="#i-camera"/></svg>Foto</button><button class="btn light"><svg class="i s"><use href="#i-hist"/></svg>Grabaciones</button></div>
+        <div style="font-weight:700;margin-top:2px">Eventos con video</div>
+        <div class="card" style="padding:4px 12px">
+          <div class="list-item"><div class="thumb"></div><div class="grow"><b style="font-size:12.5px">Uso del celular</b><div class="small muted">09:12 · Av. Arequipa</div></div></div>
+          <div class="list-item"><div class="thumb"></div><div class="grow"><b style="font-size:12.5px">Distancia corta (ADAS)</b><div class="small muted">08:47 · Vía Expresa</div></div></div>
+        </div>
+      </div>
+    </div></div>
+    <figcaption><b>Dashcam y MDVR</b>Video en vivo por canal, grabaciones y eventos ADAS/DMS</figcaption>
+  </figure>
+
+  <!-- 8 Reportes -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><h3>Resumen de flota</h3><span class="chip">Esta semana</span></div>
+      <div class="content">
+        <div class="kpis">
+          <div class="kpi"><b>8 420</b><span>km recorridos</span></div>
+          <div class="kpi"><b>2 960 L</b><span>combustible</span></div>
+          <div class="kpi"><b style="color:var(--ok)">88</b><span>puntaje medio</span></div>
+        </div>
+        <div class="card">
+          <div class="row"><b class="grow">Kilómetros por día</b><span class="small muted">km</span></div>
+          <div class="bars"><div style="height:62%"></div><div style="height:78%"></div><div style="height:70%"></div><div style="height:88%"></div><div class="hi" style="height:96%"></div><div style="height:45%"></div><div style="height:22%"></div></div>
+          <div class="axis"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+        </div>
+        <div class="card" style="padding:4px 12px">
+          <div class="list-item"><svg class="i s" style="color:var(--brand)"><use href="#i-route"/></svg><span class="grow">Viajes y paradas</span><svg class="i s muted" style="transform:rotate(180deg)"><use href="#i-back"/></svg></div>
+          <div class="list-item"><svg class="i s" style="color:var(--brand)"><use href="#i-fuel"/></svg><span class="grow">Combustible: cargas y descargas</span><svg class="i s muted" style="transform:rotate(180deg)"><use href="#i-back"/></svg></div>
+          <div class="list-item"><svg class="i s" style="color:var(--brand)"><use href="#i-gauge"/></svg><span class="grow">Ranking de conductores</span><svg class="i s muted" style="transform:rotate(180deg)"><use href="#i-back"/></svg></div>
+          <div class="list-item"><svg class="i s" style="color:var(--brand)"><use href="#i-alert"/></svg><span class="grow">Excesos en geocercas</span><svg class="i s muted" style="transform:rotate(180deg)"><use href="#i-back"/></svg></div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg class="i"><use href="#i-map"/></svg>Mapa</div>
+        <div class="tab"><svg class="i"><use href="#i-list"/></svg>Unidades</div>
+        <div class="tab"><span class="badge">3</span><svg class="i"><use href="#i-bell"/></svg>Alertas</div>
+        <div class="tab on"><svg class="i"><use href="#i-chart"/></svg>Reportes</div>
+        <div class="tab"><svg class="i"><use href="#i-user"/></svg>Cuenta</div>
+      </div>
+    </div></div>
+    <figcaption><b>Reportes rápidos</b>Resumen semanal y reportes en PDF o Excel para compartir</figcaption>
+  </figure>
+</div>
+
+<h2 class="group">Conductor</h2>
+<div class="grid">
+
+  <!-- 9 Turno y ruta -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><div class="avatar" style="background:var(--brand-2);border-radius:50%;width:38px;height:38px;font-weight:700">JP</div><div class="grow"><h3 style="font-size:16px">Hola, Juan</h3><div class="sub">ABC-123 · Volvo FH</div></div><span class="chip ok"><i class="dot" style="background:var(--ok)"></i>En turno</span></div>
+      <div class="content">
+        <div class="card" style="background:linear-gradient(135deg,var(--brand),#083a7a);color:#fff">
+          <div class="row"><div class="grow"><div class="small" style="opacity:.8">Turno iniciado 06:02</div><div style="font-size:24px;font-weight:700">3 h 39 min</div></div><div style="text-align:right"><div class="small" style="opacity:.8">Descanso en</div><div style="font-weight:700">50 min</div></div></div>
+          <div style="height:5px;background:rgba(255,255,255,.25);border-radius:3px;margin-top:10px"><div style="width:81%;height:100%;background:#9fe3e6;border-radius:3px"></div></div>
+        </div>
+        <div class="row"><b class="grow">Ruta de hoy</b><span class="small muted">2 de 4 entregas</span></div>
+        <div class="card">
+          <div class="stop done"><div class="rail"><i></i><u></u></div><div class="grow"><b>Almacén Callao</b><div class="small muted">Salida 06:15</div></div></div>
+          <div class="stop done"><div class="rail"><i></i><u></u></div><div class="grow"><b>Supermercado Surquillo</b><div class="small muted">Entregado 08:02 · foto y firma</div></div></div>
+          <div class="stop now"><div class="rail"><i></i><u></u></div><div class="grow"><b>Tienda San Borja</b><div class="small muted">Llegada estimada 10:05 · 6.2 km</div></div></div>
+          <div class="stop"><div class="rail"><i></i><u></u></div><div class="grow"><b>Mercado La Victoria</b><div class="small muted">Ventana 11:00 – 12:00</div></div></div>
+        </div>
+        <button class="btn"><svg class="i s" style="stroke:#fff"><use href="#i-route"/></svg>Navegar a la siguiente parada</button>
+      </div>
+      <div class="tabbar">
+        <div class="tab on"><svg class="i"><use href="#i-route"/></svg>Mi ruta</div>
+        <div class="tab"><span class="badge">1</span><svg class="i"><use href="#i-chat"/></svg>Chat</div>
+        <div class="tab"><svg class="i"><use href="#i-receipt"/></svg>Gastos</div>
+        <div class="tab" style="color:var(--bad)"><svg class="i"><use href="#i-alert"/></svg>Pánico</div>
+      </div>
+    </div></div>
+    <figcaption><b>Turno y ruta del día</b>Horas de manejo, descansos y paradas con hora estimada</figcaption>
+  </figure>
+
+  <!-- 10 Prueba de entrega -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><div class="icon-btn"><svg class="i s"><use href="#i-back"/></svg></div><div class="grow"><h3 style="font-size:16px">Tienda San Borja</h3><div class="sub">Pedido #4821 · 12 bultos</div></div></div>
+      <div class="content">
+        <div class="card row"><svg class="i s" style="color:var(--ok)"><use href="#i-pin"/></svg><span class="grow small">Llegaste a la parada (dentro de 40 m)</span><span class="chip ok">10:03</span></div>
+        <div style="font-weight:700">Foto de la entrega</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="height:92px;border-radius:14px;background:linear-gradient(140deg,#c8a97e,#8a6b45);position:relative"><div style="position:absolute;left:18px;top:22px;width:44px;height:36px;background:#e6c99a;border-radius:3px;box-shadow:16px 10px 0 #d4b483"></div></div>
+          <div style="height:92px;border-radius:14px;border:2px dashed #c5ccd6;display:grid;place-items:center;color:var(--muted)"><div style="text-align:center"><svg class="i"><use href="#i-camera"/></svg><div class="small">Agregar</div></div></div>
+        </div>
+        <div style="font-weight:700">Firma de quien recibe</div>
+        <div style="height:86px;border-radius:14px;background:var(--card);box-shadow:inset 0 0 0 1px var(--line);position:relative">
+          <svg viewBox="0 0 260 86" style="position:absolute;inset:0;width:100%;height:100%"><path d="M30 58c12-30 22-34 26-10s8 18 18-6 14-14 16 6 20-30 34-8 12 22 30-4 26 10 40 0" fill="none" stroke="#1d2433" stroke-width="2.4" stroke-linecap="round"/><path d="M20 70h220" stroke="#d5dae2"/></svg>
+        </div>
+        <div class="field"><label>Recibido por</label><div>María Quispe · DNI 4•••••21</div></div>
+        <button class="btn" style="background:var(--ok)"><svg class="i s" style="stroke:#fff"><use href="#i-check"/></svg>Confirmar entrega</button>
+        <div class="small muted" style="text-align:center">El cliente recibe la confirmación por WhatsApp</div>
+      </div>
+    </div></div>
+    <figcaption><b>Prueba de entrega</b>Foto, firma y ubicación; aviso automático al cliente</figcaption>
+  </figure>
+
+  <!-- 11 Chat -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><div class="icon-btn"><svg class="i s"><use href="#i-back"/></svg></div><div class="grow"><h3 style="font-size:16px">Central de monitoreo</h3><div class="sub" style="color:var(--ok)">en línea</div></div></div>
+      <div class="content" style="background:#eef2f7;padding-top:10px;gap:8px">
+        <div class="small muted" style="text-align:center">Hoy</div>
+        <div class="bubble them">Juan, el cliente de San Borja pide entregar por la puerta de Av. Aviación.<span class="tm">09:28</span></div>
+        <div class="bubble me">Entendido, llego en 15 min aprox.<span class="tm">09:29 ✓✓</span></div>
+        <div class="bubble them">Perfecto. Tienes cola en la Javier Prado, te sugiero ir por Canadá.<span class="tm">09:33</span></div>
+        <div class="bubble me" style="padding:6px"><div style="height:80px;border-radius:11px;background:linear-gradient(180deg,#59667a,#2d343f);margin-bottom:4px"></div>Tráfico detenido por obras<span class="tm">09:35 ✓✓</span></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto;margin-bottom:8px">
+          <span class="chip" style="background:var(--card)">Llegué</span><span class="chip" style="background:var(--card)">Tráfico</span><span class="chip" style="background:var(--card)">Problema mecánico</span>
+        </div>
+      </div>
+      <div class="composer"><div class="icon-btn" style="box-shadow:none;background:#f0f3f7"><svg class="i s"><use href="#i-camera"/></svg></div><div class="in">Escribe un mensaje</div><div class="icon-btn" style="background:var(--brand);color:#fff;box-shadow:none"><svg class="i s"><use href="#i-send"/></svg></div></div>
+    </div></div>
+    <figcaption><b>Chat con la central</b>Mensajes rápidos, fotos; también llega por WhatsApp</figcaption>
+  </figure>
+
+  <!-- 12 Gastos -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><div class="icon-btn"><svg class="i s"><use href="#i-back"/></svg></div><h3 style="font-size:16px">Registrar gasto</h3></div>
+      <div class="content">
+        <div class="seg"><span class="on">Combustible</span><span>Peaje</span><span>Otro</span></div>
+        <div class="receipt"><div class="paper">GRIFO PRIMAX<br>RUC 20•••••••31<br>------------<br>DIESEL B5 S50<br>48.20 GAL<br>------------<br><b style="font-size:9px">S/ 820.00</b></div>
+          <span class="chip ok" style="position:absolute;right:8px;bottom:8px"><svg class="i s"><use href="#i-check"/></svg>Leído</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>Monto</label><div>S/ 820.00</div></div>
+          <div class="field"><label>Galones</label><div>48.20</div></div>
+          <div class="field"><label>Odómetro</label><div>184 532 km</div></div>
+          <div class="field"><label>Ubicación</label><div class="truncate">Grifo Primax</div></div>
+        </div>
+        <div class="card row" style="background:#e6f4e7;box-shadow:none"><svg class="i s" style="color:var(--ok)"><use href="#i-fuel"/></svg><span class="small grow">El sensor registró una carga de <b>182 L</b> (48.1 gal) a las 07:52: coincide</span></div>
+        <button class="btn">Guardar gasto</button>
+      </div>
+    </div></div>
+    <figcaption><b>Gastos con foto</b>Lee el comprobante y lo cruza con el sensor de combustible</figcaption>
+  </figure>
+
+  <!-- 13 Pánico -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><h3>Emergencia</h3></div>
+      <div class="content" style="text-align:center">
+        <div class="small muted" style="margin-top:6px">Mantén presionado 3 segundos</div>
+        <div class="panic"><div><svg class="i" style="width:36px;height:36px;stroke:#fff"><use href="#i-alert"/></svg><br>PÁNICO</div></div>
+        <div class="small muted" style="line-height:1.5;margin-top:14px">Se envía tu ubicación en vivo a la central y a los contactos de la empresa, se activa la grabación de la cabina y se registra el evento.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;text-align:left">
+          <div class="card"><svg class="i s" style="color:var(--warn)"><use href="#i-car"/></svg><div style="font-weight:600;font-size:12px;margin-top:4px">Falla mecánica</div></div>
+          <div class="card"><svg class="i s" style="color:var(--warn)"><use href="#i-alert"/></svg><div style="font-weight:600;font-size:12px;margin-top:4px">Accidente</div></div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg class="i"><use href="#i-route"/></svg>Mi ruta</div>
+        <div class="tab"><span class="badge">1</span><svg class="i"><use href="#i-chat"/></svg>Chat</div>
+        <div class="tab"><svg class="i"><use href="#i-receipt"/></svg>Gastos</div>
+        <div class="tab on" style="color:var(--bad)"><svg class="i"><use href="#i-alert"/></svg>Pánico</div>
+      </div>
+    </div></div>
+    <figcaption><b>Botón de pánico</b>Ubicación en vivo, grabación de cabina y aviso inmediato</figcaption>
+  </figure>
+</div>
+
+<p class="note">Prototipo visual: las pantallas del conductor de ruta y entregas dependen del módulo de despacho
+  propuesto. El resto usa funciones que la plataforma ya tiene (mapa, alertas, corte seguro, dashcams, combustible,
+  reportes, chat y gastos). Construcción sugerida: Expo / React Native con notificaciones push, biometría y una sola
+  base para Android e iOS.</p>
+</body>
+</html>
