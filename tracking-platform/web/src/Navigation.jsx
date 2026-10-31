@@ -75,7 +75,8 @@ import { generateLoginToken } from './common/components/NativeInterface';
 import { useLocalization } from './common/components/LocalizationProvider';
 import fetchOrThrow from './common/util/fetchOrThrow';
 import AuditPage from './reports/AuditPage';
-import AdminDashboardPage from './admin/AdminDashboardPage';
+import ResellerDashboardPage from './plans/ResellerDashboardPage';
+import PlansPage from './plans/PlansPage';
 import BrandingPage from './settings/BrandingPage';
 import DashcamPage from './dashcam/DashcamPage';
 import SystemStatusPage from './admin/SystemStatusPage';
@@ -144,7 +145,7 @@ const Navigation = () => {
         <Route path="maintenance" element={<FleetMaintenancePage />} />
         <Route path="geofences" element={<GeofencesPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
-        <Route path="admin" element={<AdminDashboardPage />} />
+        <Route path="admin" element={<ResellerDashboardPage />} />
         <Route path="dashcam" element={<DashcamPage />} />
         <Route path="admin/status" element={<SystemStatusPage />} />
 
@@ -152,6 +153,7 @@ const Navigation = () => {
           <Route path="accumulators/:deviceId" element={<AccumulatorsPage />} />
           <Route path="announcement" element={<AnnouncementPage />} />
           <Route path="branding" element={<BrandingPage />} />
+          <Route path="plans" element={<PlansPage />} />
           <Route path="calendars" element={<CalendarsPage />} />
           <Route path="calendar/:id" element={<CalendarPage />} />
           <Route path="calendar" element={<CalendarPage />} />

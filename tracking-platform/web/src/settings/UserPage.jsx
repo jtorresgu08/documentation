@@ -38,6 +38,7 @@ import useMapStyles from '../map/core/useMapStyles';
 import { map } from '../map/core/MapView';
 import useSettingsStyles from './common/useSettingsStyles';
 import fetchOrThrow from '../common/util/fetchOrThrow';
+import UserPlanAccordion from '../plans/UserPlanAccordion';
 
 const UserPage = () => {
   const { classes } = useSettingsStyles();
@@ -377,6 +378,7 @@ const UserPage = () => {
               </FormGroup>
             </AccordionDetails>
           </Accordion>
+          {manager && item.id !== currentUser.id && <UserPlanAccordion item={item} setItem={setItem} />}
           <EditAttributesAccordion
             attribute={attribute}
             attributes={item.attributes}

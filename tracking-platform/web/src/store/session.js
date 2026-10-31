@@ -5,6 +5,7 @@ const { reducer, actions } = createSlice({
   initialState: {
     server: null,
     brand: {},
+    modules: null,
     user: null,
     socket: null,
     includeLogs: false,
@@ -18,6 +19,9 @@ const { reducer, actions } = createSlice({
     },
     updateBrand(state, action) {
       state.brand = action.payload || {};
+    },
+    updateModules(state, action) {
+      state.modules = action.payload;
     },
     updateUser(state, action) {
       state.user = action.payload;

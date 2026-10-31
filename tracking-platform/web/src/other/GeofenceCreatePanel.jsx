@@ -17,6 +17,7 @@ import { map } from '../map/core/MapView';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import { geofencesActions } from '../store';
+import { useModule } from '../common/util/permissions';
 
 const SOURCE = 'geofence-create-preview';
 
@@ -40,10 +41,11 @@ const formatDuration = (seconds) => {
 // previewed with its distance and time, and is saved as a corridor with the chosen width and optional speed limit
 const GeofenceCreatePanel = ({ onClose }) => {
   const t = useTranslation();
+  const hasRoutes = useModule('routes');
   const theme = useTheme();
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('route');
+  const [tab, setTab] = useState(hasRoutes ? 'route' : 'circle');
   const [center, setCenter] = useState('');
   const [radius, setRadius] = useState(300);
   const [points, setPoints] = useState(['', '']);
@@ -217,7 +219,7 @@ const GeofenceCreatePanel = ({ onClose }) => {
         <IconButton size="small" onClick={onClose}><CloseIcon fontSize="small" /></IconButton>
       </Stack>
       <Tabs value={tab} onChange={(_, value) => { setTab(value); setError(null); }} variant="fullWidth" sx={{ px: 1 }}>
-        <Tab value="route" label={t('geofenceRoute')} />
+        {hasRoutes && <Tab value="route" label={t('geofenceRoute')} />}
         <Tab value="circle" label={t('geofenceCircle')} />
       </Tabs>
       <Stack spacing={1.5} sx={{ p: 2 }}>

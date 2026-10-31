@@ -26,3 +26,11 @@ export const useRestriction = (key) => useSelector((state) => {
   const userValue = state.session.user[key];
   return !admin && (serverValue || userValue);
 });
+
+// modules of the user's plan (null until loaded: everything is shown meanwhile)
+export const useModules = () => {
+  const modules = useSelector((state) => state.session.modules);
+  return (module) => !module || !modules || modules.includes(module);
+};
+
+export const useModule = (module) => useSelector((state) => !module || !state.session.modules || state.session.modules.includes(module));

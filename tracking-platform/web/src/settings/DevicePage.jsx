@@ -17,7 +17,7 @@ import SelectField from '../common/components/SelectField';
 import deviceCategories from '../common/util/deviceCategories';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import useDeviceAttributes from '../common/attributes/useDeviceAttributes';
-import { useAdministrator } from '../common/util/permissions';
+import { useAdministrator, useModule } from '../common/util/permissions';
 import SettingsMenu from './components/SettingsMenu';
 import useCommonDeviceAttributes from '../common/attributes/useCommonDeviceAttributes';
 import { useCatch } from '../reactHelper';
@@ -33,6 +33,7 @@ import { isHiddenAttribute } from '../common/util/sensors';
 const DevicePage = () => {
   const { classes } = useSettingsStyles();
   const t = useTranslation();
+  const hasSensors = useModule('sensors');
 
   const admin = useAdministrator();
 
@@ -181,7 +182,7 @@ const DevicePage = () => {
             </Accordion>
           )}
           <DeviceInfoAccordion item={item} setItem={setItem} />
-          <DeviceSensorsAccordion item={item} setItem={setItem} />
+          {hasSensors && <DeviceSensorsAccordion item={item} setItem={setItem} />}
           <DeviceCameraAccordion item={item} setItem={setItem} />
           <EditAttributesAccordion
             attributes={Object.fromEntries(Object.entries(item.attributes || {}).filter(([key]) => !isHiddenAttribute(key)))}

@@ -211,13 +211,20 @@ Para restaurar: `./scripts/restore.sh backups/traccar-AAAAMMDD-HHMMSS.dump`.
 - Monitorización: `docker compose ps`, `docker stats`, y un servicio externo (UptimeRobot, BetterStack) contra
   `https://tu-dominio/`.
 
-## 9. Marcas blancas con dominio propio
+## 9. Marcas blancas con dominio propio (HTTPS automático)
 
-1. El revendedor apunta su dominio (p. ej. `gps.cliente.com`) a la IP del VPS.
-2. Añade un bloque al `Caddyfile` con ese dominio y el mismo `reverse_proxy traccar:8082`, y luego `docker compose restart caddy`.
-3. En *Administración > Apariencia > Dominios de marca blanca* añade `gps.cliente.com=ID_DEL_GERENTE`.
+1. El distribuidor (con un plan que incluya *Marca blanca y dominio propio*) registra su dominio en
+   *Panel del distribuidor → Dominios propios*, para su marca o la de un sub-distribuidor. El superadministrador
+   también puede hacerlo ahí o en *Apariencia → Dominios de marca blanca*.
+2. Apunta el dominio con un registro **A** a la IP del VPS. El panel muestra «DNS correcto» cuando ya resuelve a la
+   IP del servidor (se compara con el atributo `deviceHost` del servidor o con `web.url`).
+3. Listo: en la primera visita Caddy pide el certificado HTTPS automáticamente (`on_demand_tls`); antes consulta
+   `/api/hierarchy/domain-check`, así que nunca emite certificados para dominios no registrados. No hay que tocar
+   el `Caddyfile` ni reiniciar nada.
 
-La pantalla de inicio de sesión de ese dominio mostrará el logo y los colores del gerente.
+La pantalla de inicio de sesión de ese dominio muestra el logo y los colores de la cuenta. Al quitar el dominio
+del panel deja de emitirse su certificado. Let's Encrypt limita los certificados por dominio y semana; para
+cientos de dominios nuevos por semana revisa sus límites.
 
 ## 10. WhatsApp: alertas y consultas
 
@@ -349,4 +356,17 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
   `docker-compose.yml` y usa `http://osrm:5000`). Repite la descarga y el proceso cada pocos meses para actualizar calles.
 - La ruta se simplifica (Douglas-Peucker) para caber en el campo de la geocerca (4096 caracteres); el panel muestra
   cuántos puntos quedaron. El ancho del corredor se guarda en `polylineDistance`.
+
+## 17. Planes y módulos
+
+- El catálogo está en *Administración → Planes* (superadministrador): nombre, descripción, precio mensual por unidad,
+  color y módulos de cada plan. Se guarda en el atributo `plans` del servidor; sin él se usan cuatro planes por
+  defecto (Básico, Profesional, Video y Distribuidor).
+- El plan de una cuenta se elige en su ficha (*Usuarios → cuenta → Plan*): heredar del gerente, un plan o una
+  selección personalizada. Solo un gerente superior puede cambiarlo, nunca la propia cuenta.
+- Lo que una cuenta puede usar es su plan **intersectado con el de todos sus gerentes**: al bajar el plan de un
+  distribuidor bajan también sus clientes. Los cambios se aplican en unos 15 segundos.
+- Los módulos fuera del plan desaparecen del menú y la API los rechaza con 403; las alertas por WhatsApp se envían
+  solo si el plan del destinatario lo incluye. El rastreo básico (mapa, historial, geocercas, alertas y reportes
+  estándar, corte seguro de motor) está en todos los planes.
 

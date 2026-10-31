@@ -12,6 +12,7 @@ import ServerProvider from './ServerProvider';
 import ErrorBoundary from './ErrorBoundary';
 import AppThemeProvider from './AppThemeProvider';
 import BrandController from './BrandController';
+import ModulesController from './ModulesController';
 
 preloadImages();
 
@@ -25,6 +26,7 @@ root.render(
             <CssBaseline />
             <ServerProvider>
               <BrandController />
+              <ModulesController />
               <BrowserRouter>
                 <Navigation />
               </BrowserRouter>

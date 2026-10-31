@@ -31,6 +31,11 @@ import {
 } from '../common/util/floatingPanels';
 import { parseWorkspaces, saveWorkspaces } from './workspaces';
 import { usePolling } from './panelUtils';
+import { useModules } from '../common/util/permissions';
+
+const PANEL_MODULES = {
+  fuel: 'fuel', maintenance: 'maintenance', chat: 'chat', cameraWall: 'video',
+};
 
 const GROUPS = [
   ['panelGroupOperation', [
@@ -65,6 +70,7 @@ const PanelLauncher = () => {
   const selectedId = useSelector((state) => state.devices.selectedId);
   const firstDevice = useSelector((state) => Object.values(state.devices.items)[0]?.id);
   const panels = usePanels();
+  const hasModule = useModules();
   const [anchor, setAnchor] = useState(null);
   const [saving, setSaving] = useState(null);
   const [error, setError] = useState(null);
@@ -73,6 +79,7 @@ const PanelLauncher = () => {
   const { items, defaultName } = parseWorkspaces(user);
 
   usePolling(async () => {
+    if (!hasModule('chat')) return;
     try {
       setUnread(await (await fetchOrThrow(`/api/chat/recent?since=${encodeURIComponent(seen)}`)).json());
     } catch {
@@ -137,7 +144,7 @@ const PanelLauncher = () => {
       >
         {GROUPS.map(([group, kinds]) => [
           <ListSubheader key={group} sx={{ lineHeight: '30px', bgcolor: 'transparent', fontWeight: 700 }}>{t(group)}</ListSubheader>,
-          ...kinds.map(([kind, label, Icon]) => (
+          ...kinds.filter(([kind]) => hasModule(PANEL_MODULES[kind])).map(([kind, label, Icon]) => (
             <MenuItem key={kind} dense onClick={() => open(kind)}>
               <ListItemIcon><Icon fontSize="small" /></ListItemIcon>
               <ListItemText>{t(label)}</ListItemText>

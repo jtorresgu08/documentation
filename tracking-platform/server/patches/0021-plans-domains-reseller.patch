@@ -1,0 +1,1148 @@
+diff --git a/src/main/java/org/traccar/api/resource/HierarchyResource.java b/src/main/java/org/traccar/api/resource/HierarchyResource.java
+index e0dc9ce..cadef0b 100644
+--- a/src/main/java/org/traccar/api/resource/HierarchyResource.java
++++ b/src/main/java/org/traccar/api/resource/HierarchyResource.java
+@@ -16,6 +16,7 @@ package org.traccar.api.resource;
+ import jakarta.annotation.security.PermitAll;
+ import jakarta.inject.Inject;
+ import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
+ import jakarta.ws.rs.GET;
+ import jakarta.ws.rs.POST;
+ import jakarta.ws.rs.Path;
+@@ -25,6 +26,11 @@ import jakarta.ws.rs.core.MediaType;
+ import jakarta.ws.rs.core.Response;
+ import org.traccar.api.BaseResource;
+ import org.traccar.api.security.HierarchyService;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.Server;
++import org.traccar.session.cache.CacheManager;
+ import org.traccar.model.ManagedUser;
+ import org.traccar.model.Permission;
+ import org.traccar.model.User;
+@@ -33,13 +39,18 @@ import org.traccar.storage.query.Columns;
+ import org.traccar.storage.query.Condition;
+ import org.traccar.storage.query.Request;
+ 
++import java.net.InetAddress;
++import java.net.URI;
++import java.net.UnknownHostException;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.HashSet;
+ import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.Locale;
+ import java.util.Set;
++import java.util.TreeSet;
+ 
+ @Path("hierarchy")
+ @Produces(MediaType.APPLICATION_JSON)
+@@ -49,9 +60,18 @@ public class HierarchyResource extends BaseResource {
+     public static final String BRAND_PREFIX = "brand.";
+     public static final String BRAND_DOMAINS = "brandDomains";
+ 
++    private static final String HOST_PATTERN =
++            "^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$";
++
+     @Inject
+     private HierarchyService hierarchyService;
+ 
++    @Inject
++    private CacheManager cacheManager;
++
++    @Inject
++    private Config config;
++
+     /**
+      * Direct manager of every user visible to the caller, as {@code userId -> managerId}.
+      */
+@@ -147,4 +167,171 @@ public class HierarchyResource extends BaseResource {
+         return result;
+     }
+ 
++    private Map<String, Long> readDomains(Server server) {
++        Map<String, Long> result = new LinkedHashMap<>();
++        String domains = server.getString(BRAND_DOMAINS);
++        if (domains != null) {
++            for (String item : domains.split("[,;\\s]+")) {
++                String[] pair = item.split("=");
++                if (pair.length == 2) {
++                    try {
++                        result.put(pair[0].trim().toLowerCase(Locale.ROOT), Long.parseLong(pair[1].trim()));
++                    } catch (NumberFormatException ignored) {
++                        // skip malformed entries
++                    }
++                }
++            }
++        }
++        return result;
++    }
++
++    private void writeDomains(Server server, Map<String, Long> domains) throws Exception {
++        server.set(BRAND_DOMAINS, String.join("\n", domains.entrySet().stream()
++                .map(entry -> entry.getKey() + "=" + entry.getValue()).toList()));
++        storage.updateObject(server, new Request(
++                new Columns.Include("attributes"), new Condition.Equals("id", server.getId())));
++        cacheManager.invalidateObject(true, Server.class, server.getId(), ObjectOperation.UPDATE);
++    }
++
++    private Set<String> resolve(String host) {
++        Set<String> result = new TreeSet<>();
++        if (host != null && !host.isBlank()) {
++            try {
++                for (InetAddress address : InetAddress.getAllByName(host.trim())) {
++                    result.add(address.getHostAddress());
++                }
++            } catch (UnknownHostException ignored) {
++                // not resolvable (yet)
++            }
++        }
++        return result;
++    }
++
++    /**
++     * Addresses white label domains must point to: the {@code deviceHost} server attribute or the web URL host.
++     */
++    private Set<String> expectedAddresses(Server server) {
++        Set<String> result = new TreeSet<>();
++        String deviceHost = server.getString("deviceHost");
++        if (deviceHost != null) {
++            result.addAll(resolve(deviceHost));
++        }
++        String url = config.getString(Keys.WEB_URL);
++        if (url != null) {
++            try {
++                result.addAll(resolve(URI.create(url).getHost()));
++            } catch (IllegalArgumentException ignored) {
++                // invalid url
++            }
++        }
++        return result;
++    }
++
++    /**
++     * Used by Caddy (on demand TLS) before issuing a certificate: only registered white label domains get one.
++     */
++    @GET
++    @Path("domain-check")
++    @PermitAll
++    public Response domainCheck(@QueryParam("domain") String domain) throws StorageException {
++        if (domain != null && readDomains(permissionsService.getServer())
++                .containsKey(domain.trim().toLowerCase(Locale.ROOT))) {
++            return Response.ok(Map.of("domain", domain.trim().toLowerCase(Locale.ROOT))).build();
++        }
++        return Response.status(Response.Status.NOT_FOUND).build();
++    }
++
++    /**
++     * White label domains of the caller's branch with their DNS status.
++     */
++    @GET
++    @Path("domains")
++    public List<Map<String, Object>> domains() throws StorageException {
++        permissionsService.checkManager(getUserId());
++        Server server = permissionsService.getServer();
++        boolean admin = !permissionsService.notAdmin(getUserId());
++        Set<Long> branch = new HashSet<>(hierarchyService.getDescendants(getUserId()));
++        branch.add(getUserId());
++        Set<String> expected = expectedAddresses(server);
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (var entry : readDomains(server).entrySet()) {
++            if (!admin && !branch.contains(entry.getValue())) {
++                continue;
++            }
++            User owner = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", entry.getValue())));
++            Set<String> addresses = resolve(entry.getKey());
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("domain", entry.getKey());
++            item.put("userId", entry.getValue());
++            item.put("userName", owner != null ? owner.getName() : null);
++            item.put("addresses", addresses);
++            item.put("expected", expected);
++            String status;
++            if (addresses.isEmpty()) {
++                status = "unresolved";
++            } else if (expected.isEmpty()) {
++                status = "unknown";
++            } else if (expected.containsAll(addresses) || addresses.stream().anyMatch(expected::contains)) {
++                status = "ok";
++            } else {
++                status = "wrong";
++            }
++            item.put("status", status);
++            result.add(item);
++        }
++        return result;
++    }
++
++    /**
++     * Registers a white label domain for the caller or an account of its branch; the HTTPS certificate is then
++     * issued automatically on the first visit (see the Caddyfile).
++     */
++    @POST
++    @Path("domains")
++    public Response addDomain(Map<String, Object> body) throws Exception {
++        permissionsService.checkManager(getUserId());
++        String domain = String.valueOf(body.getOrDefault("domain", "")).trim().toLowerCase(Locale.ROOT)
++                .replaceFirst("^https?://", "").replaceFirst("/.*$", "");
++        long userId = body.get("userId") instanceof Number number ? number.longValue() : getUserId();
++        if (!domain.matches(HOST_PATTERN)) {
++            throw new IllegalArgumentException("Invalid domain: " + domain);
++        }
++        if (userId != getUserId()) {
++            permissionsService.checkUser(getUserId(), userId);
++        }
++        String url = config.getString(Keys.WEB_URL);
++        if (url != null && domain.equalsIgnoreCase(URI.create(url).getHost())) {
++            throw new IllegalArgumentException("The main domain of the platform cannot be assigned");
++        }
++        Server server = permissionsService.getServer();
++        Map<String, Long> domains = readDomains(server);
++        Long current = domains.get(domain);
++        if (current != null && current != userId) {
++            throw new IllegalArgumentException("Domain already assigned to another account");
++        }
++        domains.put(domain, userId);
++        writeDomains(server, domains);
++        return Response.ok(Map.of("domain", domain, "userId", userId)).build();
++    }
++
++    @DELETE
++    @Path("domains")
++    public Response removeDomain(@QueryParam("domain") String domain) throws Exception {
++        permissionsService.checkManager(getUserId());
++        Server server = permissionsService.getServer();
++        Map<String, Long> domains = readDomains(server);
++        String key = domain != null ? domain.trim().toLowerCase(Locale.ROOT) : "";
++        Long owner = domains.get(key);
++        if (owner == null) {
++            return Response.status(Response.Status.NOT_FOUND).build();
++        }
++        if (owner != getUserId()) {
++            permissionsService.checkUser(getUserId(), owner);
++        }
++        domains.remove(key);
++        writeDomains(server, domains);
++        return Response.noContent().build();
++    }
++
+ }
+diff --git a/src/main/java/org/traccar/api/resource/PlanResource.java b/src/main/java/org/traccar/api/resource/PlanResource.java
+new file mode 100644
+index 0000000..df776a6
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/PlanResource.java
+@@ -0,0 +1,107 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.Server;
++import org.traccar.model.User;
++import org.traccar.plans.Plan;
++import org.traccar.plans.PlanService;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++@Path("plans")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class PlanResource extends BaseResource {
++
++    @Inject
++    private PlanService planService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    /**
++     * Plan catalog, module list and which plans the caller may assign (those within its own modules).
++     */
++    @GET
++    public Map<String, Object> get() throws Exception {
++        Set<String> own = planService.getModules(getUserId());
++        List<Plan> plans = planService.getPlans();
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("modules", PlanService.MODULES);
++        result.put("plans", plans);
++        result.put("assignable", plans.stream().filter(plan -> own.containsAll(plan.getModules()))
++                .map(Plan::getId).toList());
++        result.put("own", own);
++        return result;
++    }
++
++    @GET
++    @Path("modules")
++    public Set<String> modules(@QueryParam("userId") long userId) throws Exception {
++        if (userId > 0 && userId != getUserId()) {
++            permissionsService.checkUser(getUserId(), userId);
++            return planService.getModules(userId);
++        }
++        return planService.getModules(getUserId());
++    }
++
++    @PUT
++    public List<Plan> update(List<Plan> plans) throws Exception {
++        permissionsService.checkAdmin(getUserId());
++        Set<String> ids = new HashSet<>();
++        for (Plan plan : plans) {
++            if (plan.getId() == null || !plan.getId().matches("[a-z0-9_-]{1,32}")
++                    || PlanService.CUSTOM.equals(plan.getId()) || !ids.add(plan.getId())) {
++                throw new IllegalArgumentException("Invalid or duplicated plan id: " + plan.getId());
++            }
++            if (plan.getName() == null || plan.getName().isBlank()) {
++                throw new IllegalArgumentException("Plan without name: " + plan.getId());
++            }
++            plan.setModules(plan.getModules().stream().filter(PlanService.MODULES::contains).distinct().toList());
++        }
++        for (User user : storage.getObjects(User.class, new Request(new Columns.All()))) {
++            String plan = user.getString(PlanService.ATTRIBUTE_PLAN);
++            if (plan != null && !plan.isBlank() && !PlanService.CUSTOM.equals(plan) && !ids.contains(plan)) {
++                throw new IllegalArgumentException("Plan in use, reassign its accounts first: " + plan);
++            }
++        }
++        Server server = planService.getServer();
++        server.set(PlanService.SERVER_PLANS, planService.toJson(plans));
++        storage.updateObject(server, new Request(
++                new Columns.Include("attributes"), new Condition.Equals("id", server.getId())));
++        cacheManager.invalidateObject(true, Server.class, server.getId(), ObjectOperation.UPDATE);
++        planService.invalidate();
++        return plans;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/ResellerResource.java b/src/main/java/org/traccar/api/resource/ResellerResource.java
+new file mode 100644
+index 0000000..3d56b03
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/ResellerResource.java
+@@ -0,0 +1,209 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.model.Device;
++import org.traccar.model.ManagedUser;
++import org.traccar.model.Permission;
++import org.traccar.model.User;
++import org.traccar.plans.Plan;
++import org.traccar.plans.PlanService;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.TimeUnit;
++import java.util.stream.Collectors;
++
++/**
++ * Distributor dashboard: accounts, units and quotas of the caller's branch, its direct accounts with their plans
++ * and units, and what expires soon.
++ */
++@Path("reseller")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class ResellerResource extends BaseResource {
++
++    private static final long DAY = TimeUnit.DAYS.toMillis(1);
++    private static final long EXPIRING = 30 * DAY;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    @Inject
++    private PlanService planService;
++
++    private static boolean isManager(User user) {
++        return user.getAdministrator() || user.getUserLimit() != 0;
++    }
++
++    private static Map<String, Object> deviceStats(Collection<Device> devices, long now) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("total", devices.size());
++        result.put("online", devices.stream().filter(device -> "online".equals(device.getStatus())).count());
++        result.put("offline24h", devices.stream().filter(device -> !device.getDisabled()
++                && (device.getLastUpdate() == null || now - device.getLastUpdate().getTime() > DAY)).count());
++        result.put("disabled", devices.stream().filter(Device::getDisabled).count());
++        result.put("expired", devices.stream().filter(device -> device.getExpirationTime() != null
++                && device.getExpirationTime().getTime() < now).count());
++        return result;
++    }
++
++    private Collection<Device> devicesOf(long userId) throws StorageException {
++        return storage.getObjects(Device.class, new Request(
++                new Columns.All(), new Condition.Permission(User.class, userId, Device.class)));
++    }
++
++    @GET
++    @Path("summary")
++    public Map<String, Object> summary() throws Exception {
++        permissionsService.checkManager(getUserId());
++        long now = System.currentTimeMillis();
++        User me = permissionsService.getUser(getUserId());
++        boolean admin = me.getAdministrator();
++
++        List<User> allUsers = storage.getObjects(User.class, new Request(new Columns.All()));
++        Map<Long, User> usersById = allUsers.stream().collect(Collectors.toMap(User::getId, user -> user));
++        Set<Long> branch = admin
++                ? allUsers.stream().map(User::getId).filter(id -> id != me.getId()).collect(Collectors.toSet())
++                : hierarchyService.getDescendants(me.getId());
++        List<User> branchUsers = branch.stream().map(usersById::get).filter(user -> user != null
++                && !user.getTemporary()).toList();
++
++        // closest manager of every account: the owner holding most ancestors itself
++        Map<Long, Set<Long>> owners = new HashMap<>();
++        for (Permission permission : storage.getPermissions(User.class, ManagedUser.class)) {
++            owners.computeIfAbsent(permission.getPropertyId(), key -> new HashSet<>()).add(permission.getOwnerId());
++        }
++        Map<Long, Long> parents = new HashMap<>();
++        for (var entry : owners.entrySet()) {
++            long parent = 0;
++            int depth = -1;
++            for (long owner : entry.getValue()) {
++                int ownerDepth = owners.getOrDefault(owner, Set.of()).size();
++                if (ownerDepth > depth) {
++                    parent = owner;
++                    depth = ownerDepth;
++                }
++            }
++            parents.put(entry.getKey(), parent);
++        }
++
++        // units of an account, assigned directly or through groups
++        Collection<Device> branchDevices = admin
++                ? storage.getObjects(Device.class, new Request(new Columns.All()))
++                : devicesOf(me.getId());
++
++        List<Plan> plans = planService.getPlans();
++        Map<String, Plan> plansById = plans.stream().collect(Collectors.toMap(Plan::getId, plan -> plan));
++
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("devices", deviceStats(branchDevices, now));
++
++        Map<String, Object> accounts = new LinkedHashMap<>();
++        accounts.put("total", branchUsers.size());
++        accounts.put("managers", branchUsers.stream().filter(ResellerResource::isManager).count());
++        accounts.put("clients", branchUsers.stream().filter(user -> !isManager(user)).count());
++        accounts.put("disabled", branchUsers.stream().filter(User::getDisabled).count());
++        accounts.put("expired", branchUsers.stream().filter(user -> user.getExpirationTime() != null
++                && user.getExpirationTime().getTime() < now).count());
++        result.put("accounts", accounts);
++
++        Map<String, Object> quota = new LinkedHashMap<>();
++        quota.put("deviceLimit", me.getDeviceLimit());
++        quota.put("devices", branchDevices.size());
++        quota.put("userLimit", me.getUserLimit());
++        quota.put("users", branchUsers.size());
++        result.put("quota", quota);
++
++        Map<String, Long> planCounts = new LinkedHashMap<>();
++        for (User user : branchUsers) {
++            String plan = user.getString(PlanService.ATTRIBUTE_PLAN);
++            String key = plan == null || plan.isBlank() ? "inherit" : plan;
++            planCounts.merge(key, 1L, Long::sum);
++        }
++        result.put("plans", planCounts);
++        result.put("modules", planService.getModules(me.getId()));
++
++        List<Map<String, Object>> children = new ArrayList<>();
++        for (User user : branchUsers) {
++            long parent = parents.getOrDefault(user.getId(), 0L);
++            boolean direct = parent == me.getId() || (admin && (parent == 0 || !branch.contains(parent)));
++            if (!direct) {
++                continue;
++            }
++            Set<Long> subtree = hierarchyService.getDescendants(user.getId());
++            Collection<Device> devices = devicesOf(user.getId());
++            String plan = user.getString(PlanService.ATTRIBUTE_PLAN);
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("id", user.getId());
++            item.put("name", user.getName());
++            item.put("email", user.getEmail());
++            item.put("manager", isManager(user));
++            item.put("disabled", user.getDisabled());
++            item.put("expirationTime", user.getExpirationTime());
++            item.put("plan", plan);
++            item.put("planName", plan == null || plan.isBlank() ? null
++                    : PlanService.CUSTOM.equals(plan) ? "custom"
++                    : plansById.containsKey(plan) ? plansById.get(plan).getName() : plan);
++            item.put("modules", planService.getModules(user.getId()));
++            item.put("users", subtree.size());
++            item.put("deviceLimit", user.getDeviceLimit());
++            item.put("userLimit", user.getUserLimit());
++            item.putAll(Map.of("deviceStats", deviceStats(devices, now)));
++            children.add(item);
++        }
++        children.sort(Comparator.comparing(item -> -((Number) ((Map<?, ?>) item.get("deviceStats"))
++                .get("total")).longValue()));
++        result.put("children", children);
++
++        List<Map<String, Object>> expiring = new ArrayList<>();
++        for (User user : branchUsers) {
++            Date time = user.getExpirationTime();
++            if (time != null && time.getTime() < now + EXPIRING) {
++                expiring.add(Map.of("type", "user", "id", user.getId(), "name",
++                        user.getName() != null ? user.getName() : user.getEmail(), "time", time));
++            }
++        }
++        for (Device device : branchDevices) {
++            Date time = device.getExpirationTime();
++            if (time != null && time.getTime() < now + EXPIRING) {
++                expiring.add(Map.of("type", "device", "id", device.getId(), "name", device.getName(), "time", time));
++            }
++        }
++        expiring.sort(Comparator.comparing(item -> (Date) item.get("time")));
++        result.put("expiring", expiring);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/UserResource.java b/src/main/java/org/traccar/api/resource/UserResource.java
+index 59ab34c..7e61c61 100644
+--- a/src/main/java/org/traccar/api/resource/UserResource.java
++++ b/src/main/java/org/traccar/api/resource/UserResource.java
+@@ -22,6 +22,7 @@ import jakarta.ws.rs.PathParam;
+ import jakarta.ws.rs.core.Context;
+ import org.traccar.api.BaseObjectResource;
+ import org.traccar.api.security.HierarchyService;
++import org.traccar.plans.PlanService;
+ import org.traccar.config.Config;
+ import org.traccar.config.Keys;
+ import org.traccar.helper.LogAction;
+@@ -42,6 +43,7 @@ import jakarta.inject.Inject;
+ import jakarta.ws.rs.Consumes;
+ import jakarta.ws.rs.GET;
+ import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
+ import jakarta.ws.rs.Path;
+ import jakarta.ws.rs.Produces;
+ import jakarta.ws.rs.QueryParam;
+@@ -64,6 +66,9 @@ public class UserResource extends BaseObjectResource<User> {
+     @Inject
+     private LogAction actionLogger;
+ 
++    @Inject
++    private PlanService planService;
++
+     @Context
+     private HttpServletRequest request;
+ 
+@@ -94,6 +99,12 @@ public class UserResource extends BaseObjectResource<User> {
+     @POST
+     public Response add(User entity) throws Exception {
+         User currentUser = getUserId() > 0 ? permissionsService.getUser(getUserId()) : null;
++        if (currentUser == null) {
++            entity.getAttributes().remove(PlanService.ATTRIBUTE_PLAN);
++            entity.getAttributes().remove(PlanService.ATTRIBUTE_MODULES);
++        } else {
++            planService.checkPlanUpdate(getUserId(), null, entity);
++        }
+         if (currentUser == null || !currentUser.getAdministrator()) {
+             permissionsService.checkUserUpdate(getUserId(), new User(), entity);
+             if (currentUser != null && currentUser.getUserLimit() != 0) {
+@@ -137,6 +148,18 @@ public class UserResource extends BaseObjectResource<User> {
+         return Response.ok(entity).build();
+     }
+ 
++    @Override
++    @Path("{id}")
++    @PUT
++    public Response update(User entity) throws Exception {
++        User before = storage.getObject(User.class, new Request(
++                new Columns.All(), new Condition.Equals("id", entity.getId())));
++        if (before != null) {
++            planService.checkPlanUpdate(getUserId(), before, entity);
++        }
++        return super.update(entity);
++    }
++
+     @Path("{id}")
+     @DELETE
+     public Response remove(@PathParam("id") long id) throws Exception {
+diff --git a/src/main/java/org/traccar/notificators/NotificatorWhatsapp.java b/src/main/java/org/traccar/notificators/NotificatorWhatsapp.java
+index e6b3231..7756a57 100644
+--- a/src/main/java/org/traccar/notificators/NotificatorWhatsapp.java
++++ b/src/main/java/org/traccar/notificators/NotificatorWhatsapp.java
+@@ -20,6 +20,8 @@ import org.traccar.model.User;
+ import org.traccar.notification.MessageException;
+ import org.traccar.notification.NotificationFormatter;
+ import org.traccar.notification.NotificationMessage;
++import org.traccar.plans.PlanService;
++import org.traccar.storage.StorageException;
+ import org.traccar.whatsapp.WhatsappClient;
+ 
+ /**
+@@ -28,15 +30,25 @@ import org.traccar.whatsapp.WhatsappClient;
+ public class NotificatorWhatsapp extends Notificator {
+ 
+     private final WhatsappClient whatsappClient;
++    private final PlanService planService;
+ 
+     @Inject
+-    public NotificatorWhatsapp(NotificationFormatter notificationFormatter, WhatsappClient whatsappClient) {
++    public NotificatorWhatsapp(
++            NotificationFormatter notificationFormatter, WhatsappClient whatsappClient, PlanService planService) {
+         super(notificationFormatter);
+         this.whatsappClient = whatsappClient;
++        this.planService = planService;
+     }
+ 
+     @Override
+     public void send(User user, NotificationMessage message, Event event, Position position) throws MessageException {
++        try {
++            if (!planService.hasModule(user.getId(), "whatsapp")) {
++                throw new MessageException("WhatsApp is not included in the user's plan");
++            }
++        } catch (StorageException e) {
++            throw new MessageException(e);
++        }
+         String phone = user.getString("whatsapp");
+         if (phone == null || phone.isBlank()) {
+             phone = user.getPhone();
+diff --git a/src/main/java/org/traccar/plans/ModuleRequestFilter.java b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+new file mode 100644
+index 0000000..6e13369
+--- /dev/null
++++ b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+@@ -0,0 +1,83 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.plans;
++
++import jakarta.annotation.Priority;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Priorities;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.container.ContainerRequestContext;
++import jakarta.ws.rs.container.ContainerRequestFilter;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.security.UserPrincipal;
++import org.traccar.storage.StorageException;
++
++import java.util.Map;
++
++/**
++ * Rejects API calls of modules not included in the caller's plan (403), after authentication.
++ */
++@Priority(Priorities.USER + 100)
++public class ModuleRequestFilter implements ContainerRequestFilter {
++
++    public static final Map<String, String> PATHS = Map.ofEntries(
++            Map.entry("video", "video"),
++            Map.entry("sensors/fuel", "fuel"),
++            Map.entry("sensors", "sensors"),
++            Map.entry("alert-rules", "alerts"),
++            Map.entry("geofence-speed", "geofenceSpeed"),
++            Map.entry("routing", "routes"),
++            Map.entry("chat", "chat"),
++            Map.entry("driving", "driving"),
++            Map.entry("expenses", "expenses"),
++            Map.entry("maintenance-plans", "maintenance"),
++            Map.entry("report-templates", "reports"),
++            Map.entry("hierarchy/domains", "whitelabel"));
++
++    @Inject
++    private PlanService planService;
++
++    public static String moduleOf(String path) {
++        String clean = path.startsWith("/") ? path.substring(1) : path;
++        String best = null;
++        String module = null;
++        for (var entry : PATHS.entrySet()) {
++            String prefix = entry.getKey();
++            if ((clean.equals(prefix) || clean.startsWith(prefix + "/"))
++                    && (best == null || prefix.length() > best.length())) {
++                best = prefix;
++                module = entry.getValue();
++            }
++        }
++        return module;
++    }
++
++    @Override
++    public void filter(ContainerRequestContext requestContext) {
++        String module = moduleOf(requestContext.getUriInfo().getPath());
++        if (module == null || !(requestContext.getSecurityContext().getUserPrincipal() instanceof UserPrincipal user)) {
++            return;
++        }
++        try {
++            if (!planService.hasModule(user.getUserId(), module)) {
++                throw new WebApplicationException(Response.status(Response.Status.FORBIDDEN)
++                        .type(MediaType.TEXT_PLAIN).entity("Module not included in plan: " + module).build());
++            }
++        } catch (StorageException e) {
++            throw new WebApplicationException(e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/plans/Plan.java b/src/main/java/org/traccar/plans/Plan.java
+new file mode 100644
+index 0000000..a6ab7a7
+--- /dev/null
++++ b/src/main/java/org/traccar/plans/Plan.java
+@@ -0,0 +1,91 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.plans;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Commercial plan: the set of platform modules an account (and everything below it) can use.
++ */
++public class Plan {
++
++    private String id;
++    private String name;
++    private String description;
++    private String color;
++    private double price;
++    private List<String> modules = new ArrayList<>();
++
++    public Plan() {
++    }
++
++    public Plan(String id, String name, String description, String color, double price, List<String> modules) {
++        this.id = id;
++        this.name = name;
++        this.description = description;
++        this.color = color;
++        this.price = price;
++        this.modules = new ArrayList<>(modules);
++    }
++
++    public String getId() {
++        return id;
++    }
++
++    public void setId(String id) {
++        this.id = id;
++    }
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    public String getDescription() {
++        return description;
++    }
++
++    public void setDescription(String description) {
++        this.description = description;
++    }
++
++    public String getColor() {
++        return color;
++    }
++
++    public void setColor(String color) {
++        this.color = color;
++    }
++
++    public double getPrice() {
++        return price;
++    }
++
++    public void setPrice(double price) {
++        this.price = price;
++    }
++
++    public List<String> getModules() {
++        return modules;
++    }
++
++    public void setModules(List<String> modules) {
++        this.modules = modules != null ? modules : new ArrayList<>();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+new file mode 100644
+index 0000000..5bd7008
+--- /dev/null
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -0,0 +1,214 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.plans;
++
++import com.fasterxml.jackson.core.JsonProcessingException;
++import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.model.Server;
++import org.traccar.model.User;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.Arrays;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.stream.Collectors;
++
++/**
++ * Plans and modules. Each account may have a plan ({@code plan} attribute) or a custom module list ({@code plan} =
++ * {@code custom} plus {@code modules}); an account without plan inherits. The modules an account can use are the
++ * intersection of its own and those of every manager above it, so a distributor can never give more than it has.
++ * The plan catalog lives in the {@code plans} server attribute (JSON) and defaults to four plans.
++ */
++@Singleton
++public class PlanService {
++
++    public static final String ATTRIBUTE_PLAN = "plan";
++    public static final String ATTRIBUTE_MODULES = "modules";
++    public static final String SERVER_PLANS = "plans";
++    public static final String CUSTOM = "custom";
++
++    public static final List<String> MODULES = List.of(
++            "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
++            "driving", "expenses", "maintenance", "reports", "whitelabel");
++
++    public static final List<Plan> DEFAULT_PLANS = List.of(
++            new Plan("basic", "Básico", "Rastreo, historial, geocercas y alertas estándar", "#78909c", 0,
++                    List.of("geofenceSpeed")),
++            new Plan("pro", "Profesional", "Flotas: sensores, combustible, alertas personalizadas y reportes",
++                    "#2563c9", 0, List.of("fuel", "sensors", "alerts", "geofenceSpeed", "routes",
++                    "whatsapp", "driving", "expenses", "maintenance", "reports")),
++            new Plan("video", "Video", "Profesional más dashcams, video y chat con conductores", "#8e44ad", 0,
++                    List.of("video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes",
++                    "whatsapp", "chat", "driving", "expenses", "maintenance", "reports")),
++            new Plan("reseller", "Distribuidor", "Todos los módulos y marca blanca para revender", "#1a9aa3", 0,
++                    MODULES));
++
++    private static final long CACHE_MILLIS = 15_000;
++
++    private final Storage storage;
++    private final HierarchyService hierarchyService;
++    private final ObjectMapper objectMapper;
++
++    private record Cached(Set<String> modules, long time) {
++    }
++
++    private final Map<Long, Cached> cache = new ConcurrentHashMap<>();
++
++    @Inject
++    public PlanService(Storage storage, HierarchyService hierarchyService, ObjectMapper objectMapper) {
++        this.storage = storage;
++        this.hierarchyService = hierarchyService;
++        this.objectMapper = objectMapper;
++    }
++
++    public Server getServer() throws StorageException {
++        return storage.getObject(Server.class, new Request(new Columns.All()));
++    }
++
++    public List<Plan> getPlans() throws StorageException {
++        String json = getServer().getString(SERVER_PLANS);
++        if (json != null && !json.isBlank()) {
++            try {
++                List<Plan> plans = objectMapper.readValue(json, new TypeReference<>() { });
++                // modules no longer offered are dropped so they never block assigning a plan
++                plans.forEach(plan -> plan.setModules(plan.getModules().stream().filter(MODULES::contains).toList()));
++                return plans;
++            } catch (JsonProcessingException e) {
++                return DEFAULT_PLANS;
++            }
++        }
++        return DEFAULT_PLANS;
++    }
++
++    public String toJson(List<Plan> plans) throws JsonProcessingException {
++        return objectMapper.writeValueAsString(plans);
++    }
++
++    public void invalidate() {
++        cache.clear();
++    }
++
++    /**
++     * Modules granted by the account itself, or {@code null} when it inherits from its manager.
++     */
++    public Set<String> getOwnModules(User user, List<Plan> plans) {
++        if (user == null) {
++            return Set.of();
++        }
++        if (user.getAdministrator()) {
++            return null;
++        }
++        String plan = user.getString(ATTRIBUTE_PLAN);
++        if (plan == null || plan.isBlank()) {
++            return null;
++        }
++        if (CUSTOM.equals(plan)) {
++            String modules = user.getString(ATTRIBUTE_MODULES);
++            return modules == null ? Set.of() : Arrays.stream(modules.split("[,;\\s]+"))
++                    .filter(MODULES::contains).collect(Collectors.toCollection(LinkedHashSet::new));
++        }
++        return plans.stream().filter(item -> plan.equals(item.getId())).findFirst()
++                .map(item -> (Set<String>) new LinkedHashSet<>(item.getModules())).orElse(null);
++    }
++
++    private User getUser(long userId) throws StorageException {
++        return storage.getObject(User.class, new Request(new Columns.All(), new Condition.Equals("id", userId)));
++    }
++
++    /**
++     * Modules the account can use: its own intersected with every manager above it.
++     */
++    public Set<String> getModules(long userId) throws StorageException {
++        Cached cached = cache.get(userId);
++        if (cached != null && System.currentTimeMillis() - cached.time() < CACHE_MILLIS) {
++            return cached.modules();
++        }
++        List<Plan> plans = getPlans();
++        User user = getUser(userId);
++        Set<String> result = new LinkedHashSet<>(MODULES);
++        if (user == null) {
++            result.clear();
++        } else if (!user.getAdministrator()) {
++            Set<String> own = getOwnModules(user, plans);
++            if (own != null) {
++                result.retainAll(own);
++            }
++            for (long ancestorId : hierarchyService.getAncestors(userId)) {
++                Set<String> ancestor = getOwnModules(getUser(ancestorId), plans);
++                if (ancestor != null) {
++                    result.retainAll(ancestor);
++                }
++            }
++        }
++        Set<String> modules = Set.copyOf(result);
++        cache.put(userId, new Cached(modules, System.currentTimeMillis()));
++        return modules;
++    }
++
++    public boolean hasModule(long userId, String module) throws StorageException {
++        return getModules(userId).contains(module);
++    }
++
++    public void checkModule(long userId, String module) throws StorageException {
++        if (!hasModule(userId, module)) {
++            throw new SecurityException("Module not included in plan: " + module);
++        }
++    }
++
++    /**
++     * Only a manager above the account (or the administrator) may change its plan, and never beyond its own modules.
++     */
++    public void checkPlanUpdate(long editorId, User before, User after) throws StorageException {
++        String beforePlan = before != null ? before.getString(ATTRIBUTE_PLAN) : null;
++        String beforeModules = before != null ? before.getString(ATTRIBUTE_MODULES) : null;
++        if (Objects.equals(beforePlan, after.getString(ATTRIBUTE_PLAN))
++                && Objects.equals(beforeModules, after.getString(ATTRIBUTE_MODULES))) {
++            return;
++        }
++        String plan = after.getString(ATTRIBUTE_PLAN);
++        if (plan != null && !plan.isBlank() && !CUSTOM.equals(plan)
++                && getPlans().stream().noneMatch(item -> plan.equals(item.getId()))) {
++            throw new IllegalArgumentException("Unknown plan");
++        }
++        User editor = editorId > 0 ? getUser(editorId) : null;
++        if (editor != null && editor.getAdministrator()) {
++            invalidate();
++            return;
++        }
++        if (editor == null || editor.getUserLimit() == 0 || editorId == after.getId()) {
++            throw new SecurityException("Only a manager above the account can change its plan");
++        }
++        if (after.getId() > 0 && !hierarchyService.getDescendants(editorId).contains(after.getId())) {
++            throw new SecurityException("Account outside the manager branch");
++        }
++        Set<String> granted = getOwnModules(after, getPlans());
++        if (granted != null && !getModules(editorId).containsAll(granted)) {
++            throw new SecurityException("The plan includes modules the manager does not have");
++        }
++        invalidate();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/web/WebServer.java b/src/main/java/org/traccar/web/WebServer.java
+index 774b98d..5c17404 100644
+--- a/src/main/java/org/traccar/web/WebServer.java
++++ b/src/main/java/org/traccar/web/WebServer.java
+@@ -49,6 +49,7 @@ import org.traccar.api.ResourceErrorHandler;
+ import org.traccar.api.StreamWriter;
+ import org.traccar.api.resource.ServerResource;
+ import org.traccar.api.security.SecurityRequestFilter;
++import org.traccar.plans.ModuleRequestFilter;
+ import org.traccar.config.Config;
+ import org.traccar.config.Keys;
+ import org.traccar.helper.ObjectMapperContextResolver;
+@@ -175,6 +176,7 @@ public class WebServer implements LifecycleObject {
+                 ObjectMapperContextResolver.class,
+                 DateParameterConverterProvider.class,
+                 SecurityRequestFilter.class,
++                ModuleRequestFilter.class,
+                 CorsResponseFilter.class,
+                 ResourceErrorHandler.class,
+                 StreamWriter.class);
+diff --git a/src/test/java/org/traccar/plans/PlanServiceTest.java b/src/test/java/org/traccar/plans/PlanServiceTest.java
+new file mode 100644
+index 0000000..df3724b
+--- /dev/null
++++ b/src/test/java/org/traccar/plans/PlanServiceTest.java
+@@ -0,0 +1,52 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.plans;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.User;
++
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++public class PlanServiceTest {
++
++    @Test
++    public void testModulePaths() {
++        assertEquals("video", ModuleRequestFilter.moduleOf("video/recordings"));
++        assertEquals("fuel", ModuleRequestFilter.moduleOf("/sensors/fuel"));
++        assertEquals("sensors", ModuleRequestFilter.moduleOf("sensors/report"));
++        assertEquals("alerts", ModuleRequestFilter.moduleOf("alert-rules/12"));
++        assertEquals("whitelabel", ModuleRequestFilter.moduleOf("hierarchy/domains"));
++        assertNull(ModuleRequestFilter.moduleOf("hierarchy/brand"));
++        assertNull(ModuleRequestFilter.moduleOf("alerts/summary"));
++        assertNull(ModuleRequestFilter.moduleOf("videos"));
++    }
++
++    @Test
++    public void testOwnModules() {
++        PlanService service = new PlanService(null, null, null);
++        User user = new User();
++        assertNull(service.getOwnModules(user, PlanService.DEFAULT_PLANS));
++        user.set(PlanService.ATTRIBUTE_PLAN, "basic");
++        assertEquals(Set.of("geofenceSpeed"), service.getOwnModules(user, PlanService.DEFAULT_PLANS));
++        user.set(PlanService.ATTRIBUTE_PLAN, "custom");
++        user.set(PlanService.ATTRIBUTE_MODULES, "video, fuel,unknown");
++        assertEquals(Set.of("video", "fuel"), service.getOwnModules(user, PlanService.DEFAULT_PLANS));
++        user.setAdministrator(true);
++        assertNull(service.getOwnModules(user, PlanService.DEFAULT_PLANS));
++    }
++
++}

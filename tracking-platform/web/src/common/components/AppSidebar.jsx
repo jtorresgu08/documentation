@@ -24,6 +24,7 @@ import BadgeIcon from '@mui/icons-material/Badge';
 import FolderIcon from '@mui/icons-material/Folder';
 import TuneIcon from '@mui/icons-material/Tune';
 import PaletteIcon from '@mui/icons-material/Palette';
+import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PeopleIcon from '@mui/icons-material/People';
 import SpeedIcon from '@mui/icons-material/Speed';
@@ -46,7 +47,9 @@ import RuleIcon from '@mui/icons-material/Rule';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import SignalCellularAltIcon from '@mui/icons-material/SignalCellularAlt';
 import { useLocalization, useTranslation } from './LocalizationProvider';
-import { useAdministrator, useManager, useRestriction } from '../util/permissions';
+import {
+  useAdministrator, useManager, useModules, useRestriction,
+} from '../util/permissions';
 import useFeatures from '../util/useFeatures';
 import usePersistedState from '../util/usePersistedState';
 import useLogout from '../util/useLogout';
@@ -208,6 +211,7 @@ const AppSidebar = () => {
   const disableReports = useRestriction('disableReports');
   const limitCommands = useRestriction('limitCommands');
   const features = useFeatures();
+  const hasModule = useModules();
 
   const user = useSelector((state) => state.session.user);
   const socket = useSelector((state) => state.session.socket);
@@ -271,13 +275,13 @@ const AppSidebar = () => {
     !disableReports && {
       key: 'alertCenter', title: t('alertCenterTitle'), icon: <NotificationsActiveIcon />, href: '/alert-center', match: /^\/alert-center/,
     },
-    {
+    hasModule('alerts') && {
       key: 'alertRules', title: t('ruleTitle'), icon: <RuleIcon />, href: '/alert-rules', match: /^\/alert-rules/,
     },
     !disableReports && {
       key: 'history', title: t('navHistory'), icon: <HistoryIcon />, href: '/replay',
     },
-    {
+    hasModule('video') && {
       key: 'cameras', title: t('navCameras'), icon: <VideocamIcon />, href: '/dashcam',
     },
     !readonly && {
@@ -304,19 +308,19 @@ const AppSidebar = () => {
     !disableReports && {
       key: 'reports', title: t('reportTitle'), icon: <BarChartIcon />, href: '/reports/combined', match: /^\/reports\/(?!statistics|audit|logs|fuel|driving|expenses|quality|builder)/,
     },
-    !disableReports && {
+    !disableReports && hasModule('reports') && {
       key: 'reportBuilder', title: t('reportBuilderTitle'), icon: <TableChartIcon />, href: '/reports/builder', match: /^\/reports\/builder/,
     },
     !disableReports && {
       key: 'quality', title: t('qualityTitle'), icon: <SignalCellularAltIcon />, href: '/reports/quality', match: /^\/reports\/quality/,
     },
-    !disableReports && {
+    !disableReports && hasModule('expenses') && {
       key: 'expenses', title: t('expensesTitle'), icon: <PaymentsIcon />, href: '/reports/expenses', match: /^\/reports\/expenses/,
     },
-    !disableReports && {
+    !disableReports && hasModule('driving') && {
       key: 'driving', title: t('drivingTitle'), icon: <EmojiEventsIcon />, href: '/reports/driving', match: /^\/reports\/driving/,
     },
-    !disableReports && {
+    !disableReports && hasModule('fuel') && {
       key: 'fuel',
       title: t('fuelTitle'),
       icon: <LocalGasStationIcon />,
@@ -326,7 +330,7 @@ const AppSidebar = () => {
     !readonly && {
       key: 'geofences', title: t('sharedGeofences'), icon: <PolylineIcon />, href: '/geofences', match: /^\/(geofences|settings\/geofence)/,
     },
-    !readonly && !features.disableMaintenance && {
+    !readonly && !features.disableMaintenance && hasModule('maintenance') && {
       key: 'maintenance', title: t('sharedMaintenance'), icon: <BuildIcon />, href: '/maintenance', match: /^\/(maintenance|settings\/maintenance)/,
     },
     !readonly && !features.disableDrivers && {
@@ -350,7 +354,10 @@ const AppSidebar = () => {
     },
     { divider: 'map' },
     {
-      key: 'overview', title: t('navOverview'), icon: <DashboardIcon />, href: '/admin', match: (path) => path === '/admin',
+      key: 'overview', title: t('resellerTitle'), icon: <DashboardIcon />, href: '/admin', match: (path) => path === '/admin',
+    },
+    admin && {
+      key: 'plans', title: t('plansTitle'), icon: <WorkspacePremiumIcon />, href: '/settings/plans',
     },
     {
       key: 'users',
@@ -377,7 +384,7 @@ const AppSidebar = () => {
     admin && {
       key: 'server', title: t('navServerSettings'), icon: <DnsIcon />, href: '/settings/server',
     },
-    {
+    hasModule('whitelabel') && {
       key: 'appearance', title: t('navAppearance'), icon: <PaletteIcon />, href: '/settings/branding',
     },
     {

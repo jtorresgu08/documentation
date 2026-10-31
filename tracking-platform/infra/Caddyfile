@@ -1,14 +1,18 @@
 {
 	email {$ACME_EMAIL}
+
+	# Dominios propios de distribuidores: el certificado HTTPS se pide en la primera visita, solo si la plataforma
+	# confirma que el dominio está registrado (Panel del distribuidor > Dominios propios)
+	on_demand_tls {
+		ask http://traccar:8082/api/hierarchy/domain-check
+	}
 }
 
-# Dominio principal. Para marcas blancas con dominio propio añade más bloques (o usa on_demand_tls)
-# apuntando al mismo reverse_proxy y registra el dominio en Apariencia > Dominios de marca blanca.
-{$DOMAIN} {
+(plataforma) {
 	encode zstd gzip
 
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"
@@ -26,4 +30,17 @@
 	# }
 
 	reverse_proxy traccar:8082
+}
+
+# Dominio principal
+{$DOMAIN} {
+	import plataforma
+}
+
+# Cualquier otro dominio que apunte al servidor: HTTPS automático si está registrado como dominio propio
+https:// {
+	tls {
+		on_demand
+	}
+	import plataforma
 }

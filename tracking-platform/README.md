@@ -369,6 +369,24 @@ unidad está *Panel de seguimiento*.
   GPX y WKT no tienen círculos y los guardan como polígonos.
 - Archivos de ejemplo en [`docs/ejemplos-geocercas`](docs/ejemplos-geocercas).
 
+## Planes, dominios automáticos y panel del distribuidor (parche `0021`)
+
+- **Planes con módulos heredables**: catálogo editable (*Administración → Planes*) con 13 módulos: dashcams y video,
+  combustible, sensores avanzados, alertas personalizadas, velocidad por geocerca, rutas por calles, alertas por
+  WhatsApp, chat con conductores, puntaje de conducción, gastos, servicios, reportes configurables y marca blanca.
+  - Cada cuenta hereda, tiene un plan o una selección personalizada; lo que usa es la **intersección con todos sus
+    gerentes**, así un distribuidor nunca puede dar más de lo que compró.
+  - Solo un gerente superior cambia el plan de una cuenta; el selector deshabilita los planes que exceden el suyo.
+  - Lo que no está en el plan se oculta del menú, los paneles y las pantallas, y la API responde 403.
+- **Dominios propios con HTTPS automático**: el distribuidor registra `gps.sucliente.com` para su marca o la de un
+  sub-distribuidor, ve si el DNS ya apunta al servidor y Caddy emite el certificado en la primera visita
+  (`on_demand_tls` con verificación en `/api/hierarchy/domain-check`). Sin editar archivos ni reiniciar.
+- **Panel del distribuidor** (*Administración → Panel del distribuidor*): clientes y sub-distribuidores, unidades en
+  línea y sin señal más de 24 h, cupo de unidades y usuarios, cuentas por plan, vencimientos en 30 días, tabla de
+  sus cuentas directas (plan, unidades, en línea, sin señal, usuarios, caducidad) y sus dominios.
+- API: `GET/PUT /api/plans`, `GET /api/plans/modules`, `GET /api/reseller/summary`,
+  `GET/POST/DELETE /api/hierarchy/domains`, `GET /api/hierarchy/domain-check`.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -448,6 +466,7 @@ python3 server/tests/test_rules.py
 python3 server/tests/test_reports.py
 python3 server/tests/test_geofence_speed.py
 python3 server/tests/test_routing.py   # con routing.url apuntando a un OSRM
+python3 server/tests/test_plans.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```
