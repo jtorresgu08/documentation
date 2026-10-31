@@ -26,7 +26,7 @@ const PERIODS = {
   last7d: () => dayjs().subtract(7, 'day'),
 };
 
-const GRADE_COLORS = {
+export const GRADE_COLORS = {
   excellent: '#2e7d32', good: '#1565c0', fair: '#e65100', poor: '#c62828',
 };
 

@@ -227,6 +227,31 @@ Configuración en [infra/DEPLOY.md](infra/DEPLOY.md), sección 12.
   eliminar y ver con el ícono de renovación en la tabla de estado. Los vencimientos por fecha avanzan aunque la
   unidad no reporte.
 
+## Paneles flotantes en el mapa (parche `0016`)
+
+Botón **Paneles** sobre el mapa: abre ventanas flotantes que se mueven, cambian de tamaño, se minimizan, maximizan y
+siguen abiertas al cambiar de página (la ventana de video es un panel más). Se pueden abrir varias a la vez.
+
+| Grupo | Panel | Qué hace |
+|---|---|---|
+| Operación | **Alertas en vivo** | Críticas y altas abiertas de las últimas 24 h, sonido para nuevas críticas, tomar / resolver / falsa alarma, ubicar y video |
+| | **Seguimiento de unidad** | Ficha que acompaña a una unidad: estado, velocidad, encendido, conductor, combustible, energía, odómetro, velocidad de la última hora, últimos eventos y accesos (video, historial, combustible, chat, corte seguro, compartir). Se pueden abrir varias para comparar |
+| | **Historial rápido** | Unidad y periodo (última hora, 6 h, hoy, ayer), recorrido por velocidad sobre el mapa principal, reproducción 1–32×, gráfico de velocidad con clic para ubicarse |
+| | **Combustible en vivo** | Nivel actual y % del tanque, gráfico de 12 h, cargas y descargas detectadas y acceso a la evidencia de una descarga |
+| Flota | **Resumen de flota** | En movimiento, detenidas, sin conexión y con alertas (cada una filtra el mapa y la lista), unidades sin reportar +24 h y ranking de excesos de hoy |
+| | **Calidad de conexión** | Unidades con problemas, filtro por tipo y "ver en el mapa" |
+| | **Mantenimiento y vencimientos** | Vencidos y próximos (aceite, SOAT, revisión técnica), registrar servicio y añadir servicio |
+| | **Geocercas en vivo** | Unidades dentro de cada geocerca y desde cuándo, entradas y salidas de hoy |
+| Herramientas | **Unidad más cercana** | Clic en el mapa → unidades disponibles más cercanas con distancia estimada por vía y tiempo de llegada, enviar comando o mensaje |
+| | **Medición y ruta** | Distancia, área (perímetro y hectáreas) y ruta planificada comparada con el recorrido real (% en el corredor, desvío máximo) |
+| | **Comandos rápidos** | Comando a una o varias unidades con confirmación y resultado por unidad; el corte de motor siempre pasa por el corte seguro |
+| | **Chat con conductor** | WhatsApp con el conductor de la unidad: conversación, frases rápidas, estado de entrega; las respuestas llegan por el webhook y el botón muestra los mensajes nuevos |
+| Monitoreo | **Mosaico de cámaras** | Un canal de varias unidades a la vez (4, 6 o 9), rotando páginas cada 15–60 s; solo transmiten las visibles |
+
+**Espacios de trabajo**: se guardan los paneles abiertos con su posición y tamaño ("Turno noche", "Despacho"…), en el
+usuario (lo siguen a cualquier computadora); uno puede abrirse automáticamente al iniciar sesión. En el menú de cada
+unidad está *Panel de seguimiento*.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -302,6 +327,7 @@ python3 server/tests/test_video_driving_expenses.py
 python3 server/tests/test_jimi_playback.py clip.mp4
 python3 server/tests/test_operations.py
 python3 server/tests/test_services.py
+python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```
 

@@ -304,3 +304,14 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
   los demás canales. Los planes con `renew` los avisa únicamente la tarea horaria (no el aviso nativo de Traccar al
   cruzar cada periodo), para no duplicar eventos.
 
+## 14. Chat con conductores por WhatsApp
+
+- Usa la misma cuenta de WhatsApp Cloud API de la sección 10 (`notificator.whatsapp.*`) y el mismo webhook
+  (`/api/whatsapp/webhook` con `whatsapp.appSecret`).
+- El número del conductor se toma del atributo `phone` (o `whatsapp`) del **conductor** asignado a la unidad (el de la
+  última posición por iButton/RFID o el vinculado a la unidad); si no hay, del atributo `driverPhone` de la unidad.
+- Los mensajes de un número de conductor se guardan en el chat de la unidad (no los responde el bot); los de usuarios
+  registrados siguen yendo al bot de consultas.
+- WhatsApp solo entrega texto libre a quien escribió en las últimas 24 h: para iniciar conversaciones use la plantilla
+  aprobada o pida al conductor que escriba primero.
+

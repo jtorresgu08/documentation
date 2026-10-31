@@ -24,6 +24,8 @@ import { useAttributePreference } from '../common/util/preferences';
 import { map } from '../map/core/MapView';
 import MapToolbar from '../map/main/MapToolbar';
 import MapRuler from '../map/main/MapRuler';
+import PanelMapLayers from '../panels/PanelMapLayers';
+import PanelLauncher from '../panels/PanelLauncher';
 
 const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
   const theme = useTheme();
@@ -110,7 +112,9 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
         <MapSelectedDevice follow={values.follow} />
         <MapRuler active={ruler} color={theme.palette.primary.main} onDistance={setDistance} />
         <PoiMap />
+        <PanelMapLayers />
       </MapView>
+      <PanelLauncher />
       <MapToolbar tools={tools} distance={ruler ? (distance ?? 0) : null} />
       <MapScale />
       <MapCurrentLocation />

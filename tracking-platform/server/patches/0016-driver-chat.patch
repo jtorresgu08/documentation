@@ -1,0 +1,548 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index daea3f7..dab0e32 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -131,4 +131,40 @@
+ 
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-driver-chat">
++
++    <createTable tableName="tc_driver_messages">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="deviceid" type="INT" />
++      <column name="driverid" type="INT" />
++      <column name="userid" type="INT" />
++      <column name="phone" type="VARCHAR(32)">
++        <constraints nullable="false" />
++      </column>
++      <column name="direction" type="VARCHAR(8)">
++        <constraints nullable="false" />
++      </column>
++      <column name="text" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++      <column name="time" type="TIMESTAMP">
++        <constraints nullable="false" />
++      </column>
++      <column name="status" type="VARCHAR(16)">
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_driver_messages" baseColumnNames="deviceid" constraintName="fk_driver_messages_deviceid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_devices" />
++    <createIndex tableName="tc_driver_messages" indexName="idx_driver_messages_phone">
++      <column name="phone" />
++      <column name="time" />
++    </createIndex>
++
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/api/resource/ChatResource.java b/src/main/java/org/traccar/api/resource/ChatResource.java
+new file mode 100644
+index 0000000..2e98196
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/ChatResource.java
+@@ -0,0 +1,133 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.model.Device;
++import org.traccar.model.Driver;
++import org.traccar.model.DriverMessage;
++import org.traccar.model.User;
++import org.traccar.model.UserRestrictions;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++import org.traccar.whatsapp.DriverChat;
++
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.stream.Collectors;
++
++/**
++ * WhatsApp chat with the driver of a unit: conversation, sending a message and the latest replies of the drivers of
++ * the units the user can see.
++ */
++@Path("chat")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class ChatResource extends BaseResource {
++
++    private static final int MAX_TEXT = 1000;
++
++    @Inject
++    private DriverChat driverChat;
++
++    private Device device(long deviceId) throws StorageException {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        return storage.getObject(Device.class, new Request(new Columns.All(), new Condition.Equals("id", deviceId)));
++    }
++
++    @GET
++    public Map<String, Object> conversation(
++            @QueryParam("deviceId") long deviceId, @QueryParam("limit") int limit) throws StorageException {
++        Device device = device(deviceId);
++        Driver driver = driverChat.driverOf(device);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("configured", driverChat.configured());
++        result.put("driverId", driver != null ? driver.getId() : null);
++        result.put("driverName", driver != null ? driver.getName() : null);
++        result.put("phone", DriverChat.phoneOf(driver, device));
++        result.put("messages", driverChat.conversation(deviceId, limit > 0 ? Math.min(limit, 500) : 100));
++        return result;
++    }
++
++    public static class Outgoing {
++        private long deviceId;
++        private String text;
++
++        public long getDeviceId() {
++            return deviceId;
++        }
++
++        public void setDeviceId(long deviceId) {
++            this.deviceId = deviceId;
++        }
++
++        public String getText() {
++            return text;
++        }
++
++        public void setText(String text) {
++            this.text = text;
++        }
++    }
++
++    @POST
++    public DriverMessage send(Outgoing outgoing) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        Device device = device(outgoing.getDeviceId());
++        String text = outgoing.getText() != null ? outgoing.getText().trim() : "";
++        if (text.isEmpty() || text.length() > MAX_TEXT) {
++            throw new BadRequestException("Invalid message");
++        }
++        try {
++            return driverChat.send(getUserId(), device, text);
++        } catch (IllegalArgumentException e) {
++            throw new BadRequestException(e.getMessage());
++        }
++    }
++
++    @GET
++    @Path("recent")
++    public List<DriverMessage> recent(@QueryParam("since") Date since) throws StorageException {
++        Request request = permissionsService.notAdmin(getUserId())
++                ? new Request(new Columns.All(), new Condition.Permission(User.class, getUserId(), Device.class))
++                : new Request(new Columns.All());
++        Set<Long> deviceIds = storage.getObjects(Device.class, request).stream()
++                .map(Device::getId).collect(Collectors.toSet());
++        Date from = since != null ? since : new Date(System.currentTimeMillis() - 24 * 3600 * 1000L);
++        return storage.getObjects(DriverMessage.class, new Request(
++                new Columns.All(),
++                new Condition.And(
++                        new Condition.Equals("direction", DriverMessage.IN),
++                        new Condition.Compare("time", ">", from)),
++                new Order("time", true, 200))).stream()
++                .filter(message -> deviceIds.contains(message.getDeviceId()))
++                .toList();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/WhatsappResource.java b/src/main/java/org/traccar/api/resource/WhatsappResource.java
+index ad7ac36..a03d248 100644
+--- a/src/main/java/org/traccar/api/resource/WhatsappResource.java
++++ b/src/main/java/org/traccar/api/resource/WhatsappResource.java
+@@ -33,6 +33,7 @@ import org.traccar.config.Config;
+ import org.traccar.config.Keys;
+ import org.traccar.model.User;
+ import org.traccar.whatsapp.WhatsappBot;
++import org.traccar.whatsapp.DriverChat;
+ import org.traccar.whatsapp.WhatsappClient;
+ 
+ import javax.crypto.Mac;
+@@ -62,6 +63,9 @@ public class WhatsappResource extends BaseResource {
+     @Inject
+     private WhatsappClient whatsappClient;
+ 
++    @Inject
++    private DriverChat driverChat;
++
+     static boolean validSignature(String secret, String body, String signature) {
+         if (secret == null || secret.isBlank() || signature == null || !signature.startsWith("sha256=")) {
+             return false;
+@@ -108,6 +112,11 @@ public class WhatsappResource extends BaseResource {
+                         }
+                         String from = message.path("from").asText();
+                         User user = bot.findUser(from);
++                        // drivers write to the operators: their messages go to the unit chat, not to the bot
++                        if (user == null
++                                && driverChat.receive(from, message.path("text").path("body").asText()) != null) {
++                            continue;
++                        }
+                         String reply = user != null
+                                 ? bot.answer(user, message.path("text").path("body").asText())
+                                 : "Este número no está registrado en la plataforma. Pide a tu administrador que lo "
+diff --git a/src/main/java/org/traccar/model/DriverMessage.java b/src/main/java/org/traccar/model/DriverMessage.java
+new file mode 100644
+index 0000000..3dcadee
+--- /dev/null
++++ b/src/main/java/org/traccar/model/DriverMessage.java
+@@ -0,0 +1,110 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * WhatsApp message between the operators and the driver of a unit: direction "out" (sent by a user) or "in" (reply of
++ * the driver), with its delivery status.
++ */
++@StorageName("tc_driver_messages")
++public class DriverMessage extends ExtendedModel {
++
++    public static final String OUT = "out";
++    public static final String IN = "in";
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private long driverId;
++
++    public long getDriverId() {
++        return driverId;
++    }
++
++    public void setDriverId(long driverId) {
++        this.driverId = driverId;
++    }
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String phone;
++
++    public String getPhone() {
++        return phone;
++    }
++
++    public void setPhone(String phone) {
++        this.phone = phone;
++    }
++
++    private String direction;
++
++    public String getDirection() {
++        return direction;
++    }
++
++    public void setDirection(String direction) {
++        this.direction = direction;
++    }
++
++    private String text;
++
++    public String getText() {
++        return text;
++    }
++
++    public void setText(String text) {
++        this.text = text;
++    }
++
++    private Date time;
++
++    public Date getTime() {
++        return time;
++    }
++
++    public void setTime(Date time) {
++        this.time = time;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/whatsapp/DriverChat.java b/src/main/java/org/traccar/whatsapp/DriverChat.java
+new file mode 100644
+index 0000000..11e7ecf
+--- /dev/null
++++ b/src/main/java/org/traccar/whatsapp/DriverChat.java
+@@ -0,0 +1,169 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.whatsapp;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.model.Device;
++import org.traccar.model.Driver;
++import org.traccar.model.DriverMessage;
++import org.traccar.model.Position;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Date;
++import java.util.List;
++
++/**
++ * Chat between the operators and the driver of a unit over WhatsApp. The driver is the one identified in the last
++ * position (driverUniqueId) or else the first driver linked to the unit; the number comes from the driver's "phone"
++ * (or "whatsapp") attribute, or the unit's "driverPhone" attribute. Replies from a driver's number are stored on the
++ * unit the last message was sent from.
++ */
++@Singleton
++public class DriverChat {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(DriverChat.class);
++
++    public static final String SENT = "sent";
++    public static final String FAILED = "failed";
++    public static final String RECEIVED = "received";
++
++    private final Storage storage;
++    private final WhatsappClient whatsappClient;
++
++    @Inject
++    public DriverChat(Storage storage, WhatsappClient whatsappClient) {
++        this.storage = storage;
++        this.whatsappClient = whatsappClient;
++    }
++
++    public boolean configured() {
++        return whatsappClient.configured();
++    }
++
++    public static String phoneOf(Driver driver, Device device) {
++        for (String value : new String[] {
++                driver != null ? driver.getString("phone") : null,
++                driver != null ? driver.getString("whatsapp") : null,
++                device.getString("driverPhone")}) {
++            if (WhatsappClient.normalize(value).length() >= 7) {
++                return WhatsappClient.normalize(value);
++            }
++        }
++        return null;
++    }
++
++    static boolean samePhone(String a, String b) {
++        String first = WhatsappClient.normalize(a);
++        String second = WhatsappClient.normalize(b);
++        return first.length() >= 7 && second.length() >= 7 && (first.endsWith(second) || second.endsWith(first));
++    }
++
++    public Driver driverOf(Device device) throws StorageException {
++        if (device.getPositionId() > 0) {
++            Position position = storage.getObject(Position.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", device.getPositionId())));
++            String uniqueId = position != null ? position.getString(Position.KEY_DRIVER_UNIQUE_ID) : null;
++            if (uniqueId != null) {
++                Driver driver = storage.getObject(Driver.class, new Request(
++                        new Columns.All(), new Condition.Equals("uniqueId", uniqueId)));
++                if (driver != null) {
++                    return driver;
++                }
++            }
++        }
++        List<Driver> linked = storage.getObjects(Driver.class, new Request(
++                new Columns.All(), new Condition.Permission(Device.class, device.getId(), Driver.class)));
++        return linked.isEmpty() ? null : linked.get(0);
++    }
++
++    public List<DriverMessage> conversation(long deviceId, int limit) throws StorageException {
++        List<DriverMessage> messages = new ArrayList<>(storage.getObjects(DriverMessage.class, new Request(
++                new Columns.All(), new Condition.Equals("deviceId", deviceId), new Order("time", true, limit))));
++        Collections.reverse(messages);
++        return messages;
++    }
++
++    public DriverMessage send(long userId, Device device, String text) throws StorageException {
++        Driver driver = driverOf(device);
++        String phone = phoneOf(driver, device);
++        if (phone == null) {
++            throw new IllegalArgumentException("El conductor no tiene número de WhatsApp");
++        }
++        DriverMessage message = new DriverMessage();
++        message.setDeviceId(device.getId());
++        message.setDriverId(driver != null ? driver.getId() : 0);
++        message.setUserId(userId);
++        message.setPhone(phone);
++        message.setDirection(DriverMessage.OUT);
++        message.setText(text);
++        message.setTime(new Date());
++        try {
++            whatsappClient.sendText(phone, text);
++            message.setStatus(SENT);
++        } catch (Exception e) {
++            LOGGER.warn("Driver message failed", e);
++            message.setStatus(FAILED);
++            message.set("error", e.getMessage());
++        }
++        message.setId(storage.addObject(message, new Request(new Columns.Exclude("id"))));
++        return message;
++    }
++
++    /** Stores a message from a driver's number; null when the number is not a driver's. */
++    public DriverMessage receive(String from, String text) throws StorageException {
++        Driver driver = storage.getObjects(Driver.class, new Request(new Columns.All())).stream()
++                .filter(item -> samePhone(item.getString("phone"), from) || samePhone(item.getString("whatsapp"), from))
++                .findFirst().orElse(null);
++        long deviceId = 0;
++        List<DriverMessage> last = storage.getObjects(DriverMessage.class, new Request(
++                new Columns.All(), new Condition.Equals("phone", WhatsappClient.normalize(from)),
++                new Order("time", true, 1)));
++        if (!last.isEmpty()) {
++            deviceId = last.get(0).getDeviceId();
++        } else {
++            for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
++                Driver current = driver != null ? driverOf(device) : null;
++                if (samePhone(device.getString("driverPhone"), from)
++                        || current != null && current.getId() == driver.getId()) {
++                    deviceId = device.getId();
++                    break;
++                }
++            }
++        }
++        if (driver == null && deviceId == 0) {
++            return null;
++        }
++        DriverMessage message = new DriverMessage();
++        message.setDeviceId(deviceId);
++        message.setDriverId(driver != null ? driver.getId() : 0);
++        message.setPhone(WhatsappClient.normalize(from));
++        message.setDirection(DriverMessage.IN);
++        message.setText(text);
++        message.setTime(new Date());
++        message.setStatus(RECEIVED);
++        message.setId(storage.addObject(message, new Request(new Columns.Exclude("id"))));
++        return message;
++    }
++
++}
+diff --git a/src/test/java/org/traccar/whatsapp/DriverChatTest.java b/src/test/java/org/traccar/whatsapp/DriverChatTest.java
+new file mode 100644
+index 0000000..ea5bcb3
+--- /dev/null
++++ b/src/test/java/org/traccar/whatsapp/DriverChatTest.java
+@@ -0,0 +1,33 @@
++package org.traccar.whatsapp;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Device;
++import org.traccar.model.Driver;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class DriverChatTest {
++
++    @Test
++    public void testPhoneOf() {
++        Device device = new Device();
++        Driver driver = new Driver();
++        assertNull(DriverChat.phoneOf(driver, device));
++        device.set("driverPhone", "987 654 321");
++        assertEquals("987654321", DriverChat.phoneOf(null, device));
++        driver.set("phone", "+51 999-111-222");
++        assertEquals("51999111222", DriverChat.phoneOf(driver, device));
++    }
++
++    @Test
++    public void testSamePhone() {
++        assertTrue(DriverChat.samePhone("+51 987 654 222", "987654222"));
++        assertTrue(DriverChat.samePhone("51987654222", "+51 (987) 654-222"));
++        assertFalse(DriverChat.samePhone("51987654222", "51987654223"));
++        assertFalse(DriverChat.samePhone("123", "123"));
++    }
++
++}

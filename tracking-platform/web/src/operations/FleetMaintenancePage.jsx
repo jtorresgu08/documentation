@@ -24,7 +24,7 @@ import { useRestriction } from '../common/util/permissions';
 import { capitalize } from './alertUtils';
 import ServiceSetupDialog from './ServiceSetupDialog';
 
-const STATE_COLORS = { overdue: '#c62828', soon: '#e65100', ok: '#2e7d32' };
+export const STATE_COLORS = { overdue: '#c62828', soon: '#e65100', ok: '#2e7d32' };
 
 const isTime = (type) => type.endsWith('Time');
 
@@ -37,7 +37,7 @@ export const formatPlanValue = (type, value) => {
   return Math.round(value).toLocaleString('es-PE');
 };
 
-const formatRemaining = (type, value, t) => {
+export const formatRemaining = (type, value, t) => {
   if (isTime(type)) {
     const days = Math.round(value / 86400000);
     return days >= 0 ? `${days} ${t('expenseDays')}` : `${-days} ${t('expenseDays')} ${t('maintenanceLate')}`;
@@ -345,7 +345,7 @@ const FleetMaintenancePage = () => {
   );
 };
 
-const ServiceDialog = ({ open, initial, items, currency, onClose, onSaved }) => {
+export const ServiceDialog = ({ open, initial, items, currency, onClose, onSaved }) => {
   const t = useTranslation();
   const devices = useSelector((state) => state.devices.items);
   const positions = useSelector((state) => state.session.positions);

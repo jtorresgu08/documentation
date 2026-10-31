@@ -23,6 +23,7 @@ import MainMap from './MainMap';
 import { useAttributePreference } from '../common/util/preferences';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { statusCategory } from './DeviceRow';
+import { setMapFilter, useMapFilter } from '../common/util/mapFilter';
 
 const useStyles = makeStyles()((theme) => ({
   root: {
@@ -163,14 +164,19 @@ const MainPage = () => {
     result[category] += 1;
     return result;
   }, { moving: 0, stopped: 0, offline: 0 }), [categories]);
-  const listDevices = quickStatus === 'all'
-    ? filteredDevices : filteredDevices.filter((device) => categories[device.id] === quickStatus);
+  // a floating panel can narrow the map and the list to some units (in motion, with problems, inside a geofence…)
+  const panelFilter = useMapFilter();
+  const panelUnits = useMemo(() => (panelFilter ? new Set(panelFilter.deviceIds) : null), [panelFilter]);
+  const listDevices = (quickStatus === 'all'
+    ? filteredDevices : filteredDevices.filter((device) => categories[device.id] === quickStatus))
+    .filter((device) => !panelUnits || panelUnits.has(device.id));
 
   const mapPositions = useMemo(() => {
     const hidden = new Set(hiddenDevices);
     return filteredPositions.filter((position) => !hidden.has(position.deviceId)
-      && (quickStatus === 'all' || categories[position.deviceId] === quickStatus));
-  }, [filteredPositions, hiddenDevices, quickStatus, categories]);
+      && (quickStatus === 'all' || categories[position.deviceId] === quickStatus)
+      && (!panelUnits || panelUnits.has(position.deviceId)));
+  }, [filteredPositions, hiddenDevices, quickStatus, categories, panelUnits]);
 
   const quickOptions = [
     ['all', t('quickAll'), filteredDevices.length, 'primary'],
@@ -258,6 +264,14 @@ const MainPage = () => {
                 <Typography variant="body2" fontWeight={600}>{`${count} ${label}`}</Typography>
               </Stack>
           ))}
+          {panelFilter && (
+            <Chip
+              color="primary"
+              label={`${panelFilter.label} · ${panelFilter.deviceIds.length}`}
+              onDelete={() => setMapFilter(null)}
+              sx={{ alignSelf: 'center', fontWeight: 600 }}
+            />
+          )}
         </div>
       )}
       <EventsDrawer open={eventsOpen} onClose={() => setEventsOpen(false)} />

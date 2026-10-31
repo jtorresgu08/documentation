@@ -9,7 +9,7 @@ import { sessionActions } from './store';
 import UpdateController from './UpdateController';
 import TermsDialog from './common/components/TermsDialog';
 import Loader from './common/components/Loader';
-import VideoWindows from './main/VideoWindows';
+import FloatingPanels from './panels/FloatingPanels';
 import fetchOrThrow from './common/util/fetchOrThrow';
 
 const useStyles = makeStyles()(() => ({
@@ -83,7 +83,7 @@ const App = () => {
           <Outlet />
         </div>
       </div>
-      <VideoWindows />
+      <FloatingPanels />
     </>
   );
 };

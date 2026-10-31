@@ -18,7 +18,7 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import { buildCameraCommand, cameraStreamUrl, getCameraConfig } from '../common/util/dashcam';
-import { closeVideoWindow, focusVideoWindow, useVideoWindows } from '../common/util/videoWindows';
+import { closeVideoWindow, focusVideoWindow } from '../common/util/videoWindows';
 import { devicesActions } from '../store';
 import EngineCutDialog from '../common/components/EngineCutDialog';
 import VideoTile from '../dashcam/VideoTile';
@@ -56,7 +56,7 @@ const LayoutIcon = ({ size }) => {
 // Live video, recordings stored on the device and camera events stored in the platform, in one window floating over
 // the platform. Live: a grid of every assigned channel (or 1, 4, 6, 8, 9, 12, 16 at a time), each with its
 // own controls, plus play / stop all, HD or SD stream, engine on / off and minimize, maximize, move and resize.
-const VideoWindow = ({ deviceId, cascade, onTop }) => {
+export const VideoWindow = ({ deviceId, cascade, onTop }) => {
   const theme = useTheme();
   const t = useTranslation();
   const dispatch = useDispatch();
@@ -447,11 +447,5 @@ const VideoWindow = ({ deviceId, cascade, onTop }) => {
   );
 };
 
-const VideoWindows = () => {
-  const windows = useVideoWindows();
-  return windows.map((item, index) => (
-    <VideoWindow key={item.deviceId} deviceId={item.deviceId} cascade={item.cascade % 4} onTop={index === windows.length - 1} />
-  ));
-};
-
-export default VideoWindows;
+// rendered by the floating panels, which share the stacking order and the workspaces
+export default VideoWindow;
