@@ -1,16 +1,19 @@
 import { useState } from 'react';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   Divider, Typography, IconButton, Toolbar,
-  Paper,
+  Paper, Menu, MenuItem, ListItemText, ListSubheader,
 } from '@mui/material';
 import Tooltip from '@mui/material/Tooltip';
 import { makeStyles } from 'tss-react/mui';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { useNavigate } from 'react-router-dom';
 import MapView from '../map/core/MapView';
 import MapCurrentLocation from '../map/MapCurrentLocation';
 import GeofenceCreatePanel from './GeofenceCreatePanel';
+import GeofenceImportPanel from './GeofenceImportPanel';
+import { EXPORT_FORMATS, exportGeofences } from './geofenceFormats';
 import MapGeofenceEdit from '../map/draw/MapGeofenceEdit';
 import GeofencesList from './GeofencesList';
 import { useTranslation } from '../common/components/LocalizationProvider';
@@ -18,7 +21,6 @@ import MapGeocoder from '../map/geocoder/MapGeocoder';
 import { errorsActions } from '../store';
 import MapScale from '../map/MapScale';
 import BackIcon from '../common/components/BackIcon';
-import fetchOrThrow from '../common/util/fetchOrThrow';
 
 const useStyles = makeStyles()((theme) => ({
   root: {
@@ -51,9 +53,6 @@ const useStyles = makeStyles()((theme) => ({
   title: {
     flexGrow: 1,
   },
-  fileInput: {
-    display: 'none',
-  },
 }));
 
 const GeofencesPage = () => {
@@ -64,35 +63,22 @@ const GeofencesPage = () => {
 
   const [selectedGeofenceId, setSelectedGeofenceId] = useState();
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exportAnchor, setExportAnchor] = useState(null);
+  const geofences = useSelector((state) => state.geofences.items);
 
-  const handleFile = (event) => {
-    const files = Array.from(event.target.files);
-    const [file] = files;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const xml = new DOMParser().parseFromString(reader.result, 'text/xml');
-      const segment = xml.getElementsByTagName('trkseg')[0];
-      const coordinates = Array.from(segment.getElementsByTagName('trkpt'))
-        .map((point) => `${point.getAttribute('lat')} ${point.getAttribute('lon')}`)
-        .join(', ');
-      const area = `LINESTRING (${coordinates})`;
-      const newItem = { name: t('sharedGeofence'), area };
-      try {
-        const response = await fetchOrThrow('/api/geofences', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newItem),
-        });
-        const item = await response.json();
-        navigate(`/settings/geofence/${item.id}`);
-      } catch (error) {
-        dispatch(errorsActions.push(error.message));
-      }
-    };
-    reader.onerror = (event) => {
-      dispatch(errorsActions.push(event.target.error));
-    };
-    reader.readAsText(file);
+  const handleExport = async (format) => {
+    setExportAnchor(null);
+    try {
+      const blob = await exportGeofences(Object.values(geofences), format.id, t('sharedGeofences'));
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `geocercas-${new Date().toISOString().slice(0, 10)}.${format.extension}`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    } catch (error) {
+      dispatch(errorsActions.push(error.message));
+    }
   };
 
   return (
@@ -104,23 +90,36 @@ const GeofencesPage = () => {
               <BackIcon />
             </IconButton>
             <Typography variant="h6" className={classes.title}>{t('sharedGeofences')}</Typography>
-            <label htmlFor="upload-gpx">
-              <input accept=".gpx" id="upload-gpx" type="file" className={classes.fileInput} onChange={handleFile} />
-              <IconButton edge="end" component="span" onClick={() => {}}>
-                <Tooltip title={t('sharedUpload')}>
-                  <UploadFileIcon />
-                </Tooltip>
+            <Tooltip title={t('geofenceImport')}>
+              <IconButton onClick={() => { setCreating(false); setImporting(true); }}>
+                <UploadFileIcon />
               </IconButton>
-            </label>
+            </Tooltip>
+            <Tooltip title={t('geofenceExport')}>
+              <span>
+                <IconButton edge="end" aria-label={t('geofenceExport')} disabled={!Object.keys(geofences).length} onClick={(event) => setExportAnchor(event.currentTarget)}>
+                  <FileDownloadIcon />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Menu anchorEl={exportAnchor} open={!!exportAnchor} onClose={() => setExportAnchor(null)}>
+              <ListSubheader sx={{ lineHeight: '32px' }}>{t('geofenceExportAll').replace('{0}', Object.keys(geofences).length)}</ListSubheader>
+              {EXPORT_FORMATS.map((format) => (
+                <MenuItem key={format.id} onClick={() => handleExport(format)}>
+                  <ListItemText primary={format.label} secondary={format.description} />
+                </MenuItem>
+              ))}
+            </Menu>
           </Toolbar>
           <Divider />
           <GeofencesList onGeofenceSelected={setSelectedGeofenceId} />
         </Paper>
         <div className={classes.mapContainer}>
           <MapView>
-            <MapGeofenceEdit selectedGeofenceId={selectedGeofenceId} onCreateByCoordinates={() => setCreating(true)} />
+            <MapGeofenceEdit selectedGeofenceId={selectedGeofenceId} onCreateByCoordinates={() => { setImporting(false); setCreating(true); }} />
           </MapView>
           {creating && <GeofenceCreatePanel onClose={() => setCreating(false)} />}
+          {importing && <GeofenceImportPanel onClose={() => setImporting(false)} />}
           <MapScale />
           <MapCurrentLocation />
           <MapGeocoder />

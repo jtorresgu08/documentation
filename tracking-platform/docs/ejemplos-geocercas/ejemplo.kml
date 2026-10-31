@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<Placemark><name>Almacén Ate</name><description>Turno noche</description><Polygon><outerBoundaryIs><LinearRing><coordinates>-76.93,-12.03 -76.92,-12.03 -76.92,-12.02 -76.93,-12.02 -76.93,-12.03</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Grifo Javier Prado</name><Point><coordinates>-77.0,-12.09</coordinates></Point></Placemark>
+<Placemark><name>Ruta Callao</name><LineString><coordinates>-77.12,-12.05 -77.1,-12.055 -77.08,-12.06</coordinates></LineString></Placemark>
+</Document></kml>

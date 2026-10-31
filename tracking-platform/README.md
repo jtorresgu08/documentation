@@ -350,6 +350,25 @@ unidad está *Panel de seguimiento*.
 - API: `GET /api/routing/route?point=lat,lon&point=lat,lon[&point=…]&profile=driving|bike|foot` devuelve distancia,
   duración, coordenadas simplificadas y el área lista para guardar.
 
+## Importar y exportar geocercas (formatos GIS)
+
+- **Importar** (botón de subir archivo en *Geocercas*): panel con vista previa en el mapa y lista para elegir cuáles
+  crear. Formatos: **GeoJSON**, **KML**, **KMZ** (Google Earth / My Maps), **Shapefile** en `.zip` (WGS84 o UTM WGS84,
+  p. ej. zona 17S/18S/19S, con nombres del `.dbf`), **GPX** (tracks, rutas y waypoints), **CSV** (columnas `area`,
+  `wkt` o `latitud`/`longitud` con `radio`; separador `,` `;` o tabulación) y **WKT** (una geometría por línea,
+  opcionalmente `nombre;WKT`).
+  - Los puntos se crean como **círculos** (su radio o uno por defecto), las líneas como **rutas con corredor** y los
+    polígonos tal cual; los multipolígonos se separan en varias geocercas y los huecos se quitan.
+  - Se conservan nombre, descripción, color, límite de velocidad propio, ancho del corredor y radio cuando el archivo
+    los trae (también los colores de estilo de KML).
+  - Las formas muy detalladas se **simplifican** automáticamente para caber en la geocerca (4096 caracteres) y se
+    marcan en la lista.
+- **Exportar** (botón de descarga): todas las geocercas en GeoJSON, KML, KMZ, Shapefile (una capa de áreas y otra de
+  rutas, con `.prj` WGS84), GPX, CSV (abre en Excel, incluye el área de Traccar y WKT estándar) o WKT.
+- Al volver a importar un archivo exportado en GeoJSON, KML/KMZ, Shapefile o CSV los círculos siguen siendo círculos;
+  GPX y WKT no tienen círculos y los guardan como polígonos.
+- Archivos de ejemplo en [`docs/ejemplos-geocercas`](docs/ejemplos-geocercas).
+
 ## Panel web
 
 Basado en tus capturas de referencia:
