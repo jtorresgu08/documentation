@@ -26,6 +26,8 @@ import FuelReportPage from './reports/FuelReportPage';
 import ExpensesPage from './reports/ExpensesPage';
 import AlertCenterPage from './operations/AlertCenterPage';
 import AlertRulesPage from './operations/AlertRulesPage';
+import SensorReportPage from './reports/SensorReportPage';
+import CustomAlertsReportPage from './reports/CustomAlertsReportPage';
 import ConnectionQualityPage from './operations/ConnectionQualityPage';
 import FleetMaintenancePage from './operations/FleetMaintenancePage';
 import ReportBuilderPage from './operations/ReportBuilderPage';
@@ -196,6 +198,8 @@ const Navigation = () => {
           <Route path="driving" element={<DrivingScorePage />} />
           <Route path="expenses" element={<ExpensesPage />} />
           <Route path="quality" element={<ConnectionQualityPage />} />
+          <Route path="sensors" element={<SensorReportPage />} />
+          <Route path="custom-alerts" element={<CustomAlertsReportPage />} />
           <Route path="builder" element={<ReportBuilderPage />} />
           <Route path="events" element={<EventReportPage />} />
           <Route path="route" element={<PositionsReportPage />} />

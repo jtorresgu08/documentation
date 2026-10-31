@@ -302,6 +302,20 @@ unidad está *Panel de seguimiento*.
 - Se revisan con cada mensaje y cada minuto (silencios, duraciones y horarios cuentan aunque la unidad no reporte).
 - Los sensores y su color se ven también en la ficha de la unidad y en el panel flotante de seguimiento.
 
+## Reportes de sensores y de alertas personalizadas (parche `0018`)
+
+- **Reporte de sensores** (*Reportes → Reporte de sensores*): por unidad y periodo (hoy, ayer, 7 días, mes o
+  personalizado, hasta 31 días) y sensores elegidos. Para cada sensor: mínimo, **promedio ponderado por tiempo**,
+  máximo y último valor; **total del periodo** en kilometraje, horas de motor, consumo y contadores; **tiempo activo,
+  % del tiempo y activaciones** en los digitales; **tiempo en cada rango de color** (p. ej. % del tiempo fuera de
+  2–8 °C); gráfico con las franjas de color y tabla de lecturas coloreada. Exporta CSV e imprime/PDF.
+- **Reporte de alertas personalizadas** (*Reportes → Reporte de alertas personalizadas*): por periodo (hasta 93 días),
+  alertas, unidades y prioridad. Totales (alertas, críticas, unidades, % atendido), alertas por día y por hora,
+  alertas y unidades más frecuentes, por prioridad, y el detalle con mensaje, estado del centro de alertas y acceso al
+  historial del momento. Exporta CSV e imprime/PDF.
+- Ambos están también en **Reportes configurables** (fuentes *Sensores* y *Alertas personalizadas*, agrupables por
+  unidad, día o alerta), donde se pueden combinar columnas y guardar como plantilla.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -378,6 +392,7 @@ python3 server/tests/test_jimi_playback.py clip.mp4
 python3 server/tests/test_operations.py
 python3 server/tests/test_services.py
 python3 server/tests/test_rules.py
+python3 server/tests/test_reports.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

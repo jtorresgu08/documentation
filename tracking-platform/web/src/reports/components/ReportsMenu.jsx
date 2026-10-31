@@ -12,6 +12,8 @@ import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import SignalCellularAltIcon from '@mui/icons-material/SignalCellularAlt';
+import SensorsIcon from '@mui/icons-material/Sensors';
+import RuleIcon from '@mui/icons-material/Rule';
 import RouteIcon from '@mui/icons-material/Route';
 import EventRepeatIcon from '@mui/icons-material/EventRepeat';
 import NotesIcon from '@mui/icons-material/Notes';
@@ -72,6 +74,18 @@ const ReportsMenu = () => {
           link="/reports/builder"
           icon={<TableChartIcon />}
           selected={location.pathname === '/reports/builder'}
+        />
+        <MenuItem
+          title={t('sensorReportTitle')}
+          link="/reports/sensors"
+          icon={<SensorsIcon />}
+          selected={location.pathname === '/reports/sensors'}
+        />
+        <MenuItem
+          title={t('customAlertsReportTitle')}
+          link="/reports/custom-alerts"
+          icon={<RuleIcon />}
+          selected={location.pathname === '/reports/custom-alerts'}
         />
         <MenuItem
           title={t('qualityTitle')}

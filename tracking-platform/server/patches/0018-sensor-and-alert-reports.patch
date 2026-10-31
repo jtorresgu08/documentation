@@ -1,0 +1,514 @@
+diff --git a/src/main/java/org/traccar/api/resource/AlertRuleResource.java b/src/main/java/org/traccar/api/resource/AlertRuleResource.java
+index de3bd62..daf09d8 100644
+--- a/src/main/java/org/traccar/api/resource/AlertRuleResource.java
++++ b/src/main/java/org/traccar/api/resource/AlertRuleResource.java
+@@ -30,6 +30,7 @@ import jakarta.ws.rs.core.MediaType;
+ import jakarta.ws.rs.core.Response;
+ import org.traccar.api.BaseResource;
+ import org.traccar.model.AlertRule;
++import org.traccar.model.AlertState;
+ import org.traccar.model.Device;
+ import org.traccar.model.Event;
+ import org.traccar.model.Group;
+@@ -43,14 +44,18 @@ import org.traccar.storage.query.Condition;
+ import org.traccar.storage.query.Order;
+ import org.traccar.storage.query.Request;
+ 
++import java.text.SimpleDateFormat;
+ import java.time.ZoneId;
+ import java.util.ArrayList;
++import java.util.Calendar;
+ import java.util.Date;
+ import java.util.HashMap;
++import java.util.HashSet;
+ import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
++import java.util.TreeMap;
+ 
+ /**
+  * Custom alert rules of the user: list with the alerts of the last 7 days, create, change, delete, enable, test a
+@@ -224,4 +229,97 @@ public class AlertRuleResource extends BaseResource {
+                 .toList();
+     }
+ 
++    /**
++     * Custom alerts report: the alerts raised in the period by the chosen rules, units and priorities, with their
++     * handling status from the alert center, and totals by rule, unit, priority, day and hour.
++     */
++    @GET
++    @Path("report")
++    public Map<String, Object> report(
++            @QueryParam("from") Date from, @QueryParam("to") Date to, @QueryParam("ruleId") List<Long> ruleIds,
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("severity") List<String> severities)
++            throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > 93 * 24 * 3600_000L) {
++            throw new BadRequestException("Invalid period");
++        }
++        Set<Long> accessible = ruleEngine.devicesOf(getUserId(), ruleEngine.parse("{\"all\":true}"));
++        Map<Long, String> names = new HashMap<>();
++        for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
++            if (accessible.contains(device.getId())) {
++                names.put(device.getId(), device.getName());
++            }
++        }
++        List<Event> events = storage.getObjects(Event.class, new Request(
++                new Columns.All(),
++                new Condition.And(
++                        new Condition.Equals("type", AlertRule.EVENT_TYPE),
++                        new Condition.Between("eventTime", from, to)),
++                new Order("eventTime", true, 5000))).stream()
++                .filter(event -> accessible.contains(event.getDeviceId()))
++                .filter(event -> deviceIds.isEmpty() || deviceIds.contains(event.getDeviceId()))
++                .filter(event -> ruleIds.isEmpty() || ruleIds.contains(event.getLong("ruleId")))
++                .filter(event -> severities.isEmpty() || severities.contains(event.getString("severity")))
++                .toList();
++        Map<Long, AlertState> states = new HashMap<>();
++        Set<Long> eventDevices = new HashSet<>();
++        events.forEach(event -> eventDevices.add(event.getDeviceId()));
++        for (long deviceId : eventDevices) {
++            for (AlertState state : storage.getObjects(AlertState.class, new Request(
++                    new Columns.All(), new Condition.Equals("deviceId", deviceId)))) {
++                states.put(state.getEventId(), state);
++            }
++        }
++        List<Map<String, Object>> items = new ArrayList<>();
++        Map<String, Integer> byRule = new LinkedHashMap<>();
++        Map<String, Integer> byDevice = new LinkedHashMap<>();
++        Map<String, Integer> bySeverity = new LinkedHashMap<>();
++        Map<String, Integer> byDay = new TreeMap<>();
++        int[] byHour = new int[24];
++        SimpleDateFormat day = new SimpleDateFormat("yyyy-MM-dd");
++        Calendar calendar = Calendar.getInstance();
++        int handled = 0;
++        for (Event event : events) {
++            AlertState state = states.get(event.getId());
++            String status = state != null ? state.getStatus() : "new";
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("id", event.getId());
++            item.put("eventTime", event.getEventTime());
++            item.put("deviceId", event.getDeviceId());
++            item.put("deviceName", names.get(event.getDeviceId()));
++            item.put("ruleId", event.getLong("ruleId"));
++            item.put("ruleName", event.getString("ruleName"));
++            item.put("ruleType", event.getString("ruleType"));
++            item.put("severity", event.getString("severity"));
++            item.put("message", event.getString("message"));
++            item.put("value", event.getString("value"));
++            item.put("positionId", event.getPositionId());
++            item.put("status", status);
++            item.put("note", state != null ? state.getNote() : null);
++            items.add(item);
++            byRule.merge(String.valueOf(event.getString("ruleName")), 1, Integer::sum);
++            byDevice.merge(String.valueOf(names.get(event.getDeviceId())), 1, Integer::sum);
++            bySeverity.merge(String.valueOf(event.getString("severity")), 1, Integer::sum);
++            byDay.merge(day.format(event.getEventTime()), 1, Integer::sum);
++            calendar.setTime(event.getEventTime());
++            byHour[calendar.get(Calendar.HOUR_OF_DAY)]++;
++            if ("resolved".equals(status) || "dismissed".equals(status)) {
++                handled++;
++            }
++        }
++        Map<String, Object> summary = new LinkedHashMap<>();
++        summary.put("total", items.size());
++        summary.put("handled", handled);
++        summary.put("units", byDevice.size());
++        summary.put("byRule", byRule);
++        summary.put("byDevice", byDevice);
++        summary.put("bySeverity", bySeverity);
++        summary.put("byDay", byDay);
++        summary.put("byHour", byHour);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("items", items);
++        result.put("summary", summary);
++        return result;
++    }
++
+ }
+diff --git a/src/main/java/org/traccar/api/resource/SensorResource.java b/src/main/java/org/traccar/api/resource/SensorResource.java
+index 9555ac1..6be4f02 100644
+--- a/src/main/java/org/traccar/api/resource/SensorResource.java
++++ b/src/main/java/org/traccar/api/resource/SensorResource.java
+@@ -35,6 +35,7 @@ import org.traccar.sensor.FuelAnalyzer;
+ import org.traccar.sensor.Sensor;
+ import org.traccar.sensor.SensorConfig;
+ import org.traccar.sensor.SensorEngine;
++import org.traccar.sensor.SensorStatistics;
+ import org.traccar.storage.StorageException;
+ import org.traccar.storage.query.Columns;
+ import org.traccar.storage.query.Condition;
+@@ -58,6 +59,8 @@ public class SensorResource extends BaseResource {
+ 
+     private static final long MAX_PERIOD = 62L * 24 * 60 * 60 * 1000;
+     private static final int MAX_POINTS = 4000;
++    private static final long REPORT_PERIOD = 31L * 24 * 60 * 60 * 1000;
++    private static final int REPORT_POINTS = 1500;
+ 
+     @Inject
+     private ObjectMapper objectMapper;
+@@ -256,4 +259,66 @@ public class SensorResource extends BaseResource {
+         return result;
+     }
+ 
++    /**
++     * Sensor report: statistics of every sensor (or the chosen ones) of each unit over the period and, for a single
++     * unit, the values over time (at most 1500 points).
++     */
++    @GET
++    @Path("report")
++    public Map<String, Object> report(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("sensorId") List<String> sensorIds,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > REPORT_PERIOD
++                || deviceIds.isEmpty() || deviceIds.size() > 500) {
++            throw new BadRequestException("Invalid period or units");
++        }
++        List<Map<String, Object>> devices = new ArrayList<>();
++        List<Map<String, Object>> series = new ArrayList<>();
++        for (long deviceId : deviceIds) {
++            permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", deviceId)));
++            List<Sensor> sensors = SensorConfig.parse(objectMapper, device).stream()
++                    .filter(sensor -> sensorIds.isEmpty() || sensorIds.contains(sensor.getId())).toList();
++            if (sensors.isEmpty()) {
++                continue;
++            }
++            List<Position> positions = PositionUtil.getPositions(storage, deviceId, from, to);
++            List<Map<String, Object>> statistics = new ArrayList<>();
++            for (Sensor sensor : sensors) {
++                statistics.add(SensorStatistics.compute(sensor, positions));
++            }
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("deviceId", deviceId);
++            item.put("deviceName", device.getName());
++            item.put("sensors", statistics);
++            devices.add(item);
++            if (deviceIds.size() == 1) {
++                int step = Math.max(1, (positions.size() + REPORT_POINTS - 1) / REPORT_POINTS);
++                for (int i = 0; i < positions.size(); i += step) {
++                    Position position = positions.get(i);
++                    Map<String, Object> values = new LinkedHashMap<>();
++                    for (Sensor sensor : sensors) {
++                        Object value = position.getAttributes().get(sensor.getKey());
++                        if (value != null) {
++                            values.put(sensor.getId(), value);
++                        }
++                    }
++                    Map<String, Object> point = new LinkedHashMap<>();
++                    point.put("time", position.getFixTime().getTime());
++                    point.put("speed", Math.round(position.getSpeed() * 1.852));
++                    point.put("latitude", position.getLatitude());
++                    point.put("longitude", position.getLongitude());
++                    point.put("values", values);
++                    series.add(point);
++                }
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("devices", devices);
++        result.put("series", series);
++        return result;
++    }
++
+ }
+diff --git a/src/main/java/org/traccar/sensor/Sensor.java b/src/main/java/org/traccar/sensor/Sensor.java
+index 725a75c..61b8afa 100644
+--- a/src/main/java/org/traccar/sensor/Sensor.java
++++ b/src/main/java/org/traccar/sensor/Sensor.java
+@@ -19,6 +19,8 @@ import org.traccar.model.Position;
+ import java.util.ArrayList;
+ import java.util.Comparator;
+ import java.util.List;
++import java.util.Map;
++import java.util.Set;
+ 
+ /**
+  * A unit sensor, GPS-Server / WOX / Wialon style: reads a position attribute (io201, adc1, fuel...) or evaluates a
+@@ -39,7 +41,7 @@ public class Sensor {
+     public static final String TYPE_FUEL_CALCULATED = "fuelCalculated";
+ 
+     /** Types read as on / off (1 / 0), with the optional inversion. */
+-    public static final java.util.Set<String> DIGITAL_TYPES = java.util.Set.of(
++    public static final Set<String> DIGITAL_TYPES = Set.of(
+             TYPE_BINARY, TYPE_IGNITION, "panic", "door", "seatbelt", "pto", "privateMode", "motion", "digital");
+ 
+     public static final String ACCUMULATE_INCREMENT = "increment";
+@@ -74,6 +76,7 @@ public class Sensor {
+     private Double threshold;
+     private double rate;
+     private double idleRate;
++    private List<Map<String, Object>> ranges = new ArrayList<>();
+ 
+     public String getId() {
+         return id;
+@@ -283,6 +286,24 @@ public class Sensor {
+         this.idleRate = idleRate;
+     }
+ 
++    public List<Map<String, Object>> getRanges() {
++        return ranges;
++    }
++
++    public void setRanges(List<Map<String, Object>> ranges) {
++        this.ranges = ranges != null ? ranges : new ArrayList<>();
++    }
++
++    /** Sensors whose value is a running total, so the period's amount is the last minus the first. */
++    public boolean isTotal() {
++        return accumulate != null && !accumulate.isEmpty() || TYPE_FUEL_CALCULATED.equals(type)
++                || Set.of("mileage", TYPE_ENGINE_HOURS, "fuelAbsolute", "counter").contains(type);
++    }
++
++    public boolean isDigital() {
++        return DIGITAL_TYPES.contains(type) || TYPE_ENGINE_EFFICIENCY.equals(type);
++    }
++
+     public String getKey() {
+         return ATTRIBUTE_PREFIX + id;
+     }
+diff --git a/src/main/java/org/traccar/sensor/SensorStatistics.java b/src/main/java/org/traccar/sensor/SensorStatistics.java
+new file mode 100644
+index 0000000..342482c
+--- /dev/null
++++ b/src/main/java/org/traccar/sensor/SensorStatistics.java
+@@ -0,0 +1,165 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.sensor;
++
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Sensor report of a unit over a period, from the values stored with each message: readings, minimum, maximum,
++ * average weighted by time, first and last, the period's amount for running totals (mileage, engine hours, fuel
++ * consumption, counters), time on and number of activations for digital sensors, and time spent in each color range.
++ * A gap longer than 15 minutes between messages does not count as time in any state.
++ */
++public final class SensorStatistics {
++
++    static final long MAX_STEP = 15 * 60 * 1000L;
++
++    private SensorStatistics() {
++    }
++
++    private static Double number(Object value) {
++        if (value instanceof Number number) {
++            return number.doubleValue();
++        } else if (value instanceof Boolean bool) {
++            return bool ? 1.0 : 0.0;
++        }
++        return null;
++    }
++
++    private static double round(double value) {
++        return Math.round(value * 1000) / 1000.0;
++    }
++
++    public static Map<String, Object> compute(Sensor sensor, List<Position> positions) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", sensor.getId());
++        result.put("name", sensor.getName());
++        result.put("type", sensor.getType());
++        result.put("unit", sensor.getUnit());
++        String key = sensor.getKey();
++        int count = 0;
++        double min = Double.POSITIVE_INFINITY;
++        double max = Double.NEGATIVE_INFINITY;
++        double weighted = 0;
++        long weightedTime = 0;
++        Double first = null;
++        Double last = null;
++        long firstTime = 0;
++        long lastTime = 0;
++        long onTime = 0;
++        int activations = 0;
++        Double previous = null;
++        long previousTime = 0;
++        List<Map<String, Object>> ranges = sensor.getRanges();
++        long[] rangeTime = new long[ranges.size()];
++        String lastText = null;
++        for (Position position : positions) {
++            Object raw = position.getAttributes().get(key);
++            long time = position.getFixTime().getTime();
++            if (raw instanceof String text) {
++                lastText = text;
++                count++;
++                continue;
++            }
++            Double value = number(raw);
++            if (value == null) {
++                continue;
++            }
++            count++;
++            if (first == null) {
++                first = value;
++                firstTime = time;
++            }
++            if (previous != null) {
++                long step = time - previousTime;
++                if (step > 0 && step <= MAX_STEP) {
++                    weighted += previous * step;
++                    weightedTime += step;
++                    if (previous != 0) {
++                        onTime += step;
++                    }
++                    for (int i = 0; i < ranges.size(); i++) {
++                        Double from = number(parse(ranges.get(i).get("from")));
++                        Double to = number(parse(ranges.get(i).get("to")));
++                        if (from != null && to != null && previous >= from && previous < to) {
++                            rangeTime[i] += step;
++                        }
++                    }
++                }
++                if (previous == 0 && value != 0) {
++                    activations++;
++                }
++            } else if (value != 0) {
++                activations++;
++            }
++            min = Math.min(min, value);
++            max = Math.max(max, value);
++            last = value;
++            lastTime = time;
++            previous = value;
++            previousTime = time;
++        }
++        result.put("count", count);
++        if (lastText != null && first == null) {
++            result.put("last", lastText);
++            return result;
++        }
++        if (first == null) {
++            return result;
++        }
++        result.put("min", round(min));
++        result.put("max", round(max));
++        result.put("average", round(weightedTime > 0 ? weighted / weightedTime : last));
++        result.put("first", round(first));
++        result.put("last", round(last));
++        result.put("firstTime", firstTime);
++        result.put("lastTime", lastTime);
++        if (sensor.isTotal()) {
++            result.put("total", round(Math.max(0, last - first)));
++        }
++        if (sensor.isDigital()) {
++            result.put("onTime", onTime);
++            result.put("onPercent", weightedTime > 0 ? Math.round(onTime * 1000.0 / weightedTime) / 10.0 : 0);
++            result.put("activations", activations);
++        }
++        if (!ranges.isEmpty()) {
++            List<Map<String, Object>> times = new ArrayList<>();
++            for (int i = 0; i < ranges.size(); i++) {
++                Map<String, Object> item = new LinkedHashMap<>(ranges.get(i));
++                item.put("time", rangeTime[i]);
++                item.put("percent", weightedTime > 0 ? Math.round(rangeTime[i] * 1000.0 / weightedTime) / 10.0 : 0);
++                times.add(item);
++            }
++            result.put("ranges", times);
++        }
++        return result;
++    }
++
++    private static Object parse(Object value) {
++        if (value instanceof String text) {
++            try {
++                return Double.parseDouble(text);
++            } catch (NumberFormatException e) {
++                return null;
++            }
++        }
++        return value;
++    }
++
++}
+diff --git a/src/test/java/org/traccar/sensor/SensorStatisticsTest.java b/src/test/java/org/traccar/sensor/SensorStatisticsTest.java
+new file mode 100644
+index 0000000..e39fe76
+--- /dev/null
++++ b/src/test/java/org/traccar/sensor/SensorStatisticsTest.java
+@@ -0,0 +1,65 @@
++package org.traccar.sensor;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++public class SensorStatisticsTest {
++
++    private static Position position(long minute, Object value) {
++        Position position = new Position();
++        position.setFixTime(new Date(minute * 60_000));
++        position.set("sensor.s", value instanceof Double number ? number : null);
++        if (value instanceof Boolean bool) {
++            position.getAttributes().put("sensor.s", bool ? 1.0 : 0.0);
++        }
++        return position;
++    }
++
++    @Test
++    public void testGaugeWithRanges() {
++        Sensor sensor = new Sensor();
++        sensor.setId("s");
++        sensor.setType("temperature");
++        sensor.setRanges(List.of(Map.of("from", 2, "to", 8), Map.of("from", "8", "to", "99")));
++        List<Position> positions = new ArrayList<>();
++        positions.add(position(0, 4.0));
++        positions.add(position(10, 10.0));
++        positions.add(position(20, 6.0));
++        positions.add(position(60, 5.0)); // 40 min gap: not counted
++        Map<String, Object> result = SensorStatistics.compute(sensor, positions);
++        assertEquals(4, result.get("count"));
++        assertEquals(4.0, result.get("min"));
++        assertEquals(10.0, result.get("max"));
++        assertEquals(7.0, result.get("average"));
++        @SuppressWarnings("unchecked")
++        List<Map<String, Object>> ranges = (List<Map<String, Object>>) result.get("ranges");
++        assertEquals(600_000L, ranges.get(0).get("time"));
++        assertEquals(50.0, ranges.get(1).get("percent"));
++    }
++
++    @Test
++    public void testDigitalAndTotal() {
++        Sensor door = new Sensor();
++        door.setId("s");
++        door.setType("door");
++        List<Position> positions = List.of(position(0, false), position(5, true), position(10, true),
++                position(15, false), position(20, true), position(25, false));
++        Map<String, Object> result = SensorStatistics.compute(door, positions);
++        assertEquals(900_000L, result.get("onTime"));
++        assertEquals(2, result.get("activations"));
++        assertEquals(60.0, result.get("onPercent"));
++
++        Sensor mileage = new Sensor();
++        mileage.setId("s");
++        mileage.setType("mileage");
++        assertEquals(25.0, SensorStatistics.compute(mileage, List.of(position(0, 100.0), position(5, 125.0))).get("total"));
++    }
++
++}

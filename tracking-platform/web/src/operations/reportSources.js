@@ -162,6 +162,54 @@ export const SOURCES = {
   },
 };
 
+// sensor statistics of every unit, one row per unit and sensor
+const sensorRows = async ({ deviceIds, from, to }) => {
+  const query = new URLSearchParams({ from, to });
+  deviceIds.forEach((id) => query.append('deviceId', id));
+  const report = await (await fetchOrThrow(`/api/sensors/report?${query}`)).json();
+  return report.devices.flatMap((device) => device.sensors.map((sensor) => ({ ...sensor, deviceId: device.deviceId, deviceName: device.deviceName })));
+};
+
+// digital sensors are summed up by time on and activations instead of numbers
+const withUnit = (value, row) => (value === undefined || value === null || row.onTime !== undefined ? null : `${Number(value).toLocaleString('es-PE', { maximumFractionDigits: 2 })}${row.unit ? ` ${row.unit}` : ''}`);
+
+SOURCES.sensors = {
+  fetch: sensorRows,
+  groups: ['device'],
+  columns: [
+    { key: 'deviceName', label: 'reportDevice', value: (row) => row.deviceName, default: true },
+    { key: 'name', label: 'sharedName', value: (row) => row.name, default: true },
+    { key: 'type', label: 'sensorType', value: (row, ctx) => ctx.t(`sensorType${row.type.charAt(0).toUpperCase()}${row.type.slice(1)}`) },
+    { key: 'min', label: 'opsMin', value: (row) => withUnit(row.min, row), default: true },
+    { key: 'average', label: 'opsAverage', value: (row) => withUnit(row.average, row), default: true },
+    { key: 'max', label: 'opsMax', value: (row) => withUnit(row.max, row), default: true },
+    { key: 'last', label: 'opsLast', value: (row) => (typeof row.last === 'string' ? row.last : withUnit(row.last, row)) },
+    { key: 'total', label: 'opsPeriodTotal', value: (row) => withUnit(row.total, row), default: true },
+    { key: 'onTime', label: 'opsOnTime', value: (row) => row.onTime, format: 'duration', agg: 'sum', default: true },
+    { key: 'activations', label: 'opsActivations', value: (row) => row.activations, format: 'number', agg: 'sum', default: true },
+    { key: 'count', label: 'opsReadings', value: (row) => row.count, format: 'number', agg: 'sum' },
+  ],
+};
+
+SOURCES.customAlerts = {
+  fetch: async ({ deviceIds, from, to }) => {
+    const query = new URLSearchParams({ from, to });
+    deviceIds.forEach((id) => query.append('deviceId', id));
+    return (await (await fetchOrThrow(`/api/alert-rules/report?${query}`)).json()).items;
+  },
+  groups: ['device', 'day', 'rule'],
+  columns: [
+    { key: 'eventTime', label: 'positionFixTime', value: (row) => row.eventTime, format: 'datetime', default: true },
+    { key: 'ruleName', label: 'ruleTitleColumn', value: (row) => row.ruleName, default: true },
+    { key: 'deviceName', label: 'reportDevice', value: (row) => row.deviceName, default: true },
+    { key: 'severity', label: 'rulePriority', value: (row, ctx) => ctx.t(`alertSeverity${(row.severity || 'medium').charAt(0).toUpperCase()}${(row.severity || 'medium').slice(1)}`), default: true },
+    { key: 'message', label: 'ruleMessage', value: (row) => row.message, default: true },
+    { key: 'value', label: 'opsValue', value: (row) => row.value },
+    { key: 'status', label: 'alertStatusTitle', value: (row, ctx) => ctx.t(`alertStatus${row.status.charAt(0).toUpperCase()}${row.status.slice(1)}`) },
+    { key: 'count', label: 'opsTotalAlerts', value: () => 1, format: 'number', agg: 'sum' },
+  ],
+};
+
 export const formatValue = (value, format, ctx) => {
   if (value === null || value === undefined || value === '') return '';
   switch (format) {
@@ -202,6 +250,7 @@ export const buildTable = (rows, source, config, ctx) => {
         case 'day': return dayjs(row.startTime || row.eventTime || row.expenseTime).format('YYYY-MM-DD');
         case 'driver': return row.driverName || '—';
         case 'type': return item.values.type || row.type || '—';
+        case 'rule': return row.ruleName || '—';
         default: return '—';
       }
     };
