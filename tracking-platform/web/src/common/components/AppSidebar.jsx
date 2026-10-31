@@ -42,6 +42,7 @@ import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import RuleIcon from '@mui/icons-material/Rule';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import SignalCellularAltIcon from '@mui/icons-material/SignalCellularAlt';
 import { useLocalization, useTranslation } from './LocalizationProvider';
@@ -269,6 +270,9 @@ const AppSidebar = () => {
     },
     !disableReports && {
       key: 'alertCenter', title: t('alertCenterTitle'), icon: <NotificationsActiveIcon />, href: '/alert-center', match: /^\/alert-center/,
+    },
+    {
+      key: 'alertRules', title: t('ruleTitle'), icon: <RuleIcon />, href: '/alert-rules', match: /^\/alert-rules/,
     },
     !disableReports && {
       key: 'history', title: t('navHistory'), icon: <HistoryIcon />, href: '/replay',

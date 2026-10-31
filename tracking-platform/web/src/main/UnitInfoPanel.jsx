@@ -15,7 +15,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import {
-  INFO_PREFIX, UNIT_INFO_FIELDS, formatSensorValue, fuelSensors, infoLabelKey, parseSensors, sensorValue,
+  INFO_PREFIX, UNIT_INFO_FIELDS, formatSensorValue, fuelSensors, infoLabelKey, parseSensors, sensorColor, sensorValue,
 } from '../common/util/sensors';
 import { closeUnitInfo, useUnitInfo } from '../common/util/unitInfo';
 import { speedFromKnots, speedUnitString } from '../common/util/converter';
@@ -187,7 +187,7 @@ const UnitInfoPanel = () => {
               {sensors.map((sensor) => (
                 <Box key={sensor.id} sx={{ p: 1, borderRadius: 2, bgcolor: alpha(theme.palette.background.paper, 0.45), border: `1px solid ${alpha(theme.palette.divider, 0.6)}` }}>
                   <Typography variant="caption" color="text.secondary" noWrap component="div">{sensor.name}</Typography>
-                  <Typography variant="subtitle1" fontWeight={700} noWrap color={sensor.type === 'fuel' ? 'primary' : 'text.primary'}>
+                  <Typography variant="subtitle1" fontWeight={700} noWrap sx={{ color: sensorColor(sensor, sensorValue(sensor, position)) || (sensor.type === 'fuel' ? 'primary.main' : 'text.primary') }}>
                     {formatSensorValue(sensor, sensorValue(sensor, position), t)}
                   </Typography>
                 </Box>

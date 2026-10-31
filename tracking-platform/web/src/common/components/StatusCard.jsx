@@ -48,7 +48,9 @@ import { devicesActions } from '../../store';
 import { useCatch, useCatchCallback } from '../../reactHelper';
 import { useAttributePreference } from '../util/preferences';
 import fetchOrThrow from '../util/fetchOrThrow';
-import { formatSensorValue, parseSensors, sensorValue } from '../util/sensors';
+import {
+  formatSensorValue, parseSensors, sensorColor, sensorValue,
+} from '../util/sensors';
 import { openUnitInfo, useUnitInfo } from '../util/unitInfo';
 import { useMapFollow } from '../util/mapFollow';
 import {
@@ -66,6 +68,16 @@ const SENSOR_ICONS = {
   voltage: <BatteryChargingFullIcon />,
   binary: <SensorDoorIcon />,
   numeric: <InsightsIcon />,
+  ignition: <PowerSettingsNewIcon />,
+  door: <SensorDoorIcon />,
+  panic: <SensorDoorIcon />,
+  seatbelt: <SensorDoorIcon />,
+  pto: <SensorDoorIcon />,
+  fuelImpulse: <LocalGasStationIcon />,
+  fuelAbsolute: <LocalGasStationIcon />,
+  fuelInstant: <LocalGasStationIcon />,
+  fuelCalculated: <LocalGasStationIcon />,
+  tirePressure: <InsightsIcon />,
 };
 
 const ago = (time) => {
@@ -263,12 +275,13 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
 
   // sensor values first, otherwise the usual device data
   const attributes = position?.attributes || {};
-  const sensors = parseSensors(device).filter((sensor) => sensorValue(sensor, position) !== undefined);
+  const sensors = parseSensors(device).filter((sensor) => !sensor.hidden && sensorValue(sensor, position) !== undefined);
   const tiles = (sensors.length ? sensors.map((sensor) => ({
     key: sensor.id,
     icon: SENSOR_ICONS[sensor.type] || SENSOR_ICONS.numeric,
     label: sensor.name,
     value: formatSensorValue(sensor, sensorValue(sensor, position), t),
+    color: sensorColor(sensor, sensorValue(sensor, position)),
   })) : [
     attributes.hasOwnProperty('ignition') && {
       key: 'ignition', icon: <PowerSettingsNewIcon />, label: t('positionIgnition'), value: formatBoolean(attributes.ignition, t), color: attributes.ignition ? theme.palette.success.main : theme.palette.text.secondary,

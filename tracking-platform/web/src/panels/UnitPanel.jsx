@@ -26,7 +26,9 @@ import fetchOrThrow from '../common/util/fetchOrThrow';
 import { openPanel } from '../common/util/floatingPanels';
 import { openVideoWindow } from '../common/util/videoWindows';
 import { getCameraConfig } from '../common/util/dashcam';
-import { convertRaw, fuelSensors } from '../common/util/sensors';
+import {
+  convertRaw, formatSensorValue, fuelSensors, parseSensors, sensorColor, sensorValue,
+} from '../common/util/sensors';
 import { devicesActions } from '../store';
 import EngineCutDialog from '../common/components/EngineCutDialog';
 import { statusOf } from '../main/DeviceRow';
@@ -139,6 +141,27 @@ const UnitPanel = ({ panel, onTop }) => {
           </Stack>
           {fuel.percent != null && <LinearProgress variant="determinate" value={fuel.percent} sx={{ height: 6, borderRadius: 3 }} color={fuel.percent < 20 ? 'error' : 'success'} />}
         </Box>
+      )}
+      {parseSensors(device).filter((sensor) => !sensor.hidden && sensorValue(sensor, position) !== undefined).length > 0 && (
+        <Section title={t('sensorsTitle')}>
+          <Grid container spacing={0.5}>
+            {parseSensors(device).filter((sensor) => !sensor.hidden && sensorValue(sensor, position) !== undefined).map((sensor) => {
+              const value = sensorValue(sensor, position);
+              const color = sensorColor(sensor, value);
+              return (
+                <Grid size={6} key={sensor.id}>
+                  <Stack direction="row" spacing={0.75} alignItems="center" sx={{ px: 0.75, py: 0.5, borderRadius: '8px', bgcolor: alpha(color || theme.palette.primary.main, 0.07) }}>
+                    {color && <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: color, flexShrink: 0 }} />}
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary" noWrap component="div">{sensor.name}</Typography>
+                      <Typography variant="body2" fontWeight={700} noWrap>{formatSensorValue(sensor, value, t)}</Typography>
+                    </Box>
+                  </Stack>
+                </Grid>
+              );
+            })}
+          </Grid>
+        </Section>
       )}
       <Section title={t('panelSpeedLastHour')}>
         <Box sx={{ height: 64 }}>

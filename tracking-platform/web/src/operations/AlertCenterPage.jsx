@@ -342,7 +342,7 @@ const AlertCenterPage = () => {
                 <Typography variant="subtitle2" fontWeight={700} gutterBottom>{t('alertTopTypes')}</Typography>
                 {summary.byType.slice(0, 5).map((entry) => (
                   <Stack key={entry.key} direction="row" justifyContent="space-between" sx={{ py: 0.25 }}>
-                    <Typography variant="body2" noWrap>{alertTitle({ type: entry.key.startsWith('alarm:') ? 'alarm' : entry.key, attributes: { alarm: entry.key.replace('alarm:', '') } }, t)}</Typography>
+                    <Typography variant="body2" noWrap>{entry.key.startsWith('rule:') ? entry.key.slice(5) : alertTitle({ type: entry.key.startsWith('alarm:') ? 'alarm' : entry.key, attributes: { alarm: entry.key.replace('alarm:', '') } }, t)}</Typography>
                     <Typography variant="body2" fontWeight={700}>{entry.count}</Typography>
                   </Stack>
                 ))}

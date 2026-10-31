@@ -1,0 +1,2897 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index dab0e32..a77f69e 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -167,4 +167,30 @@
+ 
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-alert-rules">
++
++    <createTable tableName="tc_alert_rules">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT">
++        <constraints nullable="false" />
++      </column>
++      <column name="name" type="VARCHAR(256)">
++        <constraints nullable="false" />
++      </column>
++      <column name="enabled" type="BOOLEAN" defaultValueBoolean="true">
++        <constraints nullable="false" />
++      </column>
++      <column name="config" type="CLOB">
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_alert_rules" baseColumnNames="userid" constraintName="fk_alert_rules_userid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_users" />
++
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index 9a721a8..b179242 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -50,6 +50,7 @@ import org.traccar.handler.events.CommandResultEventHandler;
+ import org.traccar.handler.events.DriverEventHandler;
+ import org.traccar.handler.events.FuelEventHandler;
+ import org.traccar.handler.events.FuelSensorEventHandler;
++import org.traccar.handler.events.RuleEventHandler;
+ import org.traccar.handler.events.EngineStopEventHandler;
+ import org.traccar.handler.events.GeofenceEventHandler;
+ import org.traccar.handler.events.IgnitionEventHandler;
+@@ -133,7 +134,8 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 AlarmEventHandler.class,
+                 IgnitionEventHandler.class,
+                 MaintenanceEventHandler.class,
+-                DriverEventHandler.class)
++                DriverEventHandler.class,
++                RuleEventHandler.class)
+                 .map((clazz) -> (BaseEventHandler) injector.getInstance(clazz))
+                 .filter(Objects::nonNull)
+                 .toList();
+diff --git a/src/main/java/org/traccar/alerts/AlertSeverity.java b/src/main/java/org/traccar/alerts/AlertSeverity.java
+index 9cd5c62..61e8a35 100644
+--- a/src/main/java/org/traccar/alerts/AlertSeverity.java
++++ b/src/main/java/org/traccar/alerts/AlertSeverity.java
+@@ -90,12 +90,22 @@ public final class AlertSeverity {
+     }
+ 
+     public static String key(Event event) {
++        // custom alerts are told apart by the rule's name
++        String rule = event.getString("ruleName");
++        if (rule != null && "ruleTriggered".equals(event.getType())) {
++            return "rule:" + rule;
++        }
+         String alarm = event.getString(Position.KEY_ALARM);
+         return Event.TYPE_ALARM.equals(event.getType()) && alarm != null
+                 ? "alarm:" + alarm.split(",")[0] : event.getType();
+     }
+ 
+     public static String of(Event event, Map<String, String> overrides) {
++        // custom alerts carry the priority chosen in the rule
++        String own = event.getString("severity");
++        if (own != null && ORDER.contains(own)) {
++            return own;
++        }
+         String key = key(event);
+         String severity = overrides.get(key);
+         if (severity == null && key.startsWith("alarm:")) {
+diff --git a/src/main/java/org/traccar/api/resource/AlertRuleResource.java b/src/main/java/org/traccar/api/resource/AlertRuleResource.java
+new file mode 100644
+index 0000000..de3bd62
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/AlertRuleResource.java
+@@ -0,0 +1,227 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.NotFoundException;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.model.AlertRule;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Group;
++import org.traccar.model.Position;
++import org.traccar.model.UserRestrictions;
++import org.traccar.rules.RuleConditions;
++import org.traccar.rules.RuleEngine;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.time.ZoneId;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Custom alert rules of the user: list with the alerts of the last 7 days, create, change, delete, enable, test a
++ * rule (saved or not) against the units' latest messages, and the alerts a rule raised.
++ */
++@Path("alert-rules")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class AlertRuleResource extends BaseResource {
++
++    private static final int MAX_CONFIG = 100_000;
++    private static final long WEEK = 7 * 24 * 3600_000L;
++
++    @Inject
++    private RuleEngine ruleEngine;
++
++    private AlertRule owned(long id) throws StorageException {
++        AlertRule rule = storage.getObject(AlertRule.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (rule == null || rule.getUserId() != getUserId() && permissionsService.notAdmin(getUserId())) {
++            throw new NotFoundException();
++        }
++        return rule;
++    }
++
++    private JsonNode validate(AlertRule rule) throws StorageException {
++        if (rule.getName() == null || rule.getName().isBlank() || rule.getConfig() == null
++                || rule.getConfig().length() > MAX_CONFIG) {
++            throw new BadRequestException("Invalid rule");
++        }
++        JsonNode config = ruleEngine.parse(rule.getConfig());
++        if (!RuleConditions.TYPES.contains(config.path("type").asText())) {
++            throw new BadRequestException("Unknown rule type");
++        }
++        for (JsonNode id : config.path("deviceIds")) {
++            permissionsService.checkPermission(Device.class, getUserId(), id.asLong());
++        }
++        for (JsonNode id : config.path("groupIds")) {
++            permissionsService.checkPermission(Group.class, getUserId(), id.asLong());
++        }
++        return config;
++    }
++
++    private Map<Long, Integer> weekCounts() throws StorageException {
++        Map<Long, Integer> counts = new HashMap<>();
++        Set<Long> devices = ruleEngine.devicesOf(getUserId(), ruleEngine.parse("{\"all\":true}"));
++        Date to = new Date();
++        Date from = new Date(to.getTime() - WEEK);
++        for (Event event : storage.getObjects(Event.class, new Request(
++                new Columns.All(),
++                new Condition.And(
++                        new Condition.Equals("type", AlertRule.EVENT_TYPE),
++                        new Condition.Between("eventTime", from, to))))) {
++            if (devices.contains(event.getDeviceId())) {
++                counts.merge(event.getLong("ruleId"), 1, Integer::sum);
++            }
++        }
++        return counts;
++    }
++
++    @GET
++    public List<Map<String, Object>> list() throws StorageException {
++        Map<Long, Integer> counts = weekCounts();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (AlertRule rule : storage.getObjects(AlertRule.class, new Request(
++                new Columns.All(), new Condition.Equals("userId", getUserId()), new Order("name")))) {
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("id", rule.getId());
++            item.put("name", rule.getName());
++            item.put("enabled", rule.getEnabled());
++            item.put("config", rule.getConfig());
++            item.put("attributes", rule.getAttributes());
++            item.put("week", counts.getOrDefault(rule.getId(), 0));
++            result.add(item);
++        }
++        return result;
++    }
++
++    @POST
++    public AlertRule add(AlertRule rule) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        validate(rule);
++        rule.setUserId(getUserId());
++        rule.setId(storage.addObject(rule, new Request(new Columns.Exclude("id"))));
++        ruleEngine.invalidate();
++        return rule;
++    }
++
++    @PUT
++    @Path("{id}")
++    public AlertRule update(@PathParam("id") long id, AlertRule rule) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        AlertRule current = owned(id);
++        validate(rule);
++        rule.setId(id);
++        rule.setUserId(current.getUserId());
++        storage.updateObject(rule, new Request(
++                new Columns.Include("name", "enabled", "config", "attributes"), new Condition.Equals("id", id)));
++        ruleEngine.invalidate();
++        return rule;
++    }
++
++    @DELETE
++    @Path("{id}")
++    public Response remove(@PathParam("id") long id) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
++        owned(id);
++        storage.removeObject(AlertRule.class, new Request(new Condition.Equals("id", id)));
++        ruleEngine.invalidate();
++        return Response.noContent().build();
++    }
++
++    /** Which units meet the condition right now (without duration, schedule or limits), for a saved or new rule. */
++    @POST
++    @Path("test")
++    public Map<String, Object> test(AlertRule rule) throws StorageException {
++        JsonNode config = validate(rule);
++        List<Map<String, Object>> units = new ArrayList<>();
++        RuleConditions.Context context = ruleEngine.context();
++        int matching = 0;
++        for (long deviceId : ruleEngine.devicesOf(getUserId(), config)) {
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", deviceId)));
++            Position position = ruleEngine.latest(deviceId);
++            boolean holds;
++            Object value = null;
++            String detail = null;
++            if ("event".equals(config.path("type").asText())) {
++                holds = false;
++            } else {
++                RuleConditions.Check check = RuleConditions.check(config, device, position, context, null);
++                holds = check.holds() && RuleConditions.extra(config, device, position, context);
++                value = check.value();
++                detail = check.detail();
++            }
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("deviceId", deviceId);
++            item.put("name", device.getName());
++            item.put("holds", holds);
++            item.put("value", value);
++            item.put("detail", detail);
++            units.add(item);
++            matching += holds ? 1 : 0;
++        }
++        units.sort((a, b) -> Boolean.compare((Boolean) b.get("holds"), (Boolean) a.get("holds")));
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("units", units);
++        result.put("matching", matching);
++        result.put("inSchedule", RuleConditions.inSchedule(config, System.currentTimeMillis(), ZoneId.systemDefault()));
++        return result;
++    }
++
++    @GET
++    @Path("events")
++    public List<Event> events(@QueryParam("ruleId") long ruleId, @QueryParam("days") int days)
++            throws StorageException {
++        if (ruleId > 0) {
++            owned(ruleId);
++        }
++        Set<Long> devices = ruleEngine.devicesOf(getUserId(), ruleEngine.parse("{\"all\":true}"));
++        Date to = new Date();
++        Date from = new Date(to.getTime() - Math.max(1, Math.min(days > 0 ? days : 7, 93)) * 24 * 3600_000L);
++        return storage.getObjects(Event.class, new Request(
++                new Columns.All(),
++                new Condition.And(
++                        new Condition.Equals("type", AlertRule.EVENT_TYPE),
++                        new Condition.Between("eventTime", from, to)),
++                new Order("eventTime", true, 500))).stream()
++                .filter(event -> devices.contains(event.getDeviceId()))
++                .filter(event -> ruleId <= 0 || event.getLong("ruleId") == ruleId)
++                .toList();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/SensorResource.java b/src/main/java/org/traccar/api/resource/SensorResource.java
+index 4e5a1ed..9555ac1 100644
+--- a/src/main/java/org/traccar/api/resource/SensorResource.java
++++ b/src/main/java/org/traccar/api/resource/SensorResource.java
+@@ -13,11 +13,13 @@
+  */
+ package org.traccar.api.resource;
+ 
++import com.fasterxml.jackson.core.type.TypeReference;
+ import com.fasterxml.jackson.databind.ObjectMapper;
+ import jakarta.inject.Inject;
+ import jakarta.ws.rs.BadRequestException;
+ import jakarta.ws.rs.Consumes;
+ import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
+ import jakarta.ws.rs.Path;
+ import jakarta.ws.rs.Produces;
+ import jakarta.ws.rs.QueryParam;
+@@ -28,9 +30,11 @@ import org.traccar.helper.model.PositionUtil;
+ import org.traccar.model.Device;
+ import org.traccar.model.Position;
+ import org.traccar.model.UserRestrictions;
++import org.traccar.sensor.Expression;
+ import org.traccar.sensor.FuelAnalyzer;
+ import org.traccar.sensor.Sensor;
+ import org.traccar.sensor.SensorConfig;
++import org.traccar.sensor.SensorEngine;
+ import org.traccar.storage.StorageException;
+ import org.traccar.storage.query.Columns;
+ import org.traccar.storage.query.Condition;
+@@ -41,6 +45,7 @@ import java.util.Date;
+ import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.UUID;
+ 
+ /**
+  * Fuel report of a unit fuel sensor: level series for the chart, detected fills and drains and the period summary.
+@@ -57,6 +62,9 @@ public class SensorResource extends BaseResource {
+     @Inject
+     private ObjectMapper objectMapper;
+ 
++    @Inject
++    private SensorEngine sensorEngine;
++
+     private static double round(double value) {
+         return Math.round(value * 100) / 100.0;
+     }
+@@ -146,4 +154,106 @@ public class SensorResource extends BaseResource {
+         return result;
+     }
+ 
++    public static class Preview {
++        private long deviceId;
++        private String sensors;
++
++        public long getDeviceId() {
++            return deviceId;
++        }
++
++        public void setDeviceId(long deviceId) {
++            this.deviceId = deviceId;
++        }
++
++        public String getSensors() {
++            return sensors;
++        }
++
++        public void setSensors(String sensors) {
++            this.sensors = sensors;
++        }
++    }
++
++    /**
++     * Live preview of a sensor set being edited (not saved yet): the device parameters of the latest message, the
++     * value of every sensor, formula errors and the values over the last messages of the past 6 hours.
++     */
++    @POST
++    @Path("preview")
++    public Map<String, Object> preview(Preview request) throws Exception {
++        permissionsService.checkPermission(Device.class, getUserId(), request.getDeviceId());
++        List<Sensor> sensors = objectMapper.readValue(
++                request.getSensors() != null ? request.getSensors() : "[]", new TypeReference<List<Sensor>>() { });
++        Map<String, String> errors = new LinkedHashMap<>();
++        for (Sensor sensor : sensors) {
++            if (sensor.getFormula() != null && !sensor.getFormula().isBlank()) {
++                String error = Expression.validate(sensor.getFormula());
++                if (error != null) {
++                    errors.put(sensor.getId(), error);
++                }
++            }
++        }
++        sensors = sensors.stream().filter(sensor -> sensor.getId() != null && !errors.containsKey(sensor.getId()))
++                .toList();
++        Date to = new Date();
++        List<Position> positions = PositionUtil.getPositions(
++                storage, request.getDeviceId(), new Date(to.getTime() - 6 * 3600_000L), to);
++        if (positions.size() > 60) {
++            positions = positions.subList(positions.size() - 60, positions.size());
++        }
++        if (positions.isEmpty()) {
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", request.getDeviceId())));
++            if (device != null && device.getPositionId() > 0) {
++                Position latest = storage.getObject(Position.class, new Request(
++                        new Columns.All(), new Condition.Equals("id", device.getPositionId())));
++                if (latest != null) {
++                    positions = List.of(latest);
++                }
++            }
++        }
++        List<Map<String, Object>> history = new ArrayList<>();
++        Position previous = null;
++        String scope = "preview-" + UUID.randomUUID();
++        Map<String, Object> values = Map.of();
++        for (Position position : positions) {
++            Position copy = new Position();
++            copy.setDeviceId(position.getDeviceId());
++            copy.setFixTime(position.getFixTime());
++            copy.setSpeed(position.getSpeed());
++            copy.setValid(position.getValid());
++            copy.setAltitude(position.getAltitude());
++            copy.setCourse(position.getCourse());
++            Map<String, Object> attributes = new LinkedHashMap<>(position.getAttributes());
++            attributes.keySet().removeIf(key -> key.startsWith(Sensor.ATTRIBUTE_PREFIX));
++            copy.setAttributes(attributes);
++            values = sensorEngine.compute(sensors, copy, previous, scope);
++            values.forEach((id, value) -> copy.getAttributes().put(Sensor.ATTRIBUTE_PREFIX + id, value));
++            Map<String, Object> point = new LinkedHashMap<>();
++            point.put("time", position.getFixTime().getTime());
++            point.put("values", values);
++            history.add(point);
++            previous = copy;
++        }
++        sensorEngine.clear(scope);
++        Map<String, Object> result = new LinkedHashMap<>();
++        Position latest = positions.isEmpty() ? null : positions.get(positions.size() - 1);
++        Map<String, Object> parameters = new LinkedHashMap<>();
++        if (latest != null) {
++            parameters.put("speed", Math.round(latest.getSpeed() * 1.852));
++            latest.getAttributes().forEach((key, value) -> {
++                if (!key.startsWith(Sensor.ATTRIBUTE_PREFIX)) {
++                    parameters.put(key, value);
++                }
++            });
++        }
++        result.put("time", latest != null ? latest.getFixTime() : null);
++        result.put("parameters", parameters);
++        result.put("values", values);
++        result.put("errors", errors);
++        result.put("history", history);
++        return result;
++    }
++
+ }
+diff --git a/src/main/java/org/traccar/database/NotificationManager.java b/src/main/java/org/traccar/database/NotificationManager.java
+index e6901a9..5f640cc 100644
+--- a/src/main/java/org/traccar/database/NotificationManager.java
++++ b/src/main/java/org/traccar/database/NotificationManager.java
+@@ -43,9 +43,12 @@ import jakarta.inject.Inject;
+ import jakarta.inject.Singleton;
+ import java.util.Arrays;
+ import java.util.HashSet;
++import java.util.List;
+ import java.util.Map;
+ import java.util.Map.Entry;
+ import java.util.Set;
++import java.util.concurrent.CopyOnWriteArrayList;
++import java.util.function.BiConsumer;
+ 
+ @Singleton
+ public class NotificationManager {
+@@ -61,6 +64,12 @@ public class NotificationManager {
+     private final boolean geocodeOnRequest;
+     private final long timeThreshold;
+     private final Set<Long> blockedUsers = new HashSet<>();
++    private final List<BiConsumer<Event, Position>> listeners = new CopyOnWriteArrayList<>();
++
++    /** Called with every stored event, e.g. by the custom alert rules. */
++    public void addListener(BiConsumer<Event, Position> listener) {
++        listeners.add(listener);
++    }
+ 
+     @Inject
+     public NotificationManager(
+@@ -90,6 +99,14 @@ public class NotificationManager {
+ 
+         forwardEvent(event, position);
+ 
++        for (BiConsumer<Event, Position> listener : listeners) {
++            try {
++                listener.accept(event, position);
++            } catch (RuntimeException e) {
++                LOGGER.warn("Event listener failed", e);
++            }
++        }
++
+         if (System.currentTimeMillis() - event.getEventTime().getTime() > timeThreshold) {
+             LOGGER.info("Skipping notifications for old event");
+             return;
+diff --git a/src/main/java/org/traccar/handler/SensorHandler.java b/src/main/java/org/traccar/handler/SensorHandler.java
+index 26f86ca..8afcc37 100644
+--- a/src/main/java/org/traccar/handler/SensorHandler.java
++++ b/src/main/java/org/traccar/handler/SensorHandler.java
+@@ -19,34 +19,69 @@ import org.traccar.model.Device;
+ import org.traccar.model.Position;
+ import org.traccar.sensor.Sensor;
+ import org.traccar.sensor.SensorConfig;
++import org.traccar.sensor.SensorEngine;
+ import org.traccar.session.cache.CacheManager;
+ 
++import java.util.List;
++import java.util.Map;
++
+ /**
+- * Stores the value of every unit sensor in the position ("sensor.&lt;id&gt;"); the first fuel sensor also fills the
+- * standard fuel level, so reports, charts and alerts use the calibrated litres.
++ * Stores the value of every unit sensor in the position ("sensor.&lt;id&gt;") with the Wialon-style engine (formulas,
++ * accumulation, smoothing, validation). The first fuel sensor also fills the standard fuel level, an ignition sensor
++ * the ignition, an engine hours sensor the engine hours and a driver sensor the driver, when the device does not send
++ * them, so reports, charts and alerts use the sensor values.
+  */
+ public class SensorHandler extends BasePositionHandler {
+ 
+     private final CacheManager cacheManager;
+     private final ObjectMapper objectMapper;
++    private final SensorEngine sensorEngine;
+ 
+     @Inject
+-    public SensorHandler(CacheManager cacheManager, ObjectMapper objectMapper) {
++    public SensorHandler(CacheManager cacheManager, ObjectMapper objectMapper, SensorEngine sensorEngine) {
+         this.cacheManager = cacheManager;
+         this.objectMapper = objectMapper;
++        this.sensorEngine = sensorEngine;
+     }
+ 
+     @Override
+     public void onPosition(Position position, Callback callback) {
+         Device device = cacheManager.getObject(Device.class, position.getDeviceId());
+-        boolean fuelSet = false;
+-        for (Sensor sensor : SensorConfig.parse(objectMapper, device)) {
+-            Double value = sensor.compute(position);
+-            if (value != null) {
+-                position.set(sensor.getKey(), Math.round(value * 100) / 100.0);
+-                if (!fuelSet && Sensor.TYPE_FUEL.equals(sensor.getType())) {
+-                    position.set(Position.KEY_FUEL_LEVEL, Math.round(value * 100) / 100.0);
+-                    fuelSet = true;
++        List<Sensor> sensors = SensorConfig.parse(objectMapper, device);
++        if (!sensors.isEmpty()) {
++            Position previous = cacheManager.getPosition(position.getDeviceId());
++            Map<String, Object> values = sensorEngine.compute(sensors, position, previous, true);
++            values.forEach((id, value) -> position.getAttributes().put(Sensor.ATTRIBUTE_PREFIX + id, value));
++            boolean fuelSet = false;
++            for (Sensor sensor : sensors) {
++                Object value = values.get(sensor.getId());
++                if (value == null) {
++                    continue;
++                }
++                switch (String.valueOf(sensor.getType())) {
++                    case Sensor.TYPE_FUEL -> {
++                        if (!fuelSet) {
++                            position.set(Position.KEY_FUEL_LEVEL, (Double) value);
++                            fuelSet = true;
++                        }
++                    }
++                    case Sensor.TYPE_IGNITION -> {
++                        if (!position.hasAttribute(Position.KEY_IGNITION)) {
++                            position.set(Position.KEY_IGNITION, (Double) value != 0);
++                        }
++                    }
++                    case Sensor.TYPE_ENGINE_HOURS -> {
++                        if (!position.hasAttribute(Position.KEY_HOURS)) {
++                            position.set(Position.KEY_HOURS, Math.round((Double) value * 3600000));
++                        }
++                    }
++                    case Sensor.TYPE_DRIVER -> {
++                        if (!position.hasAttribute(Position.KEY_DRIVER_UNIQUE_ID)) {
++                            position.set(Position.KEY_DRIVER_UNIQUE_ID, value.toString());
++                        }
++                    }
++                    default -> {
++                    }
+                 }
+             }
+         }
+diff --git a/src/main/java/org/traccar/handler/events/RuleEventHandler.java b/src/main/java/org/traccar/handler/events/RuleEventHandler.java
+new file mode 100644
+index 0000000..476c23a
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/RuleEventHandler.java
+@@ -0,0 +1,43 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Position;
++import org.traccar.rules.RuleEngine;
++import org.traccar.session.cache.CacheManager;
++
++/**
++ * Checks the custom alert rules with every new message; the rules store and deliver their own events.
++ */
++public class RuleEventHandler extends BaseEventHandler {
++
++    private final CacheManager cacheManager;
++    private final RuleEngine ruleEngine;
++
++    @Inject
++    public RuleEventHandler(CacheManager cacheManager, RuleEngine ruleEngine) {
++        this.cacheManager = cacheManager;
++        this.ruleEngine = ruleEngine;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        if (PositionUtil.isLatest(cacheManager, position)) {
++            ruleEngine.onPosition(position);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/AlertRule.java b/src/main/java/org/traccar/model/AlertRule.java
+new file mode 100644
+index 0000000..2fb6baa
+--- /dev/null
++++ b/src/main/java/org/traccar/model/AlertRule.java
+@@ -0,0 +1,67 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++/**
++ * Custom alert of a user, Wialon style: the kind of condition, its parameters, the units it applies to, schedule,
++ * minimum duration, repetition limits and actions, kept as JSON in "config".
++ */
++@StorageName("tc_alert_rules")
++public class AlertRule extends ExtendedModel {
++
++    public static final String EVENT_TYPE = "ruleTriggered";
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private boolean enabled;
++
++    public boolean getEnabled() {
++        return enabled;
++    }
++
++    public void setEnabled(boolean enabled) {
++        this.enabled = enabled;
++    }
++
++    private String config;
++
++    public String getConfig() {
++        return config;
++    }
++
++    public void setConfig(String config) {
++        this.config = config;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/rules/RuleConditions.java b/src/main/java/org/traccar/rules/RuleConditions.java
+new file mode 100644
+index 0000000..bd4e004
+--- /dev/null
++++ b/src/main/java/org/traccar/rules/RuleConditions.java
+@@ -0,0 +1,446 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.rules;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import org.traccar.model.Device;
++import org.traccar.model.Geofence;
++import org.traccar.model.Position;
++import org.traccar.sensor.Sensor;
++import org.traccar.sensor.SensorConfig;
++
++import java.time.DayOfWeek;
++import java.time.LocalTime;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Conditions of the custom alerts, kept free of storage so they can be tested and used for the "test now" preview.
++ * Each check answers whether the condition holds for a unit at a moment, with the value and a readable detail.
++ */
++public final class RuleConditions {
++
++    public static final Set<String> TYPES = Set.of(
++            "sensor", "parameter", "digital", "speed", "geofence", "idle", "stop", "connection", "gps", "fuel",
++            "driver", "proximity", "event");
++
++    /** Types that fire on a change (entering, switching on...) rather than on a lasting state. */
++    public static final Set<String> EDGE_MODES = Set.of("enter", "exit", "change", "approach");
++
++    public record Check(boolean holds, Object value, String detail, long geofenceId) {
++        public static Check no() {
++            return new Check(false, null, null, 0);
++        }
++    }
++
++    /** What a condition may need besides the message. */
++    public interface Context {
++        Collection<Geofence> geofences(Position position);
++
++        Position latest(long deviceId);
++
++        long now();
++    }
++
++    private RuleConditions() {
++    }
++
++    public static boolean isEdge(JsonNode config) {
++        JsonNode condition = config.path("condition");
++        String type = config.path("type").asText();
++        return "digital".equals(type) || "proximity".equals(type)
++                || EDGE_MODES.contains(condition.path("mode").asText())
++                || "change".equals(condition.path("op").asText());
++    }
++
++    public static double speedKmh(Position position) {
++        return position.getSpeed() * 1.852;
++    }
++
++    static Object attribute(Position position, String key) {
++        if (key == null || key.isEmpty()) {
++            return null;
++        }
++        switch (key) {
++            case "speed":
++                return speedKmh(position);
++            case "altitude":
++                return position.getAltitude();
++            case "course":
++                return position.getCourse();
++            case "satellites":
++                return position.getAttributes().get(Position.KEY_SATELLITES);
++            default:
++                return position.getAttributes().get(key);
++        }
++    }
++
++    static Double number(Object value) {
++        if (value instanceof Number number) {
++            return number.doubleValue();
++        } else if (value instanceof Boolean bool) {
++            return bool ? 1.0 : 0.0;
++        } else if (value instanceof String text) {
++            try {
++                return Double.parseDouble(text);
++            } catch (NumberFormatException e) {
++                return null;
++            }
++        }
++        return null;
++    }
++
++    static String format(Object value) {
++        if (value instanceof Double number) {
++            return number == Math.rint(number) ? String.valueOf(number.longValue())
++                    : String.format(Locale.ROOT, "%.2f", number);
++        }
++        return String.valueOf(value);
++    }
++
++    /** Comparison of a value: gt, lt, ge, le, eq, ne, between (inclusive), outside, text eq / ne / contains. */
++    public static boolean compare(String op, Object value, JsonNode condition) {
++        if (value == null) {
++            return false;
++        }
++        Double number = number(value);
++        JsonNode target = condition.path("value");
++        if (number == null || target.isTextual() && number(target.asText()) == null) {
++            String text = String.valueOf(value);
++            String expected = target.asText();
++            return switch (op) {
++                case "ne" -> !text.equalsIgnoreCase(expected);
++                case "contains" -> text.toLowerCase(Locale.ROOT).contains(expected.toLowerCase(Locale.ROOT));
++                default -> text.equalsIgnoreCase(expected);
++            };
++        }
++        double expected = target.asDouble();
++        double min = condition.path("min").asDouble(Double.NEGATIVE_INFINITY);
++        double max = condition.path("max").asDouble(Double.POSITIVE_INFINITY);
++        return switch (op == null ? "gt" : op) {
++            case "lt" -> number < expected;
++            case "ge" -> number >= expected;
++            case "le" -> number <= expected;
++            case "eq" -> number == expected;
++            case "ne" -> number != expected;
++            case "between" -> number >= min && number <= max;
++            case "outside" -> number < min || number > max;
++            default -> number > expected;
++        };
++    }
++
++    static String opText(String op, JsonNode condition) {
++        return switch (op == null ? "gt" : op) {
++            case "lt" -> "< " + format(condition.path("value").asDouble());
++            case "ge" -> "≥ " + format(condition.path("value").asDouble());
++            case "le" -> "≤ " + format(condition.path("value").asDouble());
++            case "eq" -> "= " + condition.path("value").asText();
++            case "ne" -> "≠ " + condition.path("value").asText();
++            case "between" -> "entre " + format(condition.path("min").asDouble()) + " y "
++                    + format(condition.path("max").asDouble());
++            case "outside" -> "fuera de " + format(condition.path("min").asDouble()) + "–"
++                    + format(condition.path("max").asDouble());
++            case "change" -> "cambio ≥ " + format(condition.path("value").asDouble());
++            case "contains" -> "contiene " + condition.path("value").asText();
++            default -> "> " + format(condition.path("value").asDouble());
++        };
++    }
++
++    private static final ObjectMapper MAPPER = new ObjectMapper();
++
++    static Object sensorValue(Position position, String sensorId) {
++        return sensorId != null ? position.getAttributes().get(Sensor.ATTRIBUTE_PREFIX + sensorId) : null;
++    }
++
++    /**
++     * Sensor a condition refers to on this unit: by id ("sensor"), by name ("sensorName", as units of a fleet have
++     * their own sensor ids) or the first of a type ("sensorType", e.g. any temperature sensor).
++     */
++    static String sensorId(Device device, JsonNode condition) {
++        String id = condition.path("sensor").asText("");
++        if (!id.isEmpty()) {
++            return id;
++        }
++        String name = condition.path("sensorName").asText("");
++        String type = condition.path("sensorType").asText("");
++        if (device == null || name.isEmpty() && type.isEmpty()) {
++            return null;
++        }
++        for (Sensor sensor : SensorConfig.parse(MAPPER, device)) {
++            if (!name.isEmpty() ? name.equalsIgnoreCase(sensor.getName()) : type.equals(sensor.getType())) {
++                return sensor.getId();
++            }
++        }
++        return null;
++    }
++
++    static boolean refersSensor(JsonNode condition) {
++        return !condition.path("sensor").asText("").isEmpty() || !condition.path("sensorName").asText("").isEmpty()
++                || !condition.path("sensorType").asText("").isEmpty();
++    }
++
++    static boolean truthy(Object value) {
++        Double number = number(value);
++        if (number != null) {
++            return number != 0;
++        }
++        return value != null && !String.valueOf(value).isBlank();
++    }
++
++    static List<Long> ids(JsonNode array) {
++        List<Long> result = new ArrayList<>();
++        array.forEach(item -> result.add(item.asLong()));
++        return result;
++    }
++
++    static long insideOf(Position position, List<Long> geofenceIds) {
++        List<Long> current = position.getGeofenceIds();
++        if (current == null) {
++            return 0;
++        }
++        for (Long id : current) {
++            if (geofenceIds.isEmpty() || geofenceIds.contains(id)) {
++                return id;
++            }
++        }
++        return 0;
++    }
++
++    static boolean ignition(Position position) {
++        return position.getBoolean(Position.KEY_IGNITION);
++    }
++
++    static boolean stopped(Position position) {
++        return speedKmh(position) < 3 && !position.getBoolean(Position.KEY_MOTION);
++    }
++
++    /**
++     * Main condition of a rule for a unit's latest message. Event rules never hold here: they fire from the event
++     * itself. Previous is the value of the last check, for "change".
++     */
++    public static Check check(
++            JsonNode config, Device device, Position position, Context context, Object previous) {
++        String type = config.path("type").asText();
++        JsonNode condition = config.path("condition");
++        String op = condition.path("op").asText("gt");
++        if ("connection".equals(type)) {
++            long minutes = condition.path("minutes").asLong(30);
++            long last = device.getLastUpdate() != null ? device.getLastUpdate().getTime() : 0;
++            long silent = (context.now() - last) / 60000;
++            return new Check(last > 0 && silent >= minutes, silent, "sin datos hace " + silent + " min", 0);
++        }
++        if (position == null) {
++            return Check.no();
++        }
++        switch (type) {
++            case "sensor", "parameter" -> {
++                Object value = "sensor".equals(type) ? sensorValue(position, sensorId(device, condition))
++                        : attribute(position, condition.path("param").asText());
++                if ("change".equals(op)) {
++                    Double now = number(value);
++                    Double before = number(previous);
++                    boolean holds = now != null && before != null
++                            && Math.abs(now - before) >= condition.path("value").asDouble();
++                    return new Check(holds, value, now != null && before != null
++                            ? "de " + format(before) + " a " + format(now) : null, 0);
++                }
++                return new Check(compare(op, value, condition), value,
++                        value != null ? format(value) + " (" + opText(op, condition) + ")" : null, 0);
++            }
++            case "digital" -> {
++                Object value = refersSensor(condition) ? sensorValue(position, sensorId(device, condition))
++                        : attribute(position, condition.path("param").asText());
++                boolean on = !"off".equals(condition.path("state").asText("on"));
++                boolean holds = value != null && truthy(value) == on;
++                return new Check(holds, value, on ? "activado" : "desactivado", 0);
++            }
++            case "speed" -> {
++                double speed = speedKmh(position);
++                double limit = condition.path("limit").asDouble(0);
++                if (condition.path("useGeofence").asBoolean()) {
++                    for (Geofence geofence : context.geofences(position)) {
++                        double geofenceLimit = geofence.getDouble("speedLimit") * 1.852;
++                        if (geofenceLimit > 0 && (limit <= 0 || geofenceLimit < limit)) {
++                            limit = geofenceLimit;
++                        }
++                    }
++                }
++                if (limit <= 0) {
++                    limit = device.getDouble("speedLimit") * 1.852;
++                }
++                return new Check(limit > 0 && speed > limit, Math.round(speed),
++                        Math.round(speed) + " km/h (límite " + Math.round(limit) + ")", 0);
++            }
++            case "geofence" -> {
++                List<Long> geofenceIds = ids(condition.path("geofenceIds"));
++                long inside = insideOf(position, geofenceIds);
++                String mode = condition.path("mode").asText("enter");
++                boolean holds = "exit".equals(mode) || "outside".equals(mode) ? inside == 0 : inside != 0;
++                return new Check(holds, inside, switch (mode) {
++                    case "exit" -> "salió de la geocerca";
++                    case "outside" -> "fuera de la geocerca";
++                    case "inside" -> "dentro de la geocerca";
++                    default -> "entró a la geocerca";
++                }, inside);
++            }
++            case "idle" -> {
++                boolean holds = ignition(position) && stopped(position);
++                return new Check(holds, null, "motor encendido detenido", 0);
++            }
++            case "stop" -> {
++                boolean holds = stopped(position);
++                List<Long> geofenceIds = ids(condition.path("geofenceIds"));
++                String where = condition.path("where").asText("any");
++                long inside = insideOf(position, geofenceIds);
++                if ("inside".equals(where)) {
++                    holds &= inside != 0;
++                } else if ("outside".equals(where)) {
++                    holds &= inside == 0;
++                }
++                return new Check(holds, null, "detenido", inside);
++            }
++            case "gps" -> {
++                Double satellites = number(position.getAttributes().get(Position.KEY_SATELLITES));
++                boolean holds = !position.getValid() || satellites != null && satellites < 3;
++                return new Check(holds, satellites, "sin señal GPS válida", 0);
++            }
++            case "fuel" -> {
++                Object value = refersSensor(condition) ? sensorValue(position, sensorId(device, condition))
++                        : position.getAttributes().get(Position.KEY_FUEL_LEVEL);
++                return new Check(compare(op.equals("gt") ? "lt" : op, value, condition), value,
++                        value != null ? "nivel " + format(value) : null, 0);
++            }
++            case "driver" -> {
++                Object driver = position.getAttributes().get(Position.KEY_DRIVER_UNIQUE_ID);
++                boolean holds = ignition(position) && (driver == null || String.valueOf(driver).isBlank());
++                return new Check(holds, driver, "encendido sin conductor identificado", 0);
++            }
++            case "proximity" -> {
++                double radius = condition.path("radius").asDouble(500);
++                double best = Double.MAX_VALUE;
++                if (condition.has("latitude")) {
++                    best = distance(position.getLatitude(), position.getLongitude(),
++                            condition.path("latitude").asDouble(), condition.path("longitude").asDouble());
++                }
++                for (long other : ids(condition.path("deviceIds"))) {
++                    Position target = other != device.getId() ? context.latest(other) : null;
++                    if (target != null) {
++                        best = Math.min(best, distance(position.getLatitude(), position.getLongitude(),
++                                target.getLatitude(), target.getLongitude()));
++                    }
++                }
++                boolean holds = best <= radius;
++                return new Check(holds, best == Double.MAX_VALUE ? null : Math.round(best),
++                        best == Double.MAX_VALUE ? null : "a " + Math.round(best) + " m", 0);
++            }
++            default -> {
++                return Check.no();
++            }
++        }
++    }
++
++    /** Additional conditions that must all hold too (door open AND moving, temperature AND ignition...). */
++    public static boolean extra(JsonNode config, Device device, Position position, Context context) {
++        for (JsonNode item : config.path("extra")) {
++            if (position == null) {
++                return false;
++            }
++            String kind = item.path("kind").asText();
++            String op = item.path("op").asText("gt");
++            boolean holds = switch (kind) {
++                case "sensor" -> compare(op, sensorValue(position, sensorId(device, item)), item);
++                case "parameter" -> compare(op, attribute(position, item.path("param").asText()), item);
++                case "speed" -> compare(op, speedKmh(position), item);
++                case "ignition" -> ignition(position) == !"off".equals(item.path("state").asText("on"));
++                case "motion" -> !stopped(position) == !"off".equals(item.path("state").asText("on"));
++                case "geofence" -> {
++                    long inside = insideOf(position, ids(item.path("geofenceIds")));
++                    yield "outside".equals(item.path("mode").asText("inside")) ? inside == 0 : inside != 0;
++                }
++                default -> true;
++            };
++            if (!holds) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    /** Whether the moment is inside the rule's schedule (days 1 = Monday … 7 = Sunday, from–to, maybe overnight). */
++    public static boolean inSchedule(JsonNode config, long time, ZoneId zone) {
++        JsonNode schedule = config.path("schedule");
++        if (schedule.isMissingNode() || schedule.isNull()) {
++            return true;
++        }
++        ZonedDateTime moment = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(time), zone);
++        boolean inside = true;
++        JsonNode days = schedule.path("days");
++        if (days.isArray() && !days.isEmpty()) {
++            DayOfWeek day = moment.getDayOfWeek();
++            boolean found = false;
++            for (JsonNode item : days) {
++                found |= item.asInt() == day.getValue();
++            }
++            inside = found;
++        }
++        String from = schedule.path("from").asText("");
++        String to = schedule.path("to").asText("");
++        if (inside && !from.isEmpty() && !to.isEmpty()) {
++            LocalTime start = LocalTime.parse(from);
++            LocalTime end = LocalTime.parse(to);
++            LocalTime now = moment.toLocalTime();
++            inside = start.isBefore(end) ? !now.isBefore(start) && now.isBefore(end)
++                    : !now.isBefore(start) || now.isBefore(end);
++        }
++        return schedule.path("invert").asBoolean() != inside;
++    }
++
++    /** Whether an event matches an event rule: its types ("alarm:sos" for one alarm) and, for alarms, the list. */
++    public static boolean matchesEvent(JsonNode config, String type, String alarm) {
++        JsonNode types = config.path("condition").path("events");
++        if (!types.isArray() || types.isEmpty()) {
++            return false;
++        }
++        for (JsonNode item : types) {
++            String value = item.asText();
++            if (value.equals(type) || alarm != null && value.equals("alarm:" + alarm.split(",")[0])) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    public static String render(String template, Map<String, String> variables) {
++        String result = template;
++        for (Map.Entry<String, String> entry : variables.entrySet()) {
++            result = result.replace("{" + entry.getKey() + "}", entry.getValue() != null ? entry.getValue() : "");
++        }
++        return result;
++    }
++
++    public static double distance(double lat1, double lon1, double lat2, double lon2) {
++        double rad = Math.PI / 180;
++        double a = Math.pow(Math.sin((lat2 - lat1) * rad / 2), 2)
++                + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.pow(Math.sin((lon2 - lon1) * rad / 2), 2);
++        return 12742000 * Math.asin(Math.sqrt(a));
++    }
++
++}
+diff --git a/src/main/java/org/traccar/rules/RuleEngine.java b/src/main/java/org/traccar/rules/RuleEngine.java
+new file mode 100644
+index 0000000..f10ae12
+--- /dev/null
++++ b/src/main/java/org/traccar/rules/RuleEngine.java
+@@ -0,0 +1,529 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.rules;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.database.CommandsManager;
++import org.traccar.database.NotificationManager;
++import org.traccar.mail.MailManager;
++import org.traccar.model.AlertRule;
++import org.traccar.model.Command;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Geofence;
++import org.traccar.model.Group;
++import org.traccar.model.Notification;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.notification.NotificatorManager;
++import org.traccar.safety.EngineStopGuard;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++import org.traccar.whatsapp.WhatsappClient;
++
++import java.text.SimpleDateFormat;
++import java.time.ZoneId;
++import java.util.ArrayDeque;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Date;
++import java.util.Deque;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++import java.util.TimeZone;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Custom alerts engine. Every rule is checked with each new message of its units and once a minute (for silences,
++ * durations and schedules); event rules are checked with every stored event. A rule fires once per episode: the
++ * condition must hold for the minimum duration, inside the schedule, with the extra conditions, respecting the
++ * pause between alerts and the daily maximum. Change-type rules (entering, switching on, approaching) do not fire
++ * for the state found when the rule starts. Firing stores a "ruleTriggered" event (alert center, notifications) and
++ * runs the actions: channels to the rule owner, extra e-mails and WhatsApp numbers, and a command (engine stop only
++ * through the safe cut). States live in memory.
++ */
++@Singleton
++public class RuleEngine {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(RuleEngine.class);
++
++    private static final long RELOAD = 60_000;
++    private static final long DAY = 24 * 3600_000L;
++
++    private final Storage storage;
++    private final CacheManager cacheManager;
++    private final ObjectMapper objectMapper;
++    private final NotificationManager notificationManager;
++    private final NotificatorManager notificatorManager;
++    private final MailManager mailManager;
++    private final WhatsappClient whatsappClient;
++    private final CommandsManager commandsManager;
++    private final EngineStopGuard engineStopGuard;
++
++    public record Compiled(AlertRule rule, JsonNode config, Set<Long> deviceIds) {
++    }
++
++    private static final class State {
++        private long since;
++        private boolean holding;
++        private boolean fired;
++        private boolean initialized;
++        private Object lastValue;
++        private final Deque<Long> fires = new ArrayDeque<>();
++    }
++
++    private volatile List<Compiled> rules = List.of();
++    private volatile long loaded;
++    private final Map<String, State> states = new ConcurrentHashMap<>();
++
++    @Inject
++    public RuleEngine(
++            Storage storage, CacheManager cacheManager, ObjectMapper objectMapper,
++            NotificationManager notificationManager, NotificatorManager notificatorManager, MailManager mailManager,
++            WhatsappClient whatsappClient, CommandsManager commandsManager, EngineStopGuard engineStopGuard) {
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++        this.objectMapper = objectMapper;
++        this.notificationManager = notificationManager;
++        this.notificatorManager = notificatorManager;
++        this.mailManager = mailManager;
++        this.whatsappClient = whatsappClient;
++        this.commandsManager = commandsManager;
++        this.engineStopGuard = engineStopGuard;
++        notificationManager.addListener(this::onEvent);
++    }
++
++    public void invalidate() {
++        loaded = 0;
++    }
++
++    public JsonNode parse(String config) {
++        try {
++            return objectMapper.readTree(config != null ? config : "{}");
++        } catch (Exception e) {
++            return objectMapper.createObjectNode();
++        }
++    }
++
++    /** Units a rule applies to: all the owner's units, or the chosen units and groups (with subgroups). */
++    public Set<Long> devicesOf(long userId, JsonNode config) throws StorageException {
++        User user = storage.getObject(User.class, new Request(new Columns.All(), new Condition.Equals("id", userId)));
++        if (user == null) {
++            return Set.of();
++        }
++        Collection<Device> accessible = user.getAdministrator()
++                ? storage.getObjects(Device.class, new Request(new Columns.All()))
++                : storage.getObjects(Device.class, new Request(
++                        new Columns.All(), new Condition.Permission(User.class, userId, Device.class)));
++        Set<Long> result = new HashSet<>();
++        if (config.path("all").asBoolean()
++                || !config.path("deviceIds").isArray() && !config.path("groupIds").isArray()) {
++            accessible.forEach(device -> result.add(device.getId()));
++            return result;
++        }
++        Set<Long> chosen = new HashSet<>(RuleConditions.ids(config.path("deviceIds")));
++        Set<Long> groups = new HashSet<>(RuleConditions.ids(config.path("groupIds")));
++        Map<Long, Long> parents = new HashMap<>();
++        if (!groups.isEmpty()) {
++            for (Group group : storage.getObjects(Group.class, new Request(new Columns.All()))) {
++                parents.put(group.getId(), group.getGroupId());
++            }
++        }
++        for (Device device : accessible) {
++            boolean match = chosen.contains(device.getId());
++            long groupId = device.getGroupId();
++            Set<Long> visited = new HashSet<>();
++            while (!match && groupId > 0 && visited.add(groupId)) {
++                match = groups.contains(groupId);
++                groupId = parents.getOrDefault(groupId, 0L);
++            }
++            if (match) {
++                result.add(device.getId());
++            }
++        }
++        return result;
++    }
++
++    public List<Compiled> rules() {
++        long now = System.currentTimeMillis();
++        if (now - loaded > RELOAD) {
++            synchronized (this) {
++                if (now - loaded > RELOAD) {
++                    List<Compiled> result = new ArrayList<>();
++                    try {
++                        for (AlertRule rule : storage.getObjects(AlertRule.class, new Request(new Columns.All()))) {
++                            if (rule.getEnabled()) {
++                                JsonNode config = parse(rule.getConfig());
++                                result.add(new Compiled(rule, config, devicesOf(rule.getUserId(), config)));
++                            }
++                        }
++                    } catch (StorageException e) {
++                        LOGGER.warn("Alert rules load failed", e);
++                    }
++                    rules = result;
++                    loaded = now;
++                }
++            }
++        }
++        return rules;
++    }
++
++    private final RuleConditions.Context context = new RuleConditions.Context() {
++        @Override
++        public Collection<Geofence> geofences(Position position) {
++            List<Geofence> result = new ArrayList<>();
++            if (position.getGeofenceIds() != null) {
++                for (long id : position.getGeofenceIds()) {
++                    Geofence geofence = cacheManager.getObject(Geofence.class, id);
++                    if (geofence != null) {
++                        result.add(geofence);
++                    }
++                }
++            }
++            return result;
++        }
++
++        @Override
++        public Position latest(long deviceId) {
++            return RuleEngine.this.latest(deviceId);
++        }
++
++        @Override
++        public long now() {
++            return System.currentTimeMillis();
++        }
++    };
++
++    public RuleConditions.Context context() {
++        return context;
++    }
++
++    public Position latest(long deviceId) {
++        Position position = cacheManager.getPosition(deviceId);
++        if (position != null) {
++            return position;
++        }
++        try {
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", deviceId)));
++            return device != null && device.getPositionId() > 0 ? storage.getObject(Position.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", device.getPositionId()))) : null;
++        } catch (StorageException e) {
++            return null;
++        }
++    }
++
++    static long duration(JsonNode config) {
++        long seconds = config.path("minDuration").asLong(0);
++        String type = config.path("type").asText();
++        long minutes = config.path("condition").path("minutes").asLong(0);
++        if (!"connection".equals(type) && minutes > 0) {
++            seconds = Math.max(seconds, minutes * 60);
++        }
++        return seconds * 1000;
++    }
++
++    private ZoneId zone(long userId) {
++        try {
++            User user = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", userId)));
++            String timezone = user != null ? user.getString("timezone") : null;
++            return timezone != null ? ZoneId.of(timezone) : ZoneId.systemDefault();
++        } catch (Exception e) {
++            return ZoneId.systemDefault();
++        }
++    }
++
++    private boolean allowed(Compiled compiled, State state, long now) {
++        JsonNode config = compiled.config();
++        long cooldown = config.path("cooldown").asLong(0) * 60_000;
++        while (!state.fires.isEmpty() && now - state.fires.peekFirst() > DAY) {
++            state.fires.removeFirst();
++        }
++        if (cooldown > 0 && !state.fires.isEmpty() && now - state.fires.peekLast() < cooldown) {
++            return false;
++        }
++        int maxPerDay = config.path("maxPerDay").asInt(0);
++        return maxPerDay <= 0 || state.fires.size() < maxPerDay;
++    }
++
++    /** Checks one rule for one unit and fires it when due. */
++    void evaluate(Compiled compiled, Device device, Position position, long now) {
++        JsonNode config = compiled.config();
++        if ("event".equals(config.path("type").asText())) {
++            return;
++        }
++        State state = states.computeIfAbsent(compiled.rule().getId() + ":" + device.getId(), key -> new State());
++        RuleConditions.Check check;
++        synchronized (state) {
++            check = RuleConditions.check(config, device, position, context, state.lastValue);
++            boolean holds = check.holds() && RuleConditions.extra(config, device, position, context);
++            if (check.value() != null) {
++                state.lastValue = check.value();
++            }
++            boolean edge = RuleConditions.isEdge(config);
++            if (!state.initialized) {
++                state.initialized = true;
++                if (holds && edge) {
++                    // the unit was already in that state when the rule started: wait for the next change
++                    state.holding = true;
++                    state.fired = true;
++                    state.since = now;
++                    return;
++                }
++            }
++            if (!holds) {
++                state.holding = false;
++                state.fired = false;
++                return;
++            }
++            if (!state.holding) {
++                state.holding = true;
++                state.since = now;
++                state.fired = false;
++            }
++            if (state.fired || now - state.since < duration(config)
++                    || !RuleConditions.inSchedule(config, now, zone(compiled.rule().getUserId()))
++                    || !allowed(compiled, state, now)) {
++                return;
++            }
++            state.fired = true;
++            state.fires.addLast(now);
++        }
++        fire(compiled, device, position, check, now);
++    }
++
++    public void onPosition(Position position) {
++        Device device = cacheManager.getObject(Device.class, position.getDeviceId());
++        if (device == null) {
++            return;
++        }
++        long now = System.currentTimeMillis();
++        for (Compiled compiled : rules()) {
++            if (compiled.deviceIds().contains(device.getId())) {
++                try {
++                    evaluate(compiled, device, position, now);
++                } catch (RuntimeException e) {
++                    LOGGER.warn("Alert rule {} failed", compiled.rule().getId(), e);
++                }
++            }
++        }
++    }
++
++    /** Once a minute: silences, durations and schedules also count without new messages. */
++    public void onTimer() throws StorageException {
++        long now = System.currentTimeMillis();
++        List<Compiled> current = rules();
++        if (current.isEmpty()) {
++            return;
++        }
++        Map<Long, Device> devices = new HashMap<>();
++        for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
++            devices.put(device.getId(), device);
++        }
++        for (Compiled compiled : current) {
++            for (long deviceId : compiled.deviceIds()) {
++                Device device = devices.get(deviceId);
++                if (device != null) {
++                    try {
++                        evaluate(compiled, device, latest(deviceId), now);
++                    } catch (RuntimeException e) {
++                        LOGGER.warn("Alert rule {} failed", compiled.rule().getId(), e);
++                    }
++                }
++            }
++        }
++    }
++
++    private void onEvent(Event event, Position position) {
++        if (AlertRule.EVENT_TYPE.equals(event.getType())) {
++            return;
++        }
++        long now = System.currentTimeMillis();
++        for (Compiled compiled : rules()) {
++            JsonNode config = compiled.config();
++            if (!"event".equals(config.path("type").asText()) || !compiled.deviceIds().contains(event.getDeviceId())
++                    || !RuleConditions.matchesEvent(config, event.getType(), event.getString(Position.KEY_ALARM))) {
++                continue;
++            }
++            Position current = position != null ? position : latest(event.getDeviceId());
++            Device device = cacheManager.getObject(Device.class, event.getDeviceId());
++            if (device == null || !RuleConditions.extra(config, device, current, context)
++                    || !RuleConditions.inSchedule(config, now, zone(compiled.rule().getUserId()))) {
++                continue;
++            }
++            State state = states.computeIfAbsent(
++                    compiled.rule().getId() + ":" + event.getDeviceId(), key -> new State());
++            synchronized (state) {
++                if (!allowed(compiled, state, now)) {
++                    continue;
++                }
++                state.fires.addLast(now);
++            }
++            String detail = Event.TYPE_ALARM.equals(event.getType())
++                    ? "alarma " + event.getString(Position.KEY_ALARM) : event.getType();
++            fire(compiled, device, current, new RuleConditions.Check(true, null, detail, event.getGeofenceId()), now);
++        }
++    }
++
++    Map<String, String> variables(Compiled compiled, Device device, Position position, RuleConditions.Check check) {
++        Map<String, String> variables = new LinkedHashMap<>();
++        variables.put("unit", device.getName());
++        variables.put("rule", compiled.rule().getName());
++        variables.put("detail", check.detail() != null ? check.detail() : "");
++        variables.put("value", check.value() != null ? RuleConditions.format(check.value()) : "");
++        variables.put("severity", compiled.config().path("severity").asText("high"));
++        SimpleDateFormat format = new SimpleDateFormat("dd/MM/yyyy HH:mm");
++        format.setTimeZone(TimeZone.getTimeZone(zone(compiled.rule().getUserId())));
++        variables.put("time", format.format(new Date()));
++        if (position != null) {
++            variables.put("speed", String.valueOf(Math.round(RuleConditions.speedKmh(position))));
++            variables.put("address", position.getAddress() != null ? position.getAddress()
++                    : String.format(Locale.ROOT, "%.5f, %.5f", position.getLatitude(), position.getLongitude()));
++            variables.put("lat", String.format(Locale.ROOT, "%.6f", position.getLatitude()));
++            variables.put("lon", String.format(Locale.ROOT, "%.6f", position.getLongitude()));
++            Object driver = position.getAttributes().get(Position.KEY_DRIVER_UNIQUE_ID);
++            variables.put("driver", driver != null ? driver.toString() : "");
++        }
++        if (check.geofenceId() > 0) {
++            Geofence geofence = cacheManager.getObject(Geofence.class, check.geofenceId());
++            variables.put("geofence", geofence != null ? geofence.getName() : "");
++        }
++        return variables;
++    }
++
++    public String message(Compiled compiled, Device device, Position position, RuleConditions.Check check) {
++        String template = compiled.config().path("message").asText("");
++        if (template.isBlank()) {
++            template = "{rule}: {unit} · {detail}";
++        }
++        return RuleConditions.render(template, variables(compiled, device, position, check)).trim();
++    }
++
++    private void fire(Compiled compiled, Device device, Position position, RuleConditions.Check check, long now) {
++        JsonNode config = compiled.config();
++        AlertRule rule = compiled.rule();
++        String message = message(compiled, device, position, check);
++        Event event = position != null
++                ? new Event(AlertRule.EVENT_TYPE, position) : new Event(AlertRule.EVENT_TYPE, device.getId());
++        event.setEventTime(new Date(now));
++        event.setGeofenceId(check.geofenceId());
++        event.set("ruleId", rule.getId());
++        event.set("ruleName", rule.getName());
++        event.set("ruleType", config.path("type").asText());
++        event.set("severity", config.path("severity").asText("high"));
++        event.set("message", message);
++        if (check.value() != null) {
++            event.set("value", RuleConditions.format(check.value()));
++        }
++        LOGGER.info("Alert rule {} fired for {}: {}", rule.getId(), device.getUniqueId(), message);
++        try {
++            Map<Event, Position> events = new HashMap<>();
++            events.put(event, position);
++            notificationManager.updateEvents(events);
++        } catch (RuntimeException e) {
++            LOGGER.warn("Alert rule event failed", e);
++        }
++        deliver(compiled, device, event, position, message);
++        runCommand(compiled, device);
++    }
++
++    private void deliver(Compiled compiled, Device device, Event event, Position position, String message) {
++        JsonNode config = compiled.config();
++        try {
++            User owner = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", compiled.rule().getUserId())));
++            List<String> channels = new ArrayList<>();
++            config.path("channels").forEach(item -> channels.add(item.asText()));
++            if (owner != null && !channels.isEmpty()) {
++                Notification notification = new Notification();
++                notification.setType(AlertRule.EVENT_TYPE);
++                notification.setNotificators(String.join(",", channels));
++                for (String channel : channels) {
++                    try {
++                        notificatorManager.getNotificator(channel).send(notification, owner, event, position);
++                    } catch (Exception e) {
++                        LOGGER.warn("Alert rule channel {} failed", channel, e);
++                    }
++                }
++            }
++        } catch (StorageException e) {
++            LOGGER.warn("Alert rule owner lookup failed", e);
++        }
++        String subject = compiled.rule().getName() + " - " + device.getName();
++        for (String email : config.path("emails").asText("").split("[,;\\s]+")) {
++            if (email.contains("@") && mailManager.getEmailEnabled()) {
++                User recipient = new User();
++                recipient.setEmail(email.trim());
++                try {
++                    mailManager.sendMessage(recipient, true, subject, message);
++                } catch (Exception e) {
++                    LOGGER.warn("Alert rule mail failed", e);
++                }
++            }
++        }
++        for (String phone : config.path("phones").asText("").split("[,;]+")) {
++            if (WhatsappClient.normalize(phone).length() >= 7 && whatsappClient.configured()) {
++                try {
++                    whatsappClient.sendAlert(phone, message);
++                } catch (Exception e) {
++                    LOGGER.warn("Alert rule WhatsApp failed", e);
++                }
++            }
++        }
++    }
++
++    private void runCommand(Compiled compiled, Device device) {
++        JsonNode action = compiled.config().path("command");
++        String type = action.path("type").asText("");
++        if (type.isEmpty()) {
++            return;
++        }
++        Command command = new Command();
++        command.setDeviceId(device.getId());
++        command.setType(type);
++        if (action.hasNonNull("data")) {
++            command.set(Command.KEY_DATA, action.path("data").asText());
++        }
++        try {
++            if (Command.TYPE_ENGINE_STOP.equals(type)) {
++                if (engineStopGuard.check(device.getId()).allowed()) {
++                    commandsManager.sendCommand(command);
++                } else {
++                    // never cut a moving unit: the cut waits until it stops
++                    engineStopGuard.addPending(command, compiled.rule().getUserId());
++                }
++            } else {
++                commandsManager.sendCommand(command);
++            }
++        } catch (Exception e) {
++            LOGGER.warn("Alert rule command failed", e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/schedule/ScheduleManager.java b/src/main/java/org/traccar/schedule/ScheduleManager.java
+index 284be43..c0b1877 100644
+--- a/src/main/java/org/traccar/schedule/ScheduleManager.java
++++ b/src/main/java/org/traccar/schedule/ScheduleManager.java
+@@ -52,7 +52,8 @@ public class ScheduleManager implements LifecycleObject {
+                 TaskDeviceInactivityCheck.class,
+                 TaskWebSocketKeepalive.class,
+                 TaskStorageRetention.class,
+-                TaskMaintenanceReminder.class)
++                TaskMaintenanceReminder.class,
++                TaskAlertRules.class)
+                 .forEachOrdered(taskClass -> {
+                     var task = injector.getInstance(taskClass);
+                     if (task.multipleInstances() || !secondary) {
+diff --git a/src/main/java/org/traccar/schedule/TaskAlertRules.java b/src/main/java/org/traccar/schedule/TaskAlertRules.java
+new file mode 100644
+index 0000000..caf9557
+--- /dev/null
++++ b/src/main/java/org/traccar/schedule/TaskAlertRules.java
+@@ -0,0 +1,52 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.schedule;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.rules.RuleEngine;
++
++import java.util.concurrent.ScheduledExecutorService;
++import java.util.concurrent.TimeUnit;
++
++/**
++ * Checks the custom alert rules every minute, so silences, durations and schedules count without new messages.
++ */
++public class TaskAlertRules extends SingleScheduleTask {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(TaskAlertRules.class);
++
++    private final RuleEngine ruleEngine;
++
++    @Inject
++    public TaskAlertRules(RuleEngine ruleEngine) {
++        this.ruleEngine = ruleEngine;
++    }
++
++    @Override
++    public void schedule(ScheduledExecutorService executor) {
++        executor.scheduleAtFixedRate(this, 1, 1, TimeUnit.MINUTES);
++    }
++
++    @Override
++    public void run() {
++        try {
++            ruleEngine.onTimer();
++        } catch (Exception e) {
++            LOGGER.warn("Alert rules check failed", e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/sensor/Expression.java b/src/main/java/org/traccar/sensor/Expression.java
+new file mode 100644
+index 0000000..15fbdbd
+--- /dev/null
++++ b/src/main/java/org/traccar/sensor/Expression.java
+@@ -0,0 +1,311 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.sensor;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Locale;
++import java.util.function.Function;
++
++/**
++ * Formula of a sensor, Wialon style: numbers, device parameters (io201, adc1, can_fuel…), other sensors by id
++ * (#tank1), bits of a parameter (in1:3 is bit 3 of in1), arithmetic (+ - * / % ^), comparisons (&gt; &lt; &gt;= &lt;=
++ * == !=), logic (&amp;&amp; || !), parentheses and functions abs, min, max, round, floor, ceil, sqrt, if(c, a, b),
++ * bit(x, n). A missing parameter makes the whole result null, like Wialon's "invalid value".
++ */
++public final class Expression {
++
++    private final String text;
++    private int index;
++    private final Function<String, Double> variables;
++    private boolean missing;
++
++    private Expression(String text, Function<String, Double> variables) {
++        this.text = text;
++        this.variables = variables;
++    }
++
++    public static Double evaluate(String text, Function<String, Double> variables) {
++        Expression expression = new Expression(text, variables);
++        double value = expression.parse();
++        if (expression.missing || Double.isNaN(value) || Double.isInfinite(value)) {
++            return null;
++        }
++        return value;
++    }
++
++    /** Checks the syntax only; returns the error message, or null when the formula is valid. */
++    public static String validate(String text) {
++        try {
++            new Expression(text, name -> 1.0).parse();
++            return null;
++        } catch (IllegalArgumentException e) {
++            return e.getMessage();
++        }
++    }
++
++    private double parse() {
++        if (text == null || text.isBlank()) {
++            throw new IllegalArgumentException("Empty formula");
++        }
++        double value = parseOr();
++        skipSpaces();
++        if (index < text.length()) {
++            throw new IllegalArgumentException("Unexpected '" + text.charAt(index) + "' at " + (index + 1));
++        }
++        return value;
++    }
++
++    private void skipSpaces() {
++        while (index < text.length() && Character.isWhitespace(text.charAt(index))) {
++            index++;
++        }
++    }
++
++    private boolean accept(String token) {
++        skipSpaces();
++        if (text.startsWith(token, index)) {
++            index += token.length();
++            return true;
++        }
++        return false;
++    }
++
++    private static double bool(boolean value) {
++        return value ? 1 : 0;
++    }
++
++    private double parseOr() {
++        double value = parseAnd();
++        while (accept("||")) {
++            double right = parseAnd();
++            value = bool(value != 0 || right != 0);
++        }
++        return value;
++    }
++
++    private double parseAnd() {
++        double value = parseComparison();
++        while (accept("&&")) {
++            double right = parseComparison();
++            value = bool(value != 0 && right != 0);
++        }
++        return value;
++    }
++
++    private double parseComparison() {
++        double value = parseSum();
++        while (true) {
++            if (accept(">=")) {
++                value = bool(value >= parseSum());
++            } else if (accept("<=")) {
++                value = bool(value <= parseSum());
++            } else if (accept("==")) {
++                value = bool(value == parseSum());
++            } else if (accept("!=")) {
++                value = bool(value != parseSum());
++            } else if (accept(">")) {
++                value = bool(value > parseSum());
++            } else if (accept("<")) {
++                value = bool(value < parseSum());
++            } else {
++                return value;
++            }
++        }
++    }
++
++    private double parseSum() {
++        double value = parseProduct();
++        while (true) {
++            if (accept("+")) {
++                value += parseProduct();
++            } else if (accept("-")) {
++                value -= parseProduct();
++            } else {
++                return value;
++            }
++        }
++    }
++
++    private double parseProduct() {
++        double value = parsePower();
++        while (true) {
++            if (accept("*")) {
++                value *= parsePower();
++            } else if (accept("/")) {
++                double divisor = parsePower();
++                value = divisor == 0 ? Double.NaN : value / divisor;
++            } else if (accept("%")) {
++                double divisor = parsePower();
++                value = divisor == 0 ? Double.NaN : value % divisor;
++            } else {
++                return value;
++            }
++        }
++    }
++
++    private double parsePower() {
++        double value = parseUnary();
++        if (accept("^")) {
++            return Math.pow(value, parsePower());
++        }
++        return value;
++    }
++
++    private double parseUnary() {
++        if (accept("-")) {
++            return -parseUnary();
++        }
++        if (accept("+")) {
++            return parseUnary();
++        }
++        if (accept("!")) {
++            return bool(parseUnary() == 0);
++        }
++        return parsePrimary();
++    }
++
++    private double parsePrimary() {
++        skipSpaces();
++        if (index >= text.length()) {
++            throw new IllegalArgumentException("Unexpected end of formula");
++        }
++        char c = text.charAt(index);
++        if (c == '(') {
++            index++;
++            double value = parseOr();
++            if (!accept(")")) {
++                throw new IllegalArgumentException("Missing ')'");
++            }
++            return value;
++        }
++        if (Character.isDigit(c) || c == '.') {
++            int start = index;
++            while (index < text.length()
++                    && (Character.isDigit(text.charAt(index)) || text.charAt(index) == '.')) {
++                index++;
++            }
++            if (index + 1 < text.length() && text.charAt(start) == '0' && index == start + 1
++                    && (text.charAt(index) == 'x' || text.charAt(index) == 'X')) {
++                index++;
++                int hexStart = index;
++                while (index < text.length() && Character.digit(text.charAt(index), 16) >= 0) {
++                    index++;
++                }
++                return Long.parseLong(text.substring(hexStart, index), 16);
++            }
++            try {
++                return Double.parseDouble(text.substring(start, index));
++            } catch (NumberFormatException e) {
++                throw new IllegalArgumentException("Invalid number at " + (start + 1));
++            }
++        }
++        if (Character.isLetter(c) || c == '_' || c == '#') {
++            int start = index;
++            index++;
++            while (index < text.length()) {
++                char next = text.charAt(index);
++                if (Character.isLetterOrDigit(next) || next == '_' || next == '.') {
++                    index++;
++                } else {
++                    break;
++                }
++            }
++            String name = text.substring(start, index);
++            skipSpaces();
++            if (index < text.length() && text.charAt(index) == '(' && !name.startsWith("#")) {
++                return function(name.toLowerCase(Locale.ROOT));
++            }
++            Integer bit = null;
++            if (index < text.length() && text.charAt(index) == ':') {
++                index++;
++                int bitStart = index;
++                while (index < text.length() && Character.isDigit(text.charAt(index))) {
++                    index++;
++                }
++                if (bitStart == index) {
++                    throw new IllegalArgumentException("Missing bit number after '" + name + ":'");
++                }
++                bit = Integer.parseInt(text.substring(bitStart, index));
++            }
++            Double value = variables.apply(name);
++            if (value == null) {
++                missing = true;
++                return 0;
++            }
++            return bit != null ? (((long) (double) value) >> bit) & 1 : value;
++        }
++        throw new IllegalArgumentException("Unexpected '" + c + "' at " + (index + 1));
++    }
++
++    private double function(String name) {
++        index++;
++        List<Double> arguments = new ArrayList<>();
++        if (!accept(")")) {
++            do {
++                arguments.add(parseOr());
++            } while (accept(","));
++            if (!accept(")")) {
++                throw new IllegalArgumentException("Missing ')' after arguments of " + name);
++            }
++        }
++        int count = arguments.size();
++        switch (name) {
++            case "abs":
++                check(name, count, 1);
++                return Math.abs(arguments.get(0));
++            case "round":
++                if (count == 2) {
++                    double scale = Math.pow(10, arguments.get(1));
++                    return Math.round(arguments.get(0) * scale) / scale;
++                }
++                check(name, count, 1);
++                return Math.round(arguments.get(0));
++            case "floor":
++                check(name, count, 1);
++                return Math.floor(arguments.get(0));
++            case "ceil":
++                check(name, count, 1);
++                return Math.ceil(arguments.get(0));
++            case "sqrt":
++                check(name, count, 1);
++                return Math.sqrt(arguments.get(0));
++            case "min":
++                if (count == 0) {
++                    throw new IllegalArgumentException("min needs arguments");
++                }
++                return arguments.stream().mapToDouble(Double::doubleValue).min().getAsDouble();
++            case "max":
++                if (count == 0) {
++                    throw new IllegalArgumentException("max needs arguments");
++                }
++                return arguments.stream().mapToDouble(Double::doubleValue).max().getAsDouble();
++            case "if":
++                check(name, count, 3);
++                return arguments.get(0) != 0 ? arguments.get(1) : arguments.get(2);
++            case "bit":
++                check(name, count, 2);
++                return (((long) (double) arguments.get(0)) >> (int) (double) arguments.get(1)) & 1;
++            default:
++                throw new IllegalArgumentException("Unknown function " + name);
++        }
++    }
++
++    private static void check(String name, int count, int expected) {
++        if (count != expected) {
++            throw new IllegalArgumentException(name + " needs " + expected + " argument(s)");
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/sensor/Sensor.java b/src/main/java/org/traccar/sensor/Sensor.java
+index 86ba838..725a75c 100644
+--- a/src/main/java/org/traccar/sensor/Sensor.java
++++ b/src/main/java/org/traccar/sensor/Sensor.java
+@@ -21,15 +21,30 @@ import java.util.Comparator;
+ import java.util.List;
+ 
+ /**
+- * A unit sensor, GPS-Server / WOX style: reads a position attribute (io201, adc1, fuel...) and turns it into a value
+- * with a calibration table (piecewise linear) or a multiplier and offset. Fuel sensors also carry the fill and drain
+- * detection settings.
++ * A unit sensor, GPS-Server / WOX / Wialon style: reads a position attribute (io201, adc1, fuel...) or evaluates a
++ * formula over the parameters, and turns it into a value with a calibration table (piecewise linear) or a multiplier
++ * and offset, within optional bounds. Fuel sensors also carry the fill and drain detection settings. Accumulation,
++ * smoothing and validation by another sensor are applied by {@link SensorEngine}.
+  */
+ @JsonIgnoreProperties(ignoreUnknown = true)
+ public class Sensor {
+ 
+     public static final String TYPE_FUEL = "fuel";
+     public static final String TYPE_BINARY = "binary";
++    public static final String TYPE_DRIVER = "driver";
++    public static final String TYPE_TRAILER = "trailer";
++    public static final String TYPE_IGNITION = "ignition";
++    public static final String TYPE_ENGINE_HOURS = "engineHours";
++    public static final String TYPE_ENGINE_EFFICIENCY = "engineEfficiency";
++    public static final String TYPE_FUEL_CALCULATED = "fuelCalculated";
++
++    /** Types read as on / off (1 / 0), with the optional inversion. */
++    public static final java.util.Set<String> DIGITAL_TYPES = java.util.Set.of(
++            TYPE_BINARY, TYPE_IGNITION, "panic", "door", "seatbelt", "pto", "privateMode", "motion", "digital");
++
++    public static final String ACCUMULATE_INCREMENT = "increment";
++    public static final String ACCUMULATE_DELTA = "delta";
++    public static final String ACCUMULATE_TIME = "time";
+ 
+     public static final String ATTRIBUTE_PREFIX = "sensor.";
+ 
+@@ -49,6 +64,16 @@ public class Sensor {
+     private int filter = 5;
+     private boolean stoppedOnly = true;
+     private double speedThreshold = 5;
++    private String formula;
++    private Double lowerBound;
++    private Double upperBound;
++    private String validatorId;
++    private String validation;
++    private int smoothing;
++    private String accumulate;
++    private Double threshold;
++    private double rate;
++    private double idleRate;
+ 
+     public String getId() {
+         return id;
+@@ -178,6 +203,86 @@ public class Sensor {
+         this.speedThreshold = speedThreshold;
+     }
+ 
++    public String getFormula() {
++        return formula;
++    }
++
++    public void setFormula(String formula) {
++        this.formula = formula;
++    }
++
++    public Double getLowerBound() {
++        return lowerBound;
++    }
++
++    public void setLowerBound(Double lowerBound) {
++        this.lowerBound = lowerBound;
++    }
++
++    public Double getUpperBound() {
++        return upperBound;
++    }
++
++    public void setUpperBound(Double upperBound) {
++        this.upperBound = upperBound;
++    }
++
++    public String getValidatorId() {
++        return validatorId;
++    }
++
++    public void setValidatorId(String validatorId) {
++        this.validatorId = validatorId;
++    }
++
++    public String getValidation() {
++        return validation;
++    }
++
++    public void setValidation(String validation) {
++        this.validation = validation;
++    }
++
++    public int getSmoothing() {
++        return smoothing;
++    }
++
++    public void setSmoothing(int smoothing) {
++        this.smoothing = smoothing;
++    }
++
++    public String getAccumulate() {
++        return accumulate;
++    }
++
++    public void setAccumulate(String accumulate) {
++        this.accumulate = accumulate;
++    }
++
++    public Double getThreshold() {
++        return threshold;
++    }
++
++    public void setThreshold(Double threshold) {
++        this.threshold = threshold;
++    }
++
++    public double getRate() {
++        return rate;
++    }
++
++    public void setRate(double rate) {
++        this.rate = rate;
++    }
++
++    public double getIdleRate() {
++        return idleRate;
++    }
++
++    public void setIdleRate(double idleRate) {
++        this.idleRate = idleRate;
++    }
++
+     public String getKey() {
+         return ATTRIBUTE_PREFIX + id;
+     }
+@@ -202,7 +307,7 @@ public class Sensor {
+     }
+ 
+     public Double convert(double raw) {
+-        if (TYPE_BINARY.equals(type)) {
++        if (DIGITAL_TYPES.contains(type)) {
+             return (raw != 0) != invert ? 1.0 : 0.0;
+         }
+         List<double[]> points = calibration.stream()
+@@ -226,9 +331,45 @@ public class Sensor {
+         return raw * multiplier + offset;
+     }
+ 
++    public boolean isText() {
++        return TYPE_DRIVER.equals(type) || TYPE_TRAILER.equals(type);
++    }
++
++    public Double raw(Position position, java.util.function.Function<String, Double> extra) {
++        if (formula != null && !formula.isBlank()) {
++            return Expression.evaluate(formula, name -> {
++                Double value = extra != null ? extra.apply(name) : null;
++                return value != null ? value : variable(position, name);
++            });
++        }
++        return readRaw(position, source);
++    }
++
++    /** Value of a formula variable: a parameter, a stored sensor (#id) or speed (km/h), altitude, course. */
++    public static Double variable(Position position, String name) {
++        if (name.startsWith("#")) {
++            return readRaw(position, ATTRIBUTE_PREFIX + name.substring(1));
++        }
++        return switch (name) {
++            case "speed" -> position.getSpeed() * 1.852;
++            case "altitude" -> position.getAltitude();
++            case "course" -> position.getCourse();
++            default -> readRaw(position, name);
++        };
++    }
++
++    /** Converted value inside the bounds, or null; used when the value is a single message's reading. */
++    public Double convertBounded(double raw) {
++        Double value = convert(raw);
++        if (value == null || lowerBound != null && value < lowerBound || upperBound != null && value > upperBound) {
++            return null;
++        }
++        return value;
++    }
++
+     public Double compute(Position position) {
+-        Double raw = readRaw(position, source);
+-        return raw != null ? convert(raw) : null;
++        Double raw = raw(position, null);
++        return raw != null ? convertBounded(raw) : null;
+     }
+ 
+ }
+diff --git a/src/main/java/org/traccar/sensor/SensorConfig.java b/src/main/java/org/traccar/sensor/SensorConfig.java
+index b0012a6..1f37c62 100644
+--- a/src/main/java/org/traccar/sensor/SensorConfig.java
++++ b/src/main/java/org/traccar/sensor/SensorConfig.java
+@@ -50,7 +50,9 @@ public final class SensorConfig {
+         try {
+             List<Sensor> sensors = objectMapper.readValue(json, new TypeReference<List<Sensor>>() { }).stream()
+                     .filter(Objects::nonNull)
+-                    .filter(sensor -> sensor.getId() != null && sensor.getSource() != null)
++                    .filter(sensor -> sensor.getId() != null && (sensor.getSource() != null
++                            || sensor.getFormula() != null && !sensor.getFormula().isBlank()
++                            || Sensor.TYPE_FUEL_CALCULATED.equals(sensor.getType())))
+                     .toList();
+             if (CACHE.size() > 10000) {
+                 CACHE.clear();
+diff --git a/src/main/java/org/traccar/sensor/SensorEngine.java b/src/main/java/org/traccar/sensor/SensorEngine.java
+new file mode 100644
+index 0000000..0c116a9
+--- /dev/null
++++ b/src/main/java/org/traccar/sensor/SensorEngine.java
+@@ -0,0 +1,191 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.sensor;
++
++import jakarta.inject.Singleton;
++import org.traccar.model.Position;
++
++import java.util.ArrayDeque;
++import java.util.Deque;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Computes all the sensors of a unit for a message, Wialon style, in the order they are defined so a formula can use
++ * the sensors above it (#id):
++ * <ul>
++ * <li>value: parameter or formula, calibration table or multiplier and offset, lower and upper bounds;</li>
++ * <li>accumulated sensors (relative mileage, impulse fuel, counters, relative engine hours) add each message's
++ * increment, the positive difference of a counter, or the time the source is on, to the previous total;</li>
++ * * <li>calculated fuel consumption adds the distance by the rate per 100 km plus idle time by the hourly rate;</li>
++ * <li>engine efficiency is on while the source is at or above its threshold (RPM, voltage);</li>
++ * <li>smoothing averages the last N readings of live messages;</li>
++ * <li>validation by another sensor: valid only if it is not zero, logical and / or, sum, subtract, multiply, divide,
++ * or replace an invalid value with the validator's.</li>
++ * </ul>
++ */
++@Singleton
++public class SensorEngine {
++
++    public static final String RAW_SUFFIX = ".raw";
++    static final long MAX_STEP = 15 * 60 * 1000L;
++
++    private final Map<String, Deque<Double>> history = new ConcurrentHashMap<>();
++
++    private static double round(double value) {
++        return Math.round(value * 1000) / 1000.0;
++    }
++
++    private static Double previousValue(Position previous, String key) {
++        return previous != null ? Sensor.readRaw(previous, key) : null;
++    }
++
++    private static long step(Position position, Position previous) {
++        if (previous == null || position.getFixTime() == null || previous.getFixTime() == null) {
++            return 0;
++        }
++        long step = position.getFixTime().getTime() - previous.getFixTime().getTime();
++        return step > 0 && step <= MAX_STEP ? step : 0;
++    }
++
++    private Double smooth(String scope, Sensor sensor, double value) {
++        if (sensor.getSmoothing() <= 1 || scope == null) {
++            return value;
++        }
++        Deque<Double> values = history.computeIfAbsent(scope + ":" + sensor.getId(), key -> new ArrayDeque<>());
++        synchronized (values) {
++            values.addLast(value);
++            while (values.size() > sensor.getSmoothing()) {
++                values.removeFirst();
++            }
++            return values.stream().mapToDouble(Double::doubleValue).average().orElse(value);
++        }
++    }
++
++    static Double validate(String mode, Double value, Double validator) {
++        if (mode == null) {
++            mode = "nonZero";
++        }
++        switch (mode) {
++            case "replace":
++                return value != null ? value : validator;
++            case "nonZero":
++                return validator != null && validator != 0 ? value : null;
++            default:
++                break;
++        }
++        if (value == null || validator == null) {
++            return null;
++        }
++        return switch (mode) {
++            case "and" -> value != 0 && validator != 0 ? 1.0 : 0.0;
++            case "or" -> value != 0 || validator != 0 ? 1.0 : 0.0;
++            case "sum" -> value + validator;
++            case "subtract" -> value - validator;
++            case "multiply" -> value * validator;
++            case "divide" -> validator != 0 ? value / validator : null;
++            default -> value;
++        };
++    }
++
++    /**
++     * Values of the sensors for a message: numbers, or text for driver and trailer binding. Accumulated sensors also
++     * leave their last raw reading under "sensor.&lt;id&gt;.raw" in the result, to take the next difference from.
++     */
++    public Map<String, Object> compute(List<Sensor> sensors, Position position, Position previous, boolean live) {
++        return compute(sensors, position, previous, live ? String.valueOf(position.getDeviceId()) : null);
++    }
++
++    /** Forgets the smoothing readings of a scope, e.g. a finished preview. */
++    public void clear(String scope) {
++        history.keySet().removeIf(key -> key.startsWith(scope + ":"));
++    }
++
++    /** Values of the sensors, smoothing within the given scope (a unit, or a preview run; null for none). */
++    public Map<String, Object> compute(List<Sensor> sensors, Position position, Position previous, String scope) {
++        Map<String, Object> values = new LinkedHashMap<>();
++        Map<String, Double> numbers = new LinkedHashMap<>();
++        long step = step(position, previous);
++        for (Sensor sensor : sensors) {
++            String key = sensor.getKey();
++            if (sensor.isText()) {
++                Object text = sensor.getSource() != null ? position.getAttributes().get(sensor.getSource()) : null;
++                if (text != null && !text.toString().isBlank() && !"0".equals(text.toString())) {
++                    values.put(sensor.getId(), text.toString());
++                }
++                continue;
++            }
++            Double value;
++            if (Sensor.TYPE_FUEL_CALCULATED.equals(sensor.getType())) {
++                double total = previous != null ? orZero(previousValue(previous, key)) : 0;
++                double kilometers = position.getDouble(Position.KEY_DISTANCE) / 1000;
++                boolean moving = position.getSpeed() * 1.852 > sensor.getSpeedThreshold();
++                boolean ignition = position.getBoolean(Position.KEY_IGNITION);
++                total += kilometers * sensor.getRate() / 100;
++                if (!moving && ignition) {
++                    total += step / 3600000.0 * sensor.getIdleRate();
++                }
++                value = total;
++            } else {
++                Double raw = sensor.raw(position, name -> name.startsWith("#") ? numbers.get(name.substring(1)) : null);
++                if (raw == null) {
++                    continue;
++                }
++                String accumulate = sensor.getAccumulate();
++                double total = orZero(previousValue(previous, key));
++                if (Sensor.ACCUMULATE_INCREMENT.equals(accumulate)) {
++                    Double increment = sensor.convert(raw);
++                    value = total + (increment != null ? increment : 0);
++                } else if (Sensor.ACCUMULATE_DELTA.equals(accumulate)) {
++                    Double last = previousValue(previous, key + RAW_SUFFIX);
++                    double difference = last != null && raw >= last ? raw - last : 0;
++                    values.put(sensor.getId() + RAW_SUFFIX, raw);
++                    value = total + difference * sensor.getMultiplier();
++                } else if (Sensor.ACCUMULATE_TIME.equals(accumulate)) {
++                    value = total + (raw != 0 ? step / 3600000.0 : 0);
++                } else if (Sensor.TYPE_ENGINE_EFFICIENCY.equals(sensor.getType())) {
++                    value = raw >= (sensor.getThreshold() != null ? sensor.getThreshold() : 0) ? 1.0 : 0.0;
++                } else {
++                    value = sensor.convertBounded(raw);
++                    if (value != null) {
++                        value = smooth(scope, sensor, value);
++                    }
++                }
++            }
++            if (value != null) {
++                numbers.put(sensor.getId(), value);
++            }
++        }
++        for (Sensor sensor : sensors) {
++            if (sensor.getValidatorId() != null && !sensor.getValidatorId().isBlank() && !sensor.isText()) {
++                Double value = validate(sensor.getValidation(), numbers.get(sensor.getId()),
++                        numbers.get(sensor.getValidatorId()));
++                if (value != null) {
++                    numbers.put(sensor.getId(), value);
++                } else {
++                    numbers.remove(sensor.getId());
++                }
++            }
++        }
++        numbers.forEach((id, value) -> values.put(id, round(value)));
++        return values;
++    }
++
++    private static double orZero(Double value) {
++        return value != null ? value : 0;
++    }
++
++}
+diff --git a/src/test/java/org/traccar/rules/RuleConditionsTest.java b/src/test/java/org/traccar/rules/RuleConditionsTest.java
+new file mode 100644
+index 0000000..eb754dc
+--- /dev/null
++++ b/src/test/java/org/traccar/rules/RuleConditionsTest.java
+@@ -0,0 +1,119 @@
++package org.traccar.rules;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Device;
++import org.traccar.model.Geofence;
++import org.traccar.model.Position;
++
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.Collection;
++import java.util.Date;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class RuleConditionsTest {
++
++    private static final ObjectMapper MAPPER = new ObjectMapper();
++
++    private static JsonNode json(String text) throws Exception {
++        return MAPPER.readTree(text);
++    }
++
++    private static final RuleConditions.Context CONTEXT = new RuleConditions.Context() {
++        @Override
++        public Collection<Geofence> geofences(Position position) {
++            return List.of();
++        }
++
++        @Override
++        public Position latest(long deviceId) {
++            Position other = new Position();
++            other.setLatitude(-12.0001);
++            other.setLongitude(-77.0001);
++            return other;
++        }
++
++        @Override
++        public long now() {
++            return 10_000_000;
++        }
++    };
++
++    private static Position position(double speedKmh, Map<String, Object> attributes) {
++        Position position = new Position();
++        position.setFixTime(new Date());
++        position.setValid(true);
++        position.setLatitude(-12);
++        position.setLongitude(-77);
++        position.setSpeed(speedKmh / 1.852);
++        position.getAttributes().putAll(attributes);
++        return position;
++    }
++
++    @Test
++    public void testSensorRanges() throws Exception {
++        Device device = new Device();
++        JsonNode outside = json("{\"type\":\"sensor\",\"condition\":{\"sensor\":\"temp\",\"op\":\"outside\",\"min\":2,\"max\":8}}");
++        assertTrue(RuleConditions.check(outside, device, position(0, Map.of("sensor.temp", 9.5)), CONTEXT, null).holds());
++        assertFalse(RuleConditions.check(outside, device, position(0, Map.of("sensor.temp", 5.0)), CONTEXT, null).holds());
++        device.set("sensors", "[{\"id\":\"t9\",\"name\":\"Temperatura cámara\",\"type\":\"temperature\",\"source\":\"temp1\"}]");
++        JsonNode byName = json("{\"type\":\"sensor\",\"condition\":{\"sensorName\":\"temperatura cámara\",\"op\":\"gt\",\"value\":8}}");
++        assertTrue(RuleConditions.check(byName, device, position(0, Map.of("sensor.t9", 9.0)), CONTEXT, null).holds());
++        JsonNode byType = json("{\"type\":\"sensor\",\"condition\":{\"sensorType\":\"temperature\",\"op\":\"lt\",\"value\":2}}");
++        assertTrue(RuleConditions.check(byType, device, position(0, Map.of("sensor.t9", 1.0)), CONTEXT, null).holds());
++        JsonNode change = json("{\"type\":\"parameter\",\"condition\":{\"param\":\"adc1\",\"op\":\"change\",\"value\":100}}");
++        assertTrue(RuleConditions.isEdge(change));
++        assertTrue(RuleConditions.check(change, device, position(0, Map.of("adc1", 500)), CONTEXT, 300).holds());
++        assertFalse(RuleConditions.check(change, device, position(0, Map.of("adc1", 350)), CONTEXT, 300).holds());
++    }
++
++    @Test
++    public void testSpeedIdleDriverProximityAndConnection() throws Exception {
++        Device device = new Device();
++        device.setId(1);
++        JsonNode speed = json("{\"type\":\"speed\",\"condition\":{\"limit\":90}}");
++        assertTrue(RuleConditions.check(speed, device, position(95, Map.of()), CONTEXT, null).holds());
++        assertFalse(RuleConditions.check(speed, device, position(80, Map.of()), CONTEXT, null).holds());
++        JsonNode idle = json("{\"type\":\"idle\",\"condition\":{\"minutes\":10}}");
++        assertTrue(RuleConditions.check(idle, device, position(0, Map.of("ignition", true)), CONTEXT, null).holds());
++        assertFalse(RuleConditions.check(idle, device, position(40, Map.of("ignition", true)), CONTEXT, null).holds());
++        assertEquals(600_000, RuleEngine.duration(idle));
++        JsonNode driver = json("{\"type\":\"driver\",\"condition\":{}}");
++        assertTrue(RuleConditions.check(driver, device, position(0, Map.of("ignition", true)), CONTEXT, null).holds());
++        JsonNode near = json("{\"type\":\"proximity\",\"condition\":{\"deviceIds\":[2],\"radius\":100}}");
++        assertTrue(RuleConditions.check(near, device, position(0, Map.of()), CONTEXT, null).holds());
++        JsonNode silent = json("{\"type\":\"connection\",\"condition\":{\"minutes\":30}}");
++        device.setLastUpdate(new Date(10_000_000 - 40 * 60_000));
++        assertTrue(RuleConditions.check(silent, device, null, CONTEXT, null).holds());
++    }
++
++    @Test
++    public void testExtraConditionsScheduleAndEvents() throws Exception {
++        JsonNode rule = json("{\"type\":\"digital\",\"condition\":{\"param\":\"door\",\"state\":\"on\"},"
++                + "\"extra\":[{\"kind\":\"speed\",\"op\":\"gt\",\"value\":5}],"
++                + "\"schedule\":{\"days\":[1,2,3,4,5],\"from\":\"22:00\",\"to\":\"06:00\"}}");
++        assertTrue(RuleConditions.extra(rule, null, position(30, Map.of()), CONTEXT));
++        assertFalse(RuleConditions.extra(rule, null, position(0, Map.of()), CONTEXT));
++        ZoneId zone = ZoneId.of("America/Lima");
++        long mondayNight = ZonedDateTime.of(2026, 11, 2, 23, 0, 0, 0, zone).toInstant().toEpochMilli();
++        long mondayNoon = ZonedDateTime.of(2026, 11, 2, 12, 0, 0, 0, zone).toInstant().toEpochMilli();
++        long sundayNight = ZonedDateTime.of(2026, 11, 1, 23, 0, 0, 0, zone).toInstant().toEpochMilli();
++        assertTrue(RuleConditions.inSchedule(rule, mondayNight, zone));
++        assertFalse(RuleConditions.inSchedule(rule, mondayNoon, zone));
++        assertFalse(RuleConditions.inSchedule(rule, sundayNight, zone));
++        JsonNode events = json("{\"type\":\"event\",\"condition\":{\"events\":[\"alarm:sos\",\"deviceFuelDrop\"]}}");
++        assertTrue(RuleConditions.matchesEvent(events, "alarm", "sos"));
++        assertTrue(RuleConditions.matchesEvent(events, "deviceFuelDrop", null));
++        assertFalse(RuleConditions.matchesEvent(events, "alarm", "door"));
++        assertEquals("Exceso: ABC-123 a 95 km/h",
++                RuleConditions.render("Exceso: {unit} a {speed} km/h", Map.of("unit", "ABC-123", "speed", "95")));
++    }
++
++}
+diff --git a/src/test/java/org/traccar/sensor/ExpressionTest.java b/src/test/java/org/traccar/sensor/ExpressionTest.java
+new file mode 100644
+index 0000000..142cfd2
+--- /dev/null
++++ b/src/test/java/org/traccar/sensor/ExpressionTest.java
+@@ -0,0 +1,55 @@
++package org.traccar.sensor;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++public class ExpressionTest {
++
++    private static Double eval(String formula) {
++        Map<String, Double> values = Map.of("io201", 2048.0, "in1", 10.0, "can_fuel", 50.0, "#tank1", 120.0);
++        return Expression.evaluate(formula, values::get);
++    }
++
++    @Test
++    public void testArithmeticAndPrecedence() {
++        assertEquals(14.0, eval("2 + 3 * 4"));
++        assertEquals(20.0, eval("(2 + 3) * 4"));
++        assertEquals(512.0, eval("2 ^ 3 ^ 2"));
++        assertEquals(-3.0, eval("-(1 + 2)"));
++        assertEquals(255.0, eval("0xFF"));
++    }
++
++    @Test
++    public void testParametersBitsAndSensors() {
++        assertEquals(20.0, eval("can_fuel * 0.4"));
++        assertEquals(1.0, eval("in1:1"));
++        assertEquals(0.0, eval("in1:2"));
++        assertEquals(1.0, eval("bit(in1, 3)"));
++        assertEquals(240.0, eval("#tank1 * 2"));
++        assertNull(eval("missing * 2"));
++        assertNull(eval("io201 / 0"));
++    }
++
++    @Test
++    public void testLogicAndFunctions() {
++        assertEquals(1.0, eval("io201 > 1000 && in1 == 10"));
++        assertEquals(0.0, eval("!(io201 > 1000)"));
++        assertEquals(5.0, eval("if(in1 > 5, 5, in1)"));
++        assertEquals(3.14, eval("round(3.14159, 2)"));
++        assertEquals(10.0, eval("max(1, in1, 3)"));
++    }
++
++    @Test
++    public void testValidation() {
++        assertNull(Expression.validate("io201 * 0.5 + 2"));
++        assertNotNull(Expression.validate("io201 *"));
++        assertNotNull(Expression.validate("foo(1)"));
++        assertNotNull(Expression.validate("(1 + 2"));
++    }
++
++}
+diff --git a/src/test/java/org/traccar/sensor/SensorEngineTest.java b/src/test/java/org/traccar/sensor/SensorEngineTest.java
+new file mode 100644
+index 0000000..1a7787e
+--- /dev/null
++++ b/src/test/java/org/traccar/sensor/SensorEngineTest.java
+@@ -0,0 +1,110 @@
++package org.traccar.sensor;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Position;
++
++import java.util.Date;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++public class SensorEngineTest {
++
++    private static Sensor sensor(String id, String type, String source) {
++        Sensor sensor = new Sensor();
++        sensor.setId(id);
++        sensor.setType(type);
++        sensor.setSource(source);
++        return sensor;
++    }
++
++    private static Position position(long time, Map<String, Object> attributes) {
++        Position position = new Position();
++        position.setDeviceId(1);
++        position.setFixTime(new Date(time));
++        position.getAttributes().putAll(attributes);
++        return position;
++    }
++
++    private static void store(Position position, Map<String, Object> values) {
++        values.forEach((id, value) -> position.getAttributes().put(Sensor.ATTRIBUTE_PREFIX + id, value));
++    }
++
++    @Test
++    public void testFormulaBoundsAndValidation() {
++        Sensor ignition = sensor("ign", "ignition", "in1");
++        Sensor fuel = sensor("fuel", "fuel", null);
++        fuel.setFormula("adc1 * 0.1");
++        fuel.setUpperBound(400.0);
++        fuel.setValidatorId("ign");
++        fuel.setValidation("nonZero");
++        Sensor doubled = sensor("two", "numeric", null);
++        doubled.setFormula("#fuel * 2");
++        SensorEngine engine = new SensorEngine();
++
++        Map<String, Object> on = engine.compute(
++                List.of(ignition, fuel, doubled), position(0, Map.of("in1", true, "adc1", 1500)), null, false);
++        assertEquals(1.0, on.get("ign"));
++        assertEquals(150.0, on.get("fuel"));
++        assertEquals(300.0, on.get("two"));
++
++        Map<String, Object> off = engine.compute(
++                List.of(ignition, fuel), position(0, Map.of("in1", false, "adc1", 1500)), null, false);
++        assertFalse(off.containsKey("fuel"));
++
++        Map<String, Object> outOfBounds = engine.compute(
++                List.of(ignition, fuel), position(0, Map.of("in1", true, "adc1", 9000)), null, false);
++        assertNull(outOfBounds.get("fuel"));
++    }
++
++    @Test
++    public void testAccumulators() {
++        Sensor impulses = sensor("imp", "fuelImpulse", "pulses");
++        impulses.setAccumulate(Sensor.ACCUMULATE_DELTA);
++        impulses.setMultiplier(0.01);
++        Sensor hours = sensor("hours", "engineHours", "ign");
++        hours.setAccumulate(Sensor.ACCUMULATE_TIME);
++        SensorEngine engine = new SensorEngine();
++        List<Sensor> sensors = List.of(impulses, hours);
++
++        Position first = position(0, Map.of("pulses", 1000, "ign", 1));
++        store(first, engine.compute(sensors, first, null, false));
++        Position second = position(600_000, Map.of("pulses", 1500, "ign", 1));
++        Map<String, Object> values = engine.compute(sensors, second, first, false);
++        assertEquals(5.0, values.get("imp"));
++        assertEquals(0.167, values.get("hours"));
++        store(second, values);
++
++        // counter reset: no negative consumption
++        Position third = position(1_200_000, Map.of("pulses", 10, "ign", 0));
++        values = engine.compute(sensors, third, second, false);
++        assertEquals(5.0, values.get("imp"));
++        assertEquals(0.167, values.get("hours"));
++    }
++
++    @Test
++    public void testCalculatedFuelAndEfficiency() {
++        Sensor consumption = sensor("cons", Sensor.TYPE_FUEL_CALCULATED, null);
++        consumption.setRate(30);
++        consumption.setIdleRate(2);
++        Sensor efficiency = sensor("eff", Sensor.TYPE_ENGINE_EFFICIENCY, "rpm");
++        efficiency.setThreshold(800.0);
++        SensorEngine engine = new SensorEngine();
++        Position first = position(0, Map.of("rpm", 600));
++        store(first, engine.compute(List.of(consumption, efficiency), first, null, false));
++        Position moving = position(600_000, Map.of(Position.KEY_DISTANCE, 10000.0, "rpm", 1800));
++        moving.setSpeed(30);
++        Map<String, Object> values = engine.compute(List.of(consumption, efficiency), moving, first, false);
++        assertEquals(3.0, values.get("cons"));
++        assertEquals(1.0, values.get("eff"));
++        store(moving, values);
++        Position idle = position(2_400_000, Map.of(Position.KEY_IGNITION, true, "rpm", 700));
++        values = engine.compute(List.of(consumption, efficiency), idle, moving, false);
++        assertEquals(3.0, values.get("cons")); // 30 min gap is above the 15 min step limit
++        assertEquals(0.0, values.get("eff"));
++    }
++
++}
+diff --git a/templates/notifications/de/ruleTriggered.vm b/templates/notifications/de/ruleTriggered.vm
+new file mode 100644
+index 0000000..9e947fe
+--- /dev/null
++++ b/templates/notifications/de/ruleTriggered.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: $event.getString('ruleName')")
++#set($digest = "$event.getString('message')")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Alert: $event.getString('message')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)
++Point: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/ruleTriggered.vm b/templates/notifications/en/ruleTriggered.vm
+new file mode 100644
+index 0000000..9e947fe
+--- /dev/null
++++ b/templates/notifications/en/ruleTriggered.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: $event.getString('ruleName')")
++#set($digest = "$event.getString('message')")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Alert: $event.getString('message')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)
++Point: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/ruleTriggered.vm b/templates/notifications/es/ruleTriggered.vm
+new file mode 100644
+index 0000000..6810183
+--- /dev/null
++++ b/templates/notifications/es/ruleTriggered.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: $event.getString('ruleName')")
++#set($digest = "$event.getString('message')")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Alerta: $event.getString('message')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)
++Punto: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/ruleTriggered.vm b/templates/notifications/pt_BR/ruleTriggered.vm
+new file mode 100644
+index 0000000..9e947fe
+--- /dev/null
++++ b/templates/notifications/pt_BR/ruleTriggered.vm
+@@ -0,0 +1,15 @@
++#set($subject = "$device.name: $event.getString('ruleName')")
++#set($digest = "$event.getString('message')")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Alert: $event.getString('message')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)
++Point: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>

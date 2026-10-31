@@ -252,6 +252,56 @@ siguen abiertas al cambiar de página (la ventana de video es un panel más). Se
 usuario (lo siguen a cualquier computadora); uno puede abrirse automáticamente al iniciar sesión. En el menú de cada
 unidad está *Panel de seguimiento*.
 
+## Sensores y alertas personalizadas tipo Wialon (parche `0017`)
+
+**Sensores** (Editar unidad → Sensores), calculados por el servidor en cada mensaje (`sensor.<id>`):
+
+| Grupo | Tipos |
+|---|---|
+| Kilometraje | Odómetro, kilometraje relativo |
+| Digitales | Ignición, digital personalizado, botón de pánico, puerta, cinturón, toma de fuerza (PTO), modo privado, sensor de movimiento |
+| Motor | Horas de motor absolutas y relativas, RPM, eficiencia del motor (umbral de RPM o voltaje) |
+| Combustible | Nivel con tabla de calibración, consumo por impulsos, absoluto (CAN), instantáneo y calculado por tasa (L/100 km + L/h en ralentí) |
+| Medidores | Temperatura, voltaje, peso/carga, acelerómetro, presión de llantas, humedad, contador, personalizado |
+| Asignación | Conductor, remolque, contador de pasajeros |
+
+- **Fórmulas**: parámetros (`io201 * 0.4`), otros sensores (`#tank1 + #tank2`), bits (`in1:3`, `bit(x, n)`),
+  `+ − * / % ^`, comparaciones, `&& || !`, `abs round min max if`; errores marcados al escribir.
+- Tabla de calibración o multiplicador y suma, **límites** inferior/superior, **validación por otro sensor** (no cero,
+  Y/O, sumar, restar, multiplicar, dividir, reemplazar), **acumulación** (sumar cada mensaje, diferencia de un contador,
+  tiempo activo), **suavizado** de N lecturas.
+- Visualización: textos y colores para encendido/apagado, **rangos de color** (p. ej. azul < 2 °C, verde 2–8, rojo
+  > 8), ocultar de la ficha; orden (las fórmulas usan los de arriba), duplicar y **plantillas por modelo** (Teltonika,
+  Concox/Jimi, Queclink, CAN/FMS, cadena de frío, consumo calculado).
+- **Vista previa en vivo** calculada por el servidor con los últimos mensajes (valor y gráfico).
+- Un sensor de ignición, horas de motor o conductor también completa esos datos estándar si el equipo no los envía.
+
+**Alertas personalizadas** (menú *Alertas personalizadas*): asistente en 6 pasos.
+
+| Tipo | Condición |
+|---|---|
+| Exceso de velocidad | Límite fijo, de la geocerca donde esté o de la unidad |
+| Valor de sensor / parámetro | Mayor, menor, igual, distinto, dentro o fuera de rango, cambio brusco; sensor por nombre o cualquiera de un tipo |
+| Entrada digital | Se activa o se desactiva (solo al cambiar) |
+| Geocerca | Entra, sale, dentro o fuera por X min |
+| Ralentí / parada prolongada | Más de X min (parada dentro o fuera de geocercas) |
+| Pérdida de conexión / sin GPS | Sin datos o sin posición válida por X min |
+| Nivel de combustible | Por debajo de un nivel |
+| Evento del equipo | SOS, accidente, corte de energía, manipulación, robo/carga de combustible, cambio de conductor, encendido… |
+| Conductor no identificado | Encendida sin iButton/RFID |
+| Proximidad | Cerca de otras unidades o de un punto |
+
+- **Condiciones adicionales** (Y además…): velocidad, ignición, movimiento, sensor, parámetro, geocerca.
+- Unidades: todas, grupos (con subgrupos) o unidades. **Horario** por días y horas (incluso nocturno) o solo fuera de
+  él; **duración mínima**, **pausa entre alertas** y **máximo por día**.
+- Acciones: **prioridad** (va al centro de alertas), canales (web, correo, push, WhatsApp…), correos y números de
+  WhatsApp adicionales, **comando** (el corte de motor pasa siempre por el corte seguro) y **mensaje** con variables
+  `{unit} {rule} {detail} {value} {speed} {address} {time} {driver} {geofence} {lat} {lon}` y vista previa.
+- **Probar ahora** con los últimos datos de las unidades, 12 **plantillas** (cadena de frío, puerta abierta en
+  movimiento, encendido fuera de horario, robo de combustible, SOS…), historial de 7 días y conteo por alerta.
+- Se revisan con cada mensaje y cada minuto (silencios, duraciones y horarios cuentan aunque la unidad no reporte).
+- Los sensores y su color se ven también en la ficha de la unidad y en el panel flotante de seguimiento.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -327,6 +377,7 @@ python3 server/tests/test_video_driving_expenses.py
 python3 server/tests/test_jimi_playback.py clip.mp4
 python3 server/tests/test_operations.py
 python3 server/tests/test_services.py
+python3 server/tests/test_rules.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

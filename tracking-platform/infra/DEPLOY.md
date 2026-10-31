@@ -315,3 +315,15 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
 - WhatsApp solo entrega texto libre a quien escribió en las últimas 24 h: para iniciar conversaciones use la plantilla
   aprobada o pida al conductor que escriba primero.
 
+## 15. Sensores y alertas personalizadas
+
+- Los sensores se guardan en el atributo `sensors` de cada unidad (JSON) y se calculan al recibir cada mensaje; no
+  requieren configuración del servidor. Las alertas se guardan en la tabla `tc_alert_rules` (se crea sola al
+  actualizar).
+- Las alertas generan eventos `ruleTriggered`: aparecen en el centro de alertas con la prioridad elegida y se pueden
+  usar también en *Notificaciones* como cualquier otro evento. Plantillas de correo: `templates/notifications/*/ruleTriggered.vm`.
+- El estado de cada alerta (duración acumulada, pausa, máximo diario) vive en memoria: tras reiniciar el servidor una
+  condición que ya se cumplía vuelve a contar desde cero.
+- Los correos adicionales usan el SMTP del servidor y los números de WhatsApp la cuenta de la sección 10 (fuera de 24 h
+  se usa la plantilla aprobada).
+

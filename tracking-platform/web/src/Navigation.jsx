@@ -25,6 +25,7 @@ import ChartReportPage from './reports/ChartReportPage';
 import FuelReportPage from './reports/FuelReportPage';
 import ExpensesPage from './reports/ExpensesPage';
 import AlertCenterPage from './operations/AlertCenterPage';
+import AlertRulesPage from './operations/AlertRulesPage';
 import ConnectionQualityPage from './operations/ConnectionQualityPage';
 import FleetMaintenancePage from './operations/FleetMaintenancePage';
 import ReportBuilderPage from './operations/ReportBuilderPage';
@@ -136,6 +137,7 @@ const Navigation = () => {
         <Route path="event/:id" element={<EventPage />} />
         <Route path="replay" element={<ReplayPage />} />
         <Route path="alert-center" element={<AlertCenterPage />} />
+        <Route path="alert-rules" element={<AlertRulesPage />} />
         <Route path="maintenance" element={<FleetMaintenancePage />} />
         <Route path="geofences" element={<GeofencesPage />} />
         <Route path="emulator" element={<EmulatorPage />} />

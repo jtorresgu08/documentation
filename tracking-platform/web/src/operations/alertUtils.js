@@ -26,6 +26,9 @@ export const alertTitle = (item, t) => {
   if (item.type === 'alarm' && item.attributes?.alarm) {
     return formatAlarm(item.attributes.alarm, t);
   }
+  if (item.type === 'ruleTriggered' && item.attributes?.ruleName) {
+    return item.attributes.ruleName;
+  }
   if (item.type === 'maintenance' && item.attributes?.name) {
     const state = item.attributes.state ? ` · ${t(`maintenanceState${capitalize(item.attributes.state)}`)}` : '';
     return `${item.attributes.name}${state}`;
