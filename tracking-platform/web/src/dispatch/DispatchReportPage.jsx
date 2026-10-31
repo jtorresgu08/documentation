@@ -12,6 +12,7 @@ import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import { PERIODS, downloadCsv, periodRange } from '../reports/reportPeriods';
+import { formatCustom, useDispatchFields } from './customFields';
 import {
   STOP_COLORS, money, tripLabel, typeLabel,
 } from './dispatchUtils';
@@ -25,6 +26,7 @@ const DispatchReportPage = () => {
   const [period, setPeriod] = useState('week');
   const [custom, setCustom] = useState({ from: dayjs().subtract(7, 'day').format('YYYY-MM-DDTHH:mm'), to: dayjs().format('YYYY-MM-DDTHH:mm') });
   const [report, setReport] = useState(null);
+  const { fields } = useDispatchFields();
 
   const run = async () => {
     setReport(null);
@@ -40,6 +42,11 @@ const DispatchReportPage = () => {
   const summary = report?.summary;
   const exportCsv = () => downloadCsv('despachos', [t('dispatchTripName'), t('sharedDevice'), t('dispatchDriver'), t('dispatchPlannedStart'), t('dispatchStatus'), t('dispatchStops'), t('dispatchStopDelivered'), t('dispatchStopFailed'), t('dispatchLate')],
     report.trips.map((trip) => [trip.name, trip.deviceName, trip.driverName, dayjs(trip.plannedStart).format('YYYY-MM-DD HH:mm'), tripLabel(t, trip.status), trip.progress.total, trip.progress.delivered, trip.progress.failed, trip.progress.late]));
+
+  const exportStops = () => downloadCsv('entregas', [t('dispatchTripName'), t('sharedDevice'), t('dispatchDriver'), t('dispatchOrderCode'), t('dispatchCustomer'), t('dispatchOrderType'), t('dispatchStatus'), t('dispatchArrived'), t('dispatchStopDelivered'), t('dispatchRecipient'), t('dispatchReason'), t('dispatchCodCollected'), ...fields.map((field) => field.label)],
+    report.trips.flatMap((trip) => trip.stops.map((stop) => [trip.name, trip.deviceName, trip.driverName, stop.attributes?.orderCode, stop.name, typeLabel(t, stop.attributes?.type), stop.status,
+      stop.arrivalTime ? dayjs(stop.arrivalTime).format('YYYY-MM-DD HH:mm') : '', stop.completedTime ? dayjs(stop.completedTime).format('YYYY-MM-DD HH:mm') : '', stop.recipient, stop.failureReason, stop.attributes?.codCollected,
+      ...fields.map((field) => formatCustom(field, stop.attributes?.[`custom.${field.key}`], t))])));
 
   const kpi = (label, value, detail, color) => (
     <Card variant="outlined" sx={{ borderRadius: 4, height: '100%' }}>
@@ -69,6 +76,7 @@ const DispatchReportPage = () => {
           </>
         )}
         <Tooltip title={t('opsExportCsv')}><span><Button variant="outlined" onClick={exportCsv} disabled={!report?.trips.length}><DownloadIcon /></Button></span></Tooltip>
+        <Button variant="outlined" onClick={exportStops} disabled={!report?.trips.length}>{t('dispatchExportStops')}</Button>
         <Tooltip title={t('opsPrint')}><Button variant="outlined" onClick={() => window.print()}><PrintIcon /></Button></Tooltip>
       </Stack>
       {!report && <LinearProgress />}

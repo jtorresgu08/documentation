@@ -446,6 +446,24 @@ Onfleet, Track-POD):
 - Capacidad por defecto de cada unidad en sus atributos `dispatchCapacityKg`, `dispatchCapacityM3` y
   `dispatchMaxStops` (se puede cambiar en cada planificación).
 
+## Campos personalizados y ventanas del módulo de despachos (parche `0024`)
+
+- **Campos personalizados** (*Despachos → Pedidos →* botón de ajustes): cada empresa o distribuidor define sus
+  propios datos y **su rama los hereda** (si un gerente redefine la misma clave, gana la suya):
+  - Tipos: texto, número, fecha, lista de opciones y casilla (sí/no).
+  - **Con el pedido** (los llena quien crea el pedido: N.° de factura, valor declarado, cadena de frío…) o **al
+    entregar** (los llena el conductor en la prueba de entrega: condición de la carga, temperatura, IMEI instalado…).
+  - Obligatorio, **visible para el cliente** en su enlace de seguimiento y por tipo de pedido (entrega, recojo,
+    servicio).
+  - El servidor valida obligatorios, números y opciones de las listas; los valores pasan del pedido a la parada y los
+    de la entrega vuelven al pedido. Se importan desde el CSV de pedidos (columna con la clave o el nombre del campo)
+    y se exportan en «Entregas (CSV)» del reporte.
+- **Mapa de ventanas** del módulo: [docs/capturas/v25-mapa-de-ventanas-despachos.png](docs/capturas/v25-mapa-de-ventanas-despachos.png)
+  1. Panel de viajes · 2. Editor de viaje · 3. Bolsa de pedidos · 4. Nuevo pedido · 5. Campos personalizados ·
+  6. Planificación automática · 7. Reporte de despachos · 8. Conductor: ruta · 9. Conductor: prueba de entrega ·
+  10. Cliente: seguimiento.
+- API: `GET/PUT /api/dispatch/fields`.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -528,6 +546,7 @@ python3 server/tests/test_routing.py   # con routing.url apuntando a un OSRM
 python3 server/tests/test_plans.py
 python3 server/tests/test_dispatch.py   # con media.path para las fotos y firmas
 python3 server/tests/test_logistics.py
+python3 server/tests/test_custom_fields.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

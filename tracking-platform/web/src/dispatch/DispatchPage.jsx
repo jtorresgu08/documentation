@@ -36,6 +36,7 @@ import {
   FAILURE_REASONS, STOP_COLORS, TRIP_COLORS, formatHour, formatWindow, money, splitList, stopLabel, tripLabel, typeLabel,
 } from './dispatchUtils';
 import DispatchNav from './DispatchNav';
+import { formatCustom, useDispatchFields } from './customFields';
 
 const REFRESH = 15000;
 
@@ -58,6 +59,7 @@ const DispatchPage = () => {
   const [reason, setReason] = useState(FAILURE_REASONS[0]);
   const [preview, setPreview] = useState(null);
   const [message, setMessage] = useState(null);
+  const { fields } = useDispatchFields();
 
   const load = async () => {
     const from = dayjs(date).startOf('day').toISOString();
@@ -284,6 +286,9 @@ const DispatchPage = () => {
                         {stop.attributes?.outOfPoint && <Chip size="small" color="error" icon={<WrongLocationIcon />} label={`${t('dispatchOutOfPoint')} ${stop.attributes.proofDistance} m`} />}
                         {stop.attributes?.rating && <Chip size="small" icon={<StarIcon sx={{ color: '#f5b301 !important' }} />} label={`${stop.attributes.rating}/5${stop.attributes.ratingComment ? ` · ${stop.attributes.ratingComment}` : ''}`} />}
                       </Stack>
+                      {fields.filter((field) => stop.attributes?.[`custom.${field.key}`] !== undefined).map((field) => (
+                        <Typography key={field.key} variant="caption" component="div" color="text.secondary">{`${field.label}: ${formatCustom(field, stop.attributes[`custom.${field.key}`], t)}`}</Typography>
+                      ))}
                       {stop.recipient && <Typography variant="caption" component="div">{`${t('dispatchRecipient')}: ${stop.recipient}`}</Typography>}
                       {stop.failureReason && <Typography variant="caption" component="div" sx={{ color: '#d9534f' }}>{`${t('dispatchReason')}: ${stop.failureReason}`}</Typography>}
                       {(stop.photo || stop.signature) && (

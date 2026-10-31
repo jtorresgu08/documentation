@@ -1,0 +1,302 @@
+diff --git a/src/main/java/org/traccar/api/resource/DispatchResource.java b/src/main/java/org/traccar/api/resource/DispatchResource.java
+index 545c8af..3d1f5eb 100644
+--- a/src/main/java/org/traccar/api/resource/DispatchResource.java
++++ b/src/main/java/org/traccar/api/resource/DispatchResource.java
+@@ -37,12 +37,15 @@ import org.traccar.api.security.HierarchyService;
+ import org.traccar.dispatch.DispatchPlanner;
+ import org.traccar.dispatch.DispatchService;
+ import org.traccar.model.Device;
++import org.traccar.model.ExtendedModel;
++import org.traccar.model.ObjectOperation;
+ import org.traccar.model.DispatchOrder;
+ import org.traccar.model.DispatchStop;
+ import org.traccar.model.Geofence;
+ import org.traccar.model.DispatchTrip;
+ import org.traccar.model.Position;
+ import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
+ import org.traccar.storage.StorageException;
+ import org.traccar.storage.query.Columns;
+ import org.traccar.storage.query.Condition;
+@@ -97,6 +100,14 @@ public class DispatchResource extends BaseResource {
+ 
+     private static final int MAX_PHOTOS = 3;
+ 
++    public static final String FIELDS = "dispatchFields";
++    public static final String CUSTOM = "custom.";
++    private static final Set<String> FIELD_TYPES = Set.of("text", "number", "date", "select", "checkbox");
++    private static final Set<String> FIELD_SCOPES = Set.of("order", "delivery");
++
++    @Inject
++    private CacheManager cacheManager;
++
+     // ---------- helpers ----------
+ 
+     private Set<Long> accessibleDevices() throws StorageException {
+@@ -305,6 +316,9 @@ public class DispatchResource extends BaseResource {
+         if (body.containsKey("partial")) {
+             stop.set("partial", Boolean.TRUE.equals(body.get("partial")));
+         }
++        boolean complete = DispatchStop.DELIVERED.equals(status) && !Boolean.TRUE.equals(body.get("partial"));
++        applyCustom(stop, body.get("custom"), fieldsFor(trip.getUserId()), "delivery",
++                stop.getString("type") != null ? stop.getString("type") : DispatchOrder.DELIVERY, complete);
+         dispatchService.setStopStatus(trip, stop, status, body);
+     }
+ 
+@@ -625,6 +639,149 @@ public class DispatchResource extends BaseResource {
+     }
+ 
+ 
++
++    // ---------- custom fields ----------
++
++    @SuppressWarnings("unchecked")
++    private List<Map<String, Object>> ownFields(User user) {
++        String json = user != null ? user.getString(FIELDS) : null;
++        if (json == null || json.isBlank()) {
++            return new ArrayList<>();
++        }
++        try {
++            return objectMapper.readValue(json, List.class);
++        } catch (Exception e) {
++            return new ArrayList<>();
++        }
++    }
++
++    /**
++     * Fields of an account: its own and those of every manager above it (the closest definition of a key wins).
++     */
++    public List<Map<String, Object>> fieldsFor(long userId) throws StorageException {
++        List<Long> chain = new ArrayList<>(hierarchyService.getAncestorChain(userId));
++        java.util.Collections.reverse(chain);
++        chain.add(userId);
++        Map<String, Map<String, Object>> merged = new LinkedHashMap<>();
++        for (long id : chain) {
++            User user = storage.getObject(User.class, new Request(new Columns.All(), new Condition.Equals("id", id)));
++            for (Map<String, Object> field : ownFields(user)) {
++                Map<String, Object> item = new LinkedHashMap<>(field);
++                item.put("ownerId", id);
++                merged.put(String.valueOf(field.get("key")), item);
++            }
++        }
++        return new ArrayList<>(merged.values());
++    }
++
++    /**
++     * Stores the custom field values of the given scope (order or delivery) on the order or stop, typed, checking
++     * the options of lists and, when asked, the required fields that apply to its type.
++     */
++    @SuppressWarnings("unchecked")
++    private void applyCustom(
++            ExtendedModel target, Object raw, List<Map<String, Object>> fields, String scope, String type,
++            boolean requireAll) {
++        Map<String, Object> values = raw instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
++        for (Map<String, Object> field : fields) {
++            List<String> types = field.get("types") instanceof List<?> list ? (List<String>) list : List.of();
++            if (!scope.equals(field.get("scope")) || !types.isEmpty() && !types.contains(type)) {
++                continue;
++            }
++            String key = String.valueOf(field.get("key"));
++            Object value = values.get(key);
++            String text = value == null ? "" : String.valueOf(value).trim();
++            if (text.isEmpty() || "checkbox".equals(field.get("type")) && !Boolean.parseBoolean(text)) {
++                if (requireAll && Boolean.TRUE.equals(field.get("required"))) {
++                    throw new IllegalArgumentException("Required field: " + field.get("label"));
++                }
++                if (!text.isEmpty()) {
++                    target.set(CUSTOM + key, false);
++                }
++                continue;
++            }
++            switch (String.valueOf(field.get("type"))) {
++                case "number" -> {
++                    try {
++                        target.set(CUSTOM + key, Double.parseDouble(text.replace(',', '.')));
++                    } catch (NumberFormatException e) {
++                        throw new IllegalArgumentException("Invalid number in field: " + field.get("label"));
++                    }
++                }
++                case "checkbox" -> target.set(CUSTOM + key, true);
++                case "select" -> {
++                    List<String> options = field.get("options") instanceof List<?> list
++                            ? (List<String>) list : List.of();
++                    if (!options.contains(text)) {
++                        throw new IllegalArgumentException("Invalid option in field: " + field.get("label"));
++                    }
++                    target.set(CUSTOM + key, text);
++                }
++                default -> target.set(CUSTOM + key, text.substring(0, Math.min(text.length(), 500)));
++            }
++        }
++    }
++
++    @GET
++    @Path("fields")
++    public Map<String, Object> fields() throws StorageException {
++        User user = permissionsService.getUser(getUserId());
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("fields", fieldsFor(getUserId()));
++        result.put("own", ownFields(user));
++        result.put("editable", !user.getReadonly() && (user.getAdministrator() || user.getUserLimit() != 0));
++        return result;
++    }
++
++    /**
++     * Saves the custom fields defined by the caller (managers and the administrator) for its whole branch.
++     */
++    @PUT
++    @Path("fields")
++    @SuppressWarnings("unchecked")
++    public Map<String, Object> saveFields(List<Map<String, Object>> fields) throws Exception {
++        checkWritable();
++        permissionsService.checkManager(getUserId());
++        Set<String> keys = new HashSet<>();
++        List<Map<String, Object>> clean = new ArrayList<>();
++        for (Map<String, Object> field : fields) {
++            String key = String.valueOf(field.getOrDefault("key", "")).trim();
++            String label = String.valueOf(field.getOrDefault("label", "")).trim();
++            String type = String.valueOf(field.getOrDefault("type", "text"));
++            String scope = String.valueOf(field.getOrDefault("scope", "order"));
++            if (!key.matches("[a-z][a-z0-9_]{0,31}") || !keys.add(key) || label.isEmpty()
++                    || !FIELD_TYPES.contains(type) || !FIELD_SCOPES.contains(scope)) {
++                throw new IllegalArgumentException("Invalid field: " + label);
++            }
++            List<String> options = field.get("options") instanceof List<?> list
++                    ? list.stream().map(String::valueOf).map(String::trim).filter(item -> !item.isEmpty()).toList()
++                    : List.of();
++            if ("select".equals(type) && options.isEmpty()) {
++                throw new IllegalArgumentException("A list field needs options: " + label);
++            }
++            List<String> types = field.get("types") instanceof List<?> list
++                    ? list.stream().map(String::valueOf).filter(item -> List.of(DispatchOrder.DELIVERY,
++                            DispatchOrder.PICKUP, DispatchOrder.SERVICE).contains(item)).toList()
++                    : List.of();
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("key", key);
++            item.put("label", label.substring(0, Math.min(label.length(), 64)));
++            item.put("type", type);
++            item.put("scope", scope);
++            item.put("required", Boolean.TRUE.equals(field.get("required")));
++            item.put("showToCustomer", Boolean.TRUE.equals(field.get("showToCustomer")));
++            item.put("options", options);
++            item.put("types", types);
++            clean.add(item);
++        }
++        User user = permissionsService.getUser(getUserId());
++        user.set(FIELDS, objectMapper.writeValueAsString(clean));
++        storage.updateObject(user, new Request(
++                new Columns.Include("attributes"), new Condition.Equals("id", user.getId())));
++        cacheManager.invalidateObject(true, User.class, user.getId(), ObjectOperation.UPDATE);
++        return fields();
++    }
++
+     // ---------- orders and planning ----------
+ 
+     private Set<Long> visibleOwners() throws StorageException {
+@@ -668,12 +825,14 @@ public class DispatchResource extends BaseResource {
+         return order;
+     }
+ 
+-    private DispatchOrder readOrder(Object value) {
++    private DispatchOrder readOrder(Object value, List<Map<String, Object>> fields) {
+         Map<String, Object> copy = lenient().convertValue(value, new TypeReference<Map<String, Object>>() { });
+         for (String key : List.of("id", "userId", "status", "tripId", "stopId", "created")) {
+             copy.remove(key);
+         }
++        Object custom = copy.remove("custom");
+         DispatchOrder order = lenient().convertValue(copy, DispatchOrder.class);
++        order.getAttributes().keySet().removeIf(key -> key.startsWith(CUSTOM));
+         if (order.getName() == null || order.getName().isBlank() || Math.abs(order.getLatitude()) > 90
+                 || Math.abs(order.getLongitude()) > 180 || order.getLatitude() == 0 && order.getLongitude() == 0) {
+             throw new IllegalArgumentException("Every order needs a name and valid coordinates");
+@@ -685,6 +844,7 @@ public class DispatchResource extends BaseResource {
+         if (order.getServiceMinutes() <= 0) {
+             order.setServiceMinutes(order.getType().equals(DispatchOrder.SERVICE) ? 30 : 10);
+         }
++        applyCustom(order, custom, fields, "order", order.getType(), true);
+         return order;
+     }
+ 
+@@ -702,8 +862,9 @@ public class DispatchResource extends BaseResource {
+         checkWritable();
+         List<?> items = body instanceof List<?> list ? list : List.of(body);
+         List<DispatchOrder> orders = new ArrayList<>();
++        List<Map<String, Object>> fields = fieldsFor(getUserId());
+         for (Object item : items) {
+-            orders.add(readOrder(item));
++            orders.add(readOrder(item, fields));
+         }
+         for (DispatchOrder order : orders) {
+             order.setUserId(getUserId());
+@@ -725,7 +886,12 @@ public class DispatchResource extends BaseResource {
+         if (!DispatchOrder.UNASSIGNED.equals(order.getStatus())) {
+             throw new IllegalArgumentException("Only orders in the pool can be edited");
+         }
+-        DispatchOrder changes = readOrder(body);
++        DispatchOrder changes = readOrder(body, fieldsFor(order.getUserId()));
++        order.getAttributes().forEach((key, value) -> {
++            if (!key.startsWith(CUSTOM)) {
++                changes.getAttributes().putIfAbsent(key, value);
++            }
++        });
+         changes.setId(order.getId());
+         changes.setUserId(order.getUserId());
+         changes.setStatus(order.getStatus());
+@@ -1014,6 +1180,11 @@ public class DispatchResource extends BaseResource {
+                 if (order.getCode() != null) {
+                     stop.set("orderCode", order.getCode());
+                 }
++                order.getAttributes().forEach((key, value) -> {
++                    if (key.startsWith(CUSTOM)) {
++                        stop.getAttributes().put(key, value);
++                    }
++                });
+                 stop.setId(storage.addObject(stop, new Request(new Columns.Exclude("id"))));
+                 order.setStatus(DispatchOrder.ASSIGNED);
+                 order.setTripId(trip.getId());
+@@ -1042,7 +1213,9 @@ public class DispatchResource extends BaseResource {
+     @PermitAll
+     @Path("driver/{token}")
+     public Map<String, Object> driver(@PathParam("token") String token) throws StorageException {
+-        Map<String, Object> result = view(tripByToken(token), true);
++        DispatchTrip trip = tripByToken(token);
++        Map<String, Object> result = view(trip, true);
++        result.put("fields", fieldsFor(trip.getUserId()));
+         result.remove("driverToken");
+         result.remove("userId");
+         @SuppressWarnings("unchecked")
+@@ -1142,6 +1315,14 @@ public class DispatchResource extends BaseResource {
+         result.put("codAmount", stop.getAttributes().get("codAmount"));
+         result.put("rating", stop.getAttributes().get("rating"));
+         result.put("canRate", stop.done() && !stop.hasAttribute("rating"));
++        List<Map<String, Object>> visible = new ArrayList<>();
++        for (Map<String, Object> field : fieldsFor(trip.getUserId())) {
++            Object fieldValue = stop.getAttributes().get(CUSTOM + field.get("key"));
++            if (Boolean.TRUE.equals(field.get("showToCustomer")) && fieldValue != null && !"".equals(fieldValue)) {
++                visible.add(Map.of("label", field.get("label"), "type", field.get("type"), "value", fieldValue));
++            }
++        }
++        result.put("fields", visible);
+         Position position = dispatchService.getPosition(trip.getDeviceId());
+         if (position != null && DispatchTrip.IN_PROGRESS.equals(trip.getStatus()) && !stop.done()) {
+             result.put("position", Map.of("latitude", position.getLatitude(), "longitude", position.getLongitude(),
+diff --git a/src/main/java/org/traccar/dispatch/DispatchService.java b/src/main/java/org/traccar/dispatch/DispatchService.java
+index d677ce3..e354e62 100644
+--- a/src/main/java/org/traccar/dispatch/DispatchService.java
++++ b/src/main/java/org/traccar/dispatch/DispatchService.java
+@@ -384,8 +384,13 @@ public class DispatchService {
+             }
+             default -> order.setStatus(DispatchOrder.ASSIGNED);
+         }
+-        storage.updateObject(order, new Request(
+-                new Columns.Include("status", "tripId", "stopId"), new Condition.Equals("id", order.getId())));
++        stop.getAttributes().forEach((key, value) -> {
++            if (key.startsWith("custom.")) {
++                order.getAttributes().put(key, value);
++            }
++        });
++        storage.updateObject(order, new Request(new Columns.Include("status", "tripId", "stopId", "attributes"),
++                new Condition.Equals("id", order.getId())));
+     }
+ 
+     /**

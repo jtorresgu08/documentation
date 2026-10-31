@@ -13,12 +13,17 @@ import PriorityHighIcon from '@mui/icons-material/PriorityHigh';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import BuildIcon from '@mui/icons-material/Build';
 import MoveToInboxIcon from '@mui/icons-material/MoveToInbox';
+import TuneIcon from '@mui/icons-material/Tune';
 import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useRestriction } from '../common/util/permissions';
 import { parseCsv } from '../other/geofenceFormats';
 import DispatchNav from './DispatchNav';
 import OrderDialog from './OrderDialog';
+import FieldsDialog from './FieldsDialog';
+import {
+  customValue, fieldsFor, formatCustom, useDispatchFields,
+} from './customFields';
 import {
   ORDER_STATUS_COLORS, formatWindow, money, orderStatusLabel, timeOnDate, typeLabel,
 } from './dispatchUtils';
@@ -53,6 +58,8 @@ const OrdersPage = () => {
   const [rescheduling, setRescheduling] = useState(null);
   const [newDate, setNewDate] = useState(dayjs().add(1, 'day').format('YYYY-MM-DD'));
   const [message, setMessage] = useState(null);
+  const [editingFields, setEditingFields] = useState(false);
+  const fieldData = useDispatchFields();
 
   const load = async () => {
     const from = dayjs(date).startOf('day').toISOString();
@@ -103,6 +110,8 @@ const OrdersPage = () => {
         packages: pick(row, ['bultos', 'packages', 'paquetes']),
         checklist: String(pick(row, ['checklist', 'tareas', 'verificacion'])).split('|').join('\n'),
         notes: pick(row, ['notas', 'notes']),
+        custom: Object.fromEntries(fieldData.fields.filter((field) => field.scope === 'order')
+          .map((field) => [field.key, pick(row, [field.key, field.label.toLowerCase()])]).filter(([, value]) => value !== '')),
       };
     }).filter((item) => item.name);
     const response = await fetch('/api/dispatch/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(items) });
@@ -122,11 +131,12 @@ const OrdersPage = () => {
         <TextField size="small" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
         {!readonly && (
           <>
-            <Button startIcon={<UploadFileIcon />} component="label" variant="outlined">
+            {fieldData.editable && <Tooltip title={t('dispatchFieldsTitle')}><Button variant="outlined" onClick={() => setEditingFields(true)}><TuneIcon /></Button></Tooltip>}
+            <Button startIcon={<UploadFileIcon />} component="label" variant="outlined" sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
               {t('dispatchImportCsv')}
               <input hidden type="file" accept=".csv,.txt" onChange={(event) => { if (event.target.files[0]) importCsv(event.target.files[0]); event.target.value = ''; }} />
             </Button>
-            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setEditing({})}>{t('dispatchNewOrder')}</Button>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setEditing({})} sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{t('dispatchNewOrder')}</Button>
           </>
         )}
       </Stack>
@@ -199,6 +209,9 @@ const OrdersPage = () => {
                   <TableCell align="right">{order.codAmount ? money(order.codAmount) : '—'}</TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                      {fieldsFor(fieldData.fields, 'order', order.type).filter((field) => customValue(order, field) !== undefined).slice(0, 2).map((field) => (
+                        <Chip key={field.key} size="small" color="info" variant="outlined" label={`${field.label}: ${formatCustom(field, customValue(order, field), t)}`} />
+                      ))}
                       {order.packages && <Chip size="small" variant="outlined" label={`${order.packages.split(/[,;]/).filter(Boolean).length} ${t('dispatchPackagesLower')}`} />}
                       {order.checklist && <Chip size="small" variant="outlined" label={`${order.checklist.split('\n').filter(Boolean).length} ${t('dispatchTasksLower')}`} />}
                       {order.attributes?.attempts > 0 && <Chip size="small" color="warning" variant="outlined" label={`${t('dispatchAttempt')} ${order.attributes.attempts + 1}`} />}
@@ -233,7 +246,8 @@ const OrdersPage = () => {
         </DialogActions>
       </Dialog>
 
-      {editing && <OrderDialog order={editing.id ? editing : null} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {editingFields && <FieldsDialog data={fieldData} onClose={() => setEditingFields(false)} onSaved={() => { setEditingFields(false); fieldData.reload(); }} />}
+      {editing && <OrderDialog order={editing.id ? editing : null} fields={fieldData.fields} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </Container>
   );
 };

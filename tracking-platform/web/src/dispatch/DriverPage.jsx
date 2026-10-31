@@ -21,6 +21,9 @@ import {
 } from './dispatchUtils';
 import SignaturePad from './SignaturePad';
 import ScanDialog from './ScanDialog';
+import {
+  CustomFieldInput, customValue, fieldsFor, formatCustom, missingRequired,
+} from './customFields';
 
 const locate = () => new Promise((resolve) => {
   if (!navigator.geolocation) {
@@ -54,6 +57,7 @@ const DriverPage = () => {
   const [collected, setCollected] = useState('');
   const [method, setMethod] = useState(PAYMENT_METHODS[0]);
   const [partial, setPartial] = useState(false);
+  const [custom, setCustom] = useState({});
   const [signature, setSignature] = useState(null);
   const [reason, setReason] = useState(FAILURE_REASONS[0]);
   const [busy, setBusy] = useState(false);
@@ -99,6 +103,7 @@ const DriverPage = () => {
     setCollected(stop.attributes?.codAmount ? String(stop.attributes.codAmount) : '');
     setMethod(PAYMENT_METHODS[0]);
     setPartial(false);
+    setCustom({});
     setDelivering(stop);
   };
 
@@ -161,6 +166,9 @@ const DriverPage = () => {
                     {stop.contact && <Typography variant="caption">{stop.contact}</Typography>}
                     {finished && stop.completedTime && <Typography variant="caption">{formatHour(stop.completedTime)}</Typography>}
                   </Stack>
+                  {fieldsFor(trip.fields, 'order', stop.attributes?.type).filter((field) => customValue(stop, field) !== undefined).map((field) => (
+                    <Typography key={field.key} variant="caption" component="div">{`${field.label}: ${formatCustom(field, customValue(stop, field), t)}`}</Typography>
+                  ))}
                   {stop.notes && <Typography variant="caption" color="text.secondary" component="div">{stop.notes}</Typography>}
                   {active && trip.status !== 'cancelled' && (
                     <Stack spacing={1} sx={{ mt: 1.5 }}>
@@ -225,6 +233,9 @@ const DriverPage = () => {
                 {photos.map((image) => <Box key={image.slice(-40)} component="img" src={image} alt="" onClick={() => setPhotos(photos.filter((item) => item !== image))} sx={{ width: 84, height: 64, objectFit: 'cover', borderRadius: 1.5 }} />)}
               </Stack>
             )}
+            {delivering && fieldsFor(trip.fields, 'delivery', delivering.attributes?.type).map((field) => (
+              <CustomFieldInput key={field.key} field={field} value={custom[field.key]} onChange={(value) => setCustom({ ...custom, [field.key]: value })} t={t} />
+            ))}
             <FormControlLabel control={<Switch checked={partial} onChange={(event) => setPartial(event.target.checked)} />} label={t('dispatchPartial')} />
             <Typography variant="body2" fontWeight={600}>{t('dispatchSignature')}</Typography>
             <SignaturePad onChange={setSignature} clearLabel={t('dispatchClear')} />
@@ -238,6 +249,11 @@ const DriverPage = () => {
             color="success"
             disabled={busy}
             onClick={async () => {
+              const missing = partial ? [] : missingRequired(fieldsFor(trip.fields, 'delivery', delivering.attributes?.type), custom);
+              if (missing.length) {
+                setError(`${t('dispatchFieldMissing')}: ${missing.map((field) => field.label).join(', ')}`);
+                return;
+              }
               const packages = splitList(delivering.attributes?.packages);
               if (packages.length && scanned.length < packages.length && !partial && !window.confirm(t('dispatchMissingPackages'))) return;
               if (await report(delivering, 'delivered', {
@@ -248,6 +264,7 @@ const DriverPage = () => {
                 partial,
                 checklist: checked,
                 scanned,
+                custom,
                 ...(delivering.attributes?.codAmount > 0 ? { codCollected: Number(collected) || 0, codMethod: t(method) } : {}),
               })) setDelivering(null);
             }}

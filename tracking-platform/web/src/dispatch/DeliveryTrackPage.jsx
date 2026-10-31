@@ -113,6 +113,9 @@ const DeliveryTrackPage = () => {
               </Stack>
             )}
             {data.recipient && <Typography variant="body2">{`${t('dispatchRecipient')}: ${data.recipient}`}</Typography>}
+            {(data.fields || []).map((field) => (
+              <Typography key={field.label} variant="body2">{`${field.label}: ${field.type === 'checkbox' ? (field.value ? t('sharedYes') : t('sharedNo')) : field.value}`}</Typography>
+            ))}
             {data.failureReason && <Typography variant="body2" sx={{ color: '#d9534f' }}>{data.failureReason}</Typography>}
             {data.canRate && (
               <Box sx={{ p: 1.5, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>

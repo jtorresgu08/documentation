@@ -1,15 +1,18 @@
 import { useState } from 'react';
 import {
-  Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment, MenuItem, TextField,
+  Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, InputAdornment, MenuItem, TextField, Typography,
 } from '@mui/material';
 import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import {
   ORDER_TYPES, formatHour, parseCoordinates, timeOnDate, typeLabel,
 } from './dispatchUtils';
+import { CustomFieldInput, fieldsFor, missingRequired } from './customFields';
 
 // create or edit an order of the pool
-const OrderDialog = ({ order, onClose, onSaved }) => {
+const OrderDialog = ({
+  order, fields, onClose, onSaved,
+}) => {
   const t = useTranslation();
   const [form, setForm] = useState(() => ({
     code: '', type: 'delivery', name: '', address: '', contact: '', phone: '', coordinates: '', date: dayjs().format('YYYY-MM-DD'), from: '', to: '',
@@ -25,13 +28,21 @@ const OrderDialog = ({ order, onClose, onSaved }) => {
       codAmount: order.codAmount || '',
     } : {}),
   }));
+  const [custom, setCustom] = useState(() => Object.fromEntries(Object.entries(order?.attributes || {})
+    .filter(([key]) => key.startsWith('custom.')).map(([key, value]) => [key.slice(7), value])));
   const [error, setError] = useState(null);
+  const orderFields = fieldsFor(fields, 'order', form.type);
   const set = (key) => (event) => setForm({ ...form, [key]: event.target.value });
 
   const save = async () => {
     const point = parseCoordinates(form.coordinates);
     if (!form.name.trim() || !point) {
       setError(t('dispatchInvalidStop'));
+      return;
+    }
+    const missing = missingRequired(orderFields, custom);
+    if (missing.length) {
+      setError(`${t('dispatchFieldMissing')}: ${missing.map((field) => field.label).join(', ')}`);
       return;
     }
     const body = {
@@ -53,6 +64,8 @@ const OrderDialog = ({ order, onClose, onSaved }) => {
       packages: form.packages,
       checklist: form.checklist,
       notes: form.notes,
+      custom,
+      attributes: Object.fromEntries(Object.entries(order?.attributes || {}).filter(([key]) => !key.startsWith('custom.'))),
     };
     const response = await fetch(order ? `/api/dispatch/orders/${order.id}` : '/api/dispatch/orders', {
       method: order ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -93,6 +106,18 @@ const OrderDialog = ({ order, onClose, onSaved }) => {
           <TextField size="small" multiline minRows={2} label={t('dispatchChecklist')} placeholder={t('dispatchChecklistExample')} value={form.checklist || ''} onChange={set('checklist')} sx={{ gridColumn: { sm: 'span 2' } }} />
           <TextField size="small" multiline minRows={2} label={t('dispatchNotes')} value={form.notes || ''} onChange={set('notes')} sx={{ gridColumn: { sm: 'span 4' } }} />
         </Box>
+        {orderFields.length > 0 && (
+          <>
+            <Typography variant="subtitle2" fontWeight={700} sx={{ mt: 2, mb: 1 }}>{t('dispatchFieldsTitle')}</Typography>
+            <Box sx={grid}>
+              {orderFields.map((field) => (
+                <Box key={field.key}>
+                  <CustomFieldInput field={field} value={custom[field.key]} onChange={(value) => setCustom({ ...custom, [field.key]: value })} t={t} />
+                </Box>
+              ))}
+            </Box>
+          </>
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>{t('sharedCancel')}</Button>
