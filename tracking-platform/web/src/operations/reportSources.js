@@ -210,6 +210,32 @@ SOURCES.customAlerts = {
   ],
 };
 
+const LEVEL_KEY = (level) => `geofenceLevel${level.charAt(0).toUpperCase()}${level.slice(1)}`;
+
+SOURCES.geofenceSpeed = {
+  fetch: async ({ deviceIds, from, to }) => {
+    const query = new URLSearchParams({ from, to });
+    deviceIds.forEach((id) => query.append('deviceId', id));
+    // like the report, episodes within tolerance are not counted as speeding
+    return (await (await fetchOrThrow(`/api/geofence-speed/report?${query}`)).json()).episodes.filter((episode) => episode.level !== 'tolerance');
+  },
+  groups: ['device', 'day', 'geofence', 'level'],
+  columns: [
+    { key: 'start', label: 'reportStartTime', value: (row) => row.start, format: 'datetime', default: true },
+    { key: 'deviceName', label: 'reportDevice', value: (row) => row.deviceName, default: true },
+    { key: 'geofenceName', label: 'sharedGeofence', value: (row) => row.geofenceName, default: true },
+    { key: 'speedLimit', label: 'geofenceSpeedLimit', value: (row) => `${row.speedLimit} km/h`, default: true },
+    { key: 'maxSpeed', label: 'reportMaximumSpeed', value: (row) => `${row.maxSpeed} km/h`, default: true },
+    { key: 'maxExcess', label: 'geofenceExcess', value: (row) => row.maxExcess, format: 'number', agg: 'max', default: true },
+    { key: 'level', label: 'geofenceLevel', value: (row, ctx) => ctx.t(LEVEL_KEY(row.level)), default: true },
+    { key: 'duration', label: 'reportDuration', value: (row) => row.duration, format: 'duration', agg: 'sum' },
+    { key: 'mild', label: 'geofenceLevelMild', value: (row) => (row.level === 'mild' ? 1 : 0), format: 'number', agg: 'sum' },
+    { key: 'danger', label: 'geofenceLevelDanger', value: (row) => (row.level === 'danger' ? 1 : 0), format: 'number', agg: 'sum' },
+    { key: 'critical', label: 'geofenceLevelCritical', value: (row) => (row.level === 'critical' ? 1 : 0), format: 'number', agg: 'sum' },
+    { key: 'count', label: 'geofencePoints', value: (row) => row.count, format: 'number', agg: 'sum' },
+  ],
+};
+
 export const formatValue = (value, format, ctx) => {
   if (value === null || value === undefined || value === '') return '';
   switch (format) {
@@ -247,10 +273,12 @@ export const buildTable = (rows, source, config, ctx) => {
       const row = item.raw;
       switch (config.groupBy) {
         case 'device': return ctx.devices[row.deviceId]?.name || row.deviceName || row.name || '—';
-        case 'day': return dayjs(row.startTime || row.eventTime || row.expenseTime).format('YYYY-MM-DD');
+        case 'day': return dayjs(row.startTime || row.eventTime || row.expenseTime || row.start).format('YYYY-MM-DD');
         case 'driver': return row.driverName || '—';
         case 'type': return item.values.type || row.type || '—';
         case 'rule': return row.ruleName || '—';
+        case 'geofence': return row.geofenceName || '—';
+        case 'level': return ctx.t(LEVEL_KEY(row.level || 'mild'));
         default: return '—';
       }
     };

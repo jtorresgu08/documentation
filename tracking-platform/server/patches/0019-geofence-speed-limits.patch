@@ -1,0 +1,710 @@
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index b179242..95ab149 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -50,6 +50,7 @@ import org.traccar.handler.events.CommandResultEventHandler;
+ import org.traccar.handler.events.DriverEventHandler;
+ import org.traccar.handler.events.FuelEventHandler;
+ import org.traccar.handler.events.FuelSensorEventHandler;
++import org.traccar.handler.events.GeofenceOverspeedEventHandler;
+ import org.traccar.handler.events.RuleEventHandler;
+ import org.traccar.handler.events.EngineStopEventHandler;
+ import org.traccar.handler.events.GeofenceEventHandler;
+@@ -125,6 +126,7 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 MediaEventHandler.class,
+                 CommandResultEventHandler.class,
+                 OverspeedEventHandler.class,
++                GeofenceOverspeedEventHandler.class,
+                 BehaviorEventHandler.class,
+                 FuelEventHandler.class,
+                 FuelSensorEventHandler.class,
+diff --git a/src/main/java/org/traccar/api/resource/GeofenceSpeedResource.java b/src/main/java/org/traccar/api/resource/GeofenceSpeedResource.java
+new file mode 100644
+index 0000000..5e96d39
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/GeofenceSpeedResource.java
+@@ -0,0 +1,145 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.ws.rs.BadRequestException;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.geofence.GeofenceSpeed;
++import org.traccar.geofence.GeofenceSpeedReport;
++import org.traccar.helper.model.DeviceUtil;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Geofence;
++import org.traccar.model.User;
++import org.traccar.model.UserRestrictions;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Geofence speeding report: episodes above the geofence limits of the chosen units in the period, by level (mild,
++ * dangerous, critical, or within tolerance), with totals by level, by geofence and a ranking of units weighted by
++ * seriousness (mild 1, dangerous 3, critical 5 points).
++ */
++@Path("geofence-speed")
++@Produces(MediaType.APPLICATION_JSON)
++public class GeofenceSpeedResource extends BaseResource {
++
++    private static final long MAX_PERIOD = 31L * 24 * 3600_000L;
++    private static final Map<String, Integer> WEIGHT = Map.of(
++            GeofenceSpeed.MILD, 1, GeofenceSpeed.DANGER, 3, GeofenceSpeed.CRITICAL, 5);
++
++    @GET
++    @Path("report")
++    public Map<String, Object> report(
++            @QueryParam("deviceId") List<Long> deviceIds, @QueryParam("groupId") List<Long> groupIds,
++            @QueryParam("geofenceId") List<Long> geofenceIds, @QueryParam("level") List<String> levels,
++            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
++        if (from == null || to == null || !to.after(from) || to.getTime() - from.getTime() > MAX_PERIOD) {
++            throw new BadRequestException("Invalid period");
++        }
++        Request request = permissionsService.notAdmin(getUserId())
++                ? new Request(new Columns.All(), new Condition.Permission(User.class, getUserId(), Geofence.class))
++                : new Request(new Columns.All());
++        Map<Long, Geofence> geofences = new HashMap<>();
++        for (Geofence geofence : storage.getObjects(Geofence.class, request)) {
++            if (GeofenceSpeed.limit(geofence) > 0) {
++                geofences.put(geofence.getId(), geofence);
++            }
++        }
++        List<Map<String, Object>> episodes = new ArrayList<>();
++        List<Map<String, Object>> units = new ArrayList<>();
++        Map<String, Integer> episodesByLevel = new LinkedHashMap<>();
++        Map<String, Integer> pointsByLevel = new LinkedHashMap<>();
++        GeofenceSpeed.ORDER.forEach(level -> {
++            episodesByLevel.put(level, 0);
++            pointsByLevel.put(level, 0);
++        });
++        Map<String, Map<String, Object>> byGeofence = new LinkedHashMap<>();
++        for (Device device : DeviceUtil.getAccessibleDevices(storage, getUserId(), deviceIds, groupIds)) {
++            List<Map<String, Object>> deviceEpisodes = GeofenceSpeedReport.episodes(
++                    PositionUtil.getPositions(storage, device.getId(), from, to), geofences, geofenceIds).stream()
++                    .filter(item -> levels.isEmpty() || levels.contains((String) item.get("level")))
++                    .toList();
++            if (deviceEpisodes.isEmpty()) {
++                continue;
++            }
++            Map<String, Object> unit = new LinkedHashMap<>();
++            Map<String, Integer> unitLevels = new LinkedHashMap<>();
++            GeofenceSpeed.ORDER.forEach(level -> unitLevels.put(level, 0));
++            int score = 0;
++            long maxExcess = 0;
++            for (Map<String, Object> episode : deviceEpisodes) {
++                String level = (String) episode.get("level");
++                episode.put("deviceId", device.getId());
++                episode.put("deviceName", device.getName());
++                episodes.add(episode);
++                episodesByLevel.merge(level, 1, Integer::sum);
++                unitLevels.merge(level, 1, Integer::sum);
++                score += WEIGHT.getOrDefault(level, 0);
++                maxExcess = Math.max(maxExcess, (Long) episode.get("maxExcess"));
++                @SuppressWarnings("unchecked")
++                Map<String, Integer> points = (Map<String, Integer>) episode.get("points");
++                points.forEach((key, count) -> pointsByLevel.merge(key, count, Integer::sum));
++                Map<String, Object> geofence = byGeofence.computeIfAbsent(
++                        (String) episode.get("geofenceName"), key -> {
++                            Map<String, Object> entry = new LinkedHashMap<>();
++                            entry.put("geofenceId", episode.get("geofenceId"));
++                            entry.put("speedLimit", episode.get("speedLimit"));
++                            GeofenceSpeed.ORDER.forEach(item -> entry.put(item, 0));
++                            entry.put("episodes", 0);
++                            return entry;
++                        });
++                geofence.merge("episodes", 1, (a, b) -> (Integer) a + (Integer) b);
++                geofence.merge(level, 1, (a, b) -> (Integer) a + (Integer) b);
++            }
++            unit.put("deviceId", device.getId());
++            unit.put("deviceName", device.getName());
++            unit.put("episodes", deviceEpisodes.size());
++            unit.put("levels", unitLevels);
++            unit.put("maxExcess", maxExcess);
++            unit.put("score", score);
++            units.add(unit);
++        }
++        episodes.sort(Comparator.comparing(item -> -((Long) item.get("start"))));
++        units.sort(Comparator.comparing(item -> -((Integer) item.get("score"))));
++        Map<String, Object> summary = new LinkedHashMap<>();
++        summary.put("episodes", episodes.size());
++        summary.put("episodesByLevel", episodesByLevel);
++        summary.put("pointsByLevel", pointsByLevel);
++        summary.put("byGeofence", byGeofence);
++        summary.put("geofencesWithLimit", geofences.size());
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("summary", summary);
++        result.put("units", units);
++        result.put("episodes", episodes.size() > 2000 ? episodes.subList(0, 2000) : episodes);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/geofence/GeofenceSpeed.java b/src/main/java/org/traccar/geofence/GeofenceSpeed.java
+new file mode 100644
+index 0000000..1ca0bed
+--- /dev/null
++++ b/src/main/java/org/traccar/geofence/GeofenceSpeed.java
+@@ -0,0 +1,109 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.geofence;
++
++import org.traccar.model.Geofence;
++import org.traccar.model.Position;
++
++import java.util.Collection;
++import java.util.List;
++
++/**
++ * Optional speed limit of a geofence (km/h, attribute "speedLimitKmh") and how serious an excess is: below the mild
++ * threshold it is within tolerance, then mild, dangerous and critical (by default 5, 10 and 15 km/h above the limit,
++ * changeable per geofence with "speedLevels" = "5,10,15"). Kept apart from Traccar's own "speedLimit" so the standard
++ * overspeed event is not duplicated.
++ */
++public final class GeofenceSpeed {
++
++    public static final String LIMIT = "speedLimitKmh";
++    public static final String ALERT = "speedAlert";
++    public static final String LEVELS = "speedLevels";
++
++    public static final String TOLERANCE = "tolerance";
++    public static final String MILD = "mild";
++    public static final String DANGER = "danger";
++    public static final String CRITICAL = "critical";
++
++    public static final List<String> ORDER = List.of(TOLERANCE, MILD, DANGER, CRITICAL);
++
++    static final double[] DEFAULT_LEVELS = {5, 10, 15};
++
++    private GeofenceSpeed() {
++    }
++
++    public static double limit(Geofence geofence) {
++        return geofence != null ? geofence.getDouble(LIMIT) : 0;
++    }
++
++    public static double[] levels(Geofence geofence) {
++        String text = geofence != null ? geofence.getString(LEVELS) : null;
++        if (text != null) {
++            String[] parts = text.split("[,;\\s]+");
++            if (parts.length == 3) {
++                try {
++                    double mild = Double.parseDouble(parts[0]);
++                    double danger = Double.parseDouble(parts[1]);
++                    double critical = Double.parseDouble(parts[2]);
++                    if (mild >= 0 && danger > mild && critical > danger) {
++                        return new double[] {mild, danger, critical};
++                    }
++                } catch (NumberFormatException e) {
++                    return DEFAULT_LEVELS;
++                }
++            }
++        }
++        return DEFAULT_LEVELS;
++    }
++
++    /** Level of an excess over the limit in km/h; null when not above the limit. */
++    public static String level(double excess, double[] levels) {
++        if (excess <= 0) {
++            return null;
++        }
++        if (excess >= levels[2]) {
++            return CRITICAL;
++        }
++        if (excess >= levels[1]) {
++            return DANGER;
++        }
++        return excess >= levels[0] ? MILD : TOLERANCE;
++    }
++
++    /** Priority in the alert center for a level. */
++    public static String severity(String level) {
++        return switch (level) {
++            case CRITICAL -> "critical";
++            case DANGER -> "high";
++            default -> "medium";
++        };
++    }
++
++    public static double speedKmh(Position position) {
++        return position.getSpeed() * 1.852;
++    }
++
++    /** The geofence with a limit the unit is in; with several, the one with the lowest limit. */
++    public static Geofence limiting(Collection<Geofence> geofences) {
++        Geofence result = null;
++        for (Geofence geofence : geofences) {
++            double limit = limit(geofence);
++            if (limit > 0 && (result == null || limit < limit(result))) {
++                result = geofence;
++            }
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/geofence/GeofenceSpeedReport.java b/src/main/java/org/traccar/geofence/GeofenceSpeedReport.java
+new file mode 100644
+index 0000000..14de503
+--- /dev/null
++++ b/src/main/java/org/traccar/geofence/GeofenceSpeedReport.java
+@@ -0,0 +1,121 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.geofence;
++
++import org.traccar.model.Geofence;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Speeding episodes of a unit inside geofences with a limit: consecutive messages above the limit in the same
++ * geofence (a gap over 5 minutes or a message at or under the limit ends it). Each episode keeps the start, end,
++ * maximum speed and excess, average excess, the messages at each level and the place of the maximum; its level is
++ * the one of its maximum excess.
++ */
++public final class GeofenceSpeedReport {
++
++    static final long MAX_GAP = 5 * 60 * 1000L;
++
++    private GeofenceSpeedReport() {
++    }
++
++    private static final class Episode {
++        private Geofence geofence;
++        private double limit;
++        private double[] levels;
++        private long start;
++        private long end;
++        private double maxSpeed;
++        private double excessTotal;
++        private Position peak;
++        private final Map<String, Integer> points = new LinkedHashMap<>();
++    }
++
++    private static Map<String, Object> close(Episode episode) {
++        int count = episode.points.values().stream().mapToInt(Integer::intValue).sum();
++        double maxExcess = episode.maxSpeed - episode.limit;
++        Map<String, Object> item = new LinkedHashMap<>();
++        item.put("geofenceId", episode.geofence.getId());
++        item.put("geofenceName", episode.geofence.getName());
++        item.put("speedLimit", Math.round(episode.limit));
++        item.put("start", episode.start);
++        item.put("end", episode.end);
++        item.put("duration", episode.end - episode.start);
++        item.put("maxSpeed", Math.round(episode.maxSpeed));
++        item.put("maxExcess", Math.round(maxExcess));
++        item.put("averageExcess", Math.round(episode.excessTotal / count * 10) / 10.0);
++        item.put("level", GeofenceSpeed.level(maxExcess, episode.levels));
++        item.put("points", episode.points);
++        item.put("count", count);
++        item.put("latitude", episode.peak.getLatitude());
++        item.put("longitude", episode.peak.getLongitude());
++        item.put("positionId", episode.peak.getId());
++        return item;
++    }
++
++    /** Episodes of one unit; geofences by id, filter empty for all the geofences with a limit. */
++    public static List<Map<String, Object>> episodes(
++            List<Position> positions, Map<Long, Geofence> geofences, List<Long> filter) {
++        List<Map<String, Object>> result = new ArrayList<>();
++        Episode current = null;
++        long last = 0;
++        for (Position position : positions) {
++            List<Geofence> inside = new ArrayList<>();
++            if (position.getGeofenceIds() != null) {
++                for (long id : position.getGeofenceIds()) {
++                    Geofence geofence = geofences.get(id);
++                    if (geofence != null && (filter.isEmpty() || filter.contains(id))) {
++                        inside.add(geofence);
++                    }
++                }
++            }
++            Geofence geofence = GeofenceSpeed.limiting(inside);
++            long time = position.getFixTime().getTime();
++            double speed = GeofenceSpeed.speedKmh(position);
++            double limit = GeofenceSpeed.limit(geofence);
++            boolean over = geofence != null && speed > limit;
++            if (current != null && (!over || current.geofence.getId() != geofence.getId() || time - last > MAX_GAP)) {
++                result.add(close(current));
++                current = null;
++            }
++            if (over) {
++                if (current == null) {
++                    current = new Episode();
++                    current.geofence = geofence;
++                    current.limit = limit;
++                    current.levels = GeofenceSpeed.levels(geofence);
++                    current.start = time;
++                    current.peak = position;
++                }
++                current.end = time;
++                current.excessTotal += speed - limit;
++                if (speed > current.maxSpeed) {
++                    current.maxSpeed = speed;
++                    current.peak = position;
++                }
++                current.points.merge(GeofenceSpeed.level(speed - limit, current.levels), 1, Integer::sum);
++                last = time;
++            }
++        }
++        if (current != null) {
++            result.add(close(current));
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/events/GeofenceOverspeedEventHandler.java b/src/main/java/org/traccar/handler/events/GeofenceOverspeedEventHandler.java
+new file mode 100644
+index 0000000..c25e09a
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/GeofenceOverspeedEventHandler.java
+@@ -0,0 +1,98 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.traccar.geofence.GeofenceSpeed;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Event;
++import org.traccar.model.Geofence;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Speeding inside geofences with their own limit: raises "geofenceOverspeed" when a unit goes above the mild
++ * threshold (tolerance does not alert) and again if the excess gets worse (mild, dangerous, critical) within the same
++ * episode; the episode ends when the unit is back under the limit or leaves the geofence. Geofences with
++ * "speedAlert" = false keep the limit for reports without alerting.
++ */
++public class GeofenceOverspeedEventHandler extends BaseEventHandler {
++
++    private final CacheManager cacheManager;
++
++    private record State(long geofenceId, int level) {
++    }
++
++    private final Map<Long, State> states = new ConcurrentHashMap<>();
++
++    @Inject
++    public GeofenceOverspeedEventHandler(CacheManager cacheManager) {
++        this.cacheManager = cacheManager;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        if (!PositionUtil.isLatest(cacheManager, position)) {
++            return;
++        }
++        long deviceId = position.getDeviceId();
++        List<Geofence> geofences = new ArrayList<>();
++        if (position.getGeofenceIds() != null) {
++            for (long id : position.getGeofenceIds()) {
++                Geofence geofence = cacheManager.getObject(Geofence.class, id);
++                if (geofence != null && !"false".equals(geofence.getString(GeofenceSpeed.ALERT))) {
++                    geofences.add(geofence);
++                }
++            }
++        }
++        Geofence geofence = GeofenceSpeed.limiting(geofences);
++        if (geofence == null) {
++            states.remove(deviceId);
++            return;
++        }
++        double limit = GeofenceSpeed.limit(geofence);
++        double speed = GeofenceSpeed.speedKmh(position);
++        String level = GeofenceSpeed.level(speed - limit, GeofenceSpeed.levels(geofence));
++        if (level == null) {
++            states.remove(deviceId);
++            return;
++        }
++        int rank = GeofenceSpeed.ORDER.indexOf(level);
++        State state = states.get(deviceId);
++        if (state != null && state.geofenceId() != geofence.getId()) {
++            state = null;
++        }
++        if (rank == 0 || state != null && state.level() >= rank) {
++            if (state == null) {
++                states.put(deviceId, new State(geofence.getId(), 0));
++            }
++            return;
++        }
++        states.put(deviceId, new State(geofence.getId(), rank));
++        Event event = new Event(Event.TYPE_GEOFENCE_OVERSPEED, position);
++        event.setGeofenceId(geofence.getId());
++        event.set("speed", Math.round(speed));
++        event.set("speedLimit", Math.round(limit));
++        event.set("excess", Math.round(speed - limit));
++        event.set("level", level);
++        event.set("severity", GeofenceSpeed.severity(level));
++        callback.eventDetected(event);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Event.java b/src/main/java/org/traccar/model/Event.java
+index 7f6c8ac..471a5b5 100644
+--- a/src/main/java/org/traccar/model/Event.java
++++ b/src/main/java/org/traccar/model/Event.java
+@@ -52,6 +52,7 @@ public class Event extends Message {
+     public static final String TYPE_DEVICE_STOPPED = "deviceStopped";
+ 
+     public static final String TYPE_DEVICE_OVERSPEED = "deviceOverspeed";
++    public static final String TYPE_GEOFENCE_OVERSPEED = "geofenceOverspeed";
+     public static final String TYPE_DEVICE_FUEL_DROP = "deviceFuelDrop";
+     public static final String TYPE_DEVICE_FUEL_INCREASE = "deviceFuelIncrease";
+ 
+diff --git a/src/main/java/org/traccar/rules/RuleConditions.java b/src/main/java/org/traccar/rules/RuleConditions.java
+index bd4e004..e8c15b9 100644
+--- a/src/main/java/org/traccar/rules/RuleConditions.java
++++ b/src/main/java/org/traccar/rules/RuleConditions.java
+@@ -277,7 +277,8 @@ public final class RuleConditions {
+                 double limit = condition.path("limit").asDouble(0);
+                 if (condition.path("useGeofence").asBoolean()) {
+                     for (Geofence geofence : context.geofences(position)) {
+-                        double geofenceLimit = geofence.getDouble("speedLimit") * 1.852;
++                        double geofenceLimit = geofence.hasAttribute("speedLimitKmh")
++                                ? geofence.getDouble("speedLimitKmh") : geofence.getDouble("speedLimit") * 1.852;
+                         if (geofenceLimit > 0 && (limit <= 0 || geofenceLimit < limit)) {
+                             limit = geofenceLimit;
+                         }
+diff --git a/src/test/java/org/traccar/geofence/GeofenceSpeedTest.java b/src/test/java/org/traccar/geofence/GeofenceSpeedTest.java
+new file mode 100644
+index 0000000..74283f3
+--- /dev/null
++++ b/src/test/java/org/traccar/geofence/GeofenceSpeedTest.java
+@@ -0,0 +1,73 @@
++package org.traccar.geofence;
++
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Geofence;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++public class GeofenceSpeedTest {
++
++    private static Geofence geofence(long id, double limit) {
++        Geofence geofence = new Geofence();
++        geofence.setId(id);
++        geofence.setName("Zona " + id);
++        geofence.set(GeofenceSpeed.LIMIT, limit);
++        return geofence;
++    }
++
++    private static Position position(long second, double speedKmh, Long geofenceId) {
++        Position position = new Position();
++        position.setFixTime(new Date(second * 1000));
++        position.setSpeed(speedKmh / 1.852);
++        position.setGeofenceIds(geofenceId != null ? List.of(geofenceId) : null);
++        return position;
++    }
++
++    @Test
++    public void testLevels() {
++        double[] levels = GeofenceSpeed.levels(geofence(1, 40));
++        assertArrayEquals(new double[] {5, 10, 15}, levels);
++        assertNull(GeofenceSpeed.level(0, levels));
++        assertEquals(GeofenceSpeed.TOLERANCE, GeofenceSpeed.level(3, levels));
++        assertEquals(GeofenceSpeed.MILD, GeofenceSpeed.level(5, levels));
++        assertEquals(GeofenceSpeed.DANGER, GeofenceSpeed.level(12, levels));
++        assertEquals(GeofenceSpeed.CRITICAL, GeofenceSpeed.level(15, levels));
++        Geofence custom = geofence(2, 30);
++        custom.set(GeofenceSpeed.LEVELS, "3,6,9");
++        assertArrayEquals(new double[] {3, 6, 9}, GeofenceSpeed.levels(custom));
++        custom.set(GeofenceSpeed.LEVELS, "9,6,3");
++        assertArrayEquals(new double[] {5, 10, 15}, GeofenceSpeed.levels(custom));
++        assertEquals(2, GeofenceSpeed.limiting(List.of(geofence(1, 40), custom)).getId());
++    }
++
++    @Test
++    public void testEpisodes() {
++        Map<Long, Geofence> geofences = Map.of(1L, geofence(1, 40));
++        List<Position> positions = new ArrayList<>();
++        positions.add(position(0, 35, 1L));
++        positions.add(position(10, 44, 1L)); // tolerance
++        positions.add(position(20, 52, 1L)); // dangerous
++        positions.add(position(30, 58, 1L)); // critical (peak)
++        positions.add(position(40, 38, 1L)); // under the limit: ends
++        positions.add(position(50, 47, 1L)); // mild
++        positions.add(position(60, 90, null)); // outside: ends
++        List<Map<String, Object>> episodes = GeofenceSpeedReport.episodes(positions, geofences, List.of());
++        assertEquals(2, episodes.size());
++        Map<String, Object> first = episodes.get(0);
++        assertEquals(GeofenceSpeed.CRITICAL, first.get("level"));
++        assertEquals(18L, first.get("maxExcess"));
++        assertEquals(20000L, first.get("duration"));
++        assertEquals(Map.of("tolerance", 1, "danger", 1, "critical", 1), first.get("points"));
++        assertEquals(GeofenceSpeed.MILD, episodes.get(1).get("level"));
++        assertEquals(0, GeofenceSpeedReport.episodes(positions, geofences, List.of(5L)).size());
++    }
++
++}
+diff --git a/templates/notifications/de/geofenceOverspeed.vm b/templates/notifications/de/geofenceOverspeed.vm
+new file mode 100644
+index 0000000..9f10044
+--- /dev/null
++++ b/templates/notifications/de/geofenceOverspeed.vm
+@@ -0,0 +1,16 @@
++#set($level = "$event.getString('level')")
++#set($subject = "$device.name: geofence speeding ($level)")
++#set($digest = "$device.name: $event.getString('speed') km/h in $geofence.name (limit $event.getString('speedLimit') km/h, +$event.getString('excess') km/h, $level)")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Geofence speeding: $geofence.name<br>
++Speed: $event.getString('speed') km/h (Limit $event.getString('speedLimit') km/h, +$event.getString('excess') km/h)<br>
++Level: $level<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++Point: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/geofenceOverspeed.vm b/templates/notifications/en/geofenceOverspeed.vm
+new file mode 100644
+index 0000000..9f10044
+--- /dev/null
++++ b/templates/notifications/en/geofenceOverspeed.vm
+@@ -0,0 +1,16 @@
++#set($level = "$event.getString('level')")
++#set($subject = "$device.name: geofence speeding ($level)")
++#set($digest = "$device.name: $event.getString('speed') km/h in $geofence.name (limit $event.getString('speedLimit') km/h, +$event.getString('excess') km/h, $level)")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Geofence speeding: $geofence.name<br>
++Speed: $event.getString('speed') km/h (Limit $event.getString('speedLimit') km/h, +$event.getString('excess') km/h)<br>
++Level: $level<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++Point: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/geofenceOverspeed.vm b/templates/notifications/es/geofenceOverspeed.vm
+new file mode 100644
+index 0000000..9284de1
+--- /dev/null
++++ b/templates/notifications/es/geofenceOverspeed.vm
+@@ -0,0 +1,16 @@
++#set($level = "#if($event.getString('level') == 'critical')crítico#elseif($event.getString('level') == 'danger')peligroso#{else}leve#end")
++#set($subject = "$device.name: exceso de velocidad en geocerca ($level)")
++#set($digest = "$device.name: $event.getString('speed') km/h en $geofence.name (límite $event.getString('speedLimit') km/h, +$event.getString('excess') km/h, $level)")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Exceso de velocidad en geocerca: $geofence.name<br>
++Velocidad: $event.getString('speed') km/h (Límite $event.getString('speedLimit') km/h, +$event.getString('excess') km/h)<br>
++Nivel: $level<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++Punto: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/geofenceOverspeed.vm b/templates/notifications/pt_BR/geofenceOverspeed.vm
+new file mode 100644
+index 0000000..9f10044
+--- /dev/null
++++ b/templates/notifications/pt_BR/geofenceOverspeed.vm
+@@ -0,0 +1,16 @@
++#set($level = "$event.getString('level')")
++#set($subject = "$device.name: geofence speeding ($level)")
++#set($digest = "$device.name: $event.getString('speed') km/h in $geofence.name (limit $event.getString('speedLimit') km/h, +$event.getString('excess') km/h, $level)")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Geofence speeding: $geofence.name<br>
++Speed: $event.getString('speed') km/h (Limit $event.getString('speedLimit') km/h, +$event.getString('excess') km/h)<br>
++Level: $level<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++Point: <a href="$webUrl?eventId=$event.id">#{if}($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#{end}</a><br>
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>

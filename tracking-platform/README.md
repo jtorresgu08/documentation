@@ -316,6 +316,24 @@ unidad está *Panel de seguimiento*.
 - Ambos están también en **Reportes configurables** (fuentes *Sensores* y *Alertas personalizadas*, agrupables por
   unidad, día o alerta), donde se pueden combinar columnas y guardar como plantilla.
 
+## Límite de velocidad por geocerca con criticidad (parche `0019`)
+
+- En cada geocerca (*Configuración → Geocercas → Límite de velocidad propio*) se puede activar un **límite en km/h**
+  opcional (zona escolar, almacén, ciudad…). El mapa lo muestra junto al nombre.
+- **Criticidad** según los km/h por encima del límite: por debajo del primer umbral es **tolerancia** (no alerta);
+  luego **leve** (+5), **peligroso** (+10) y **crítico** (+15 o más). Los umbrales se pueden cambiar por geocerca.
+- **Notificación opcional** por geocerca: evento «Exceso de velocidad en geocerca» al llegar a leve y otra vez cada
+  vez que empeora dentro del mismo exceso (leve → peligroso → crítico), con velocidad, límite, exceso y nivel. Llega al
+  centro de alertas con su prioridad (leve = media, peligroso = alta, crítico = crítica) y por los canales de la
+  notificación (web, correo, push, WhatsApp); la pantalla de la geocerca ofrece crearla con un clic.
+- **Reporte de excesos en geocercas** (*Reportes*): episodios (mensajes seguidos por encima del límite) con su nivel
+  según el exceso máximo, velocidad máxima, duración y **puntos por nivel** (cuántos mensajes estuvieron en
+  tolerancia, leve, peligroso y crítico); totales por nivel, gráfico por geocerca, **ranking de unidades** (leve 1,
+  peligroso 3, crítico 5 puntos por exceso), filtros por geocerca, unidad y nivel, acceso al historial, CSV e
+  impresión. También como fuente *Excesos en geocercas* en Reportes configurables (agrupable por geocerca y criticidad).
+- El límite propio es independiente del atributo `speedLimit` de Traccar (que sigue generando su evento estándar) y las
+  alertas personalizadas de velocidad con «usar el límite de la geocerca» también lo usan.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -393,6 +411,7 @@ python3 server/tests/test_operations.py
 python3 server/tests/test_services.py
 python3 server/tests/test_rules.py
 python3 server/tests/test_reports.py
+python3 server/tests/test_geofence_speed.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

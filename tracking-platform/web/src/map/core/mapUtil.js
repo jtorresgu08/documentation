@@ -79,7 +79,8 @@ export const geofenceToFeature = (theme, item) => {
     type: 'Feature',
     geometry,
     properties: {
-      name: item.name,
+      // the geofence's own speed limit is shown with its name
+      name: item.attributes.speedLimitKmh ? `${item.name} · ${item.attributes.speedLimitKmh} km/h` : item.name,
       color: item.attributes.color || theme.palette.geometry.main,
       width: item.attributes.mapLineWidth || 2,
       opacity: item.attributes.mapLineOpacity || 1,

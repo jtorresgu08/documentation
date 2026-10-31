@@ -26,6 +26,9 @@ export const alertTitle = (item, t) => {
   if (item.type === 'alarm' && item.attributes?.alarm) {
     return formatAlarm(item.attributes.alarm, t);
   }
+  if (item.type === 'geofenceOverspeed' && item.attributes?.level) {
+    return `${t('eventGeofenceOverspeed')} · ${t(`geofenceLevel${capitalize(item.attributes.level)}`)} (+${item.attributes.excess} km/h)`;
+  }
   if (item.type === 'ruleTriggered' && item.attributes?.ruleName) {
     return item.attributes.ruleName;
   }
