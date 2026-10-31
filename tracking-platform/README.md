@@ -514,7 +514,7 @@ Basado en tus capturas de referencia:
 | Gastos (combustible, peajes…) | 🔜 Fase 2 (módulo propio) |
 | Chat | 🔜 Fase 3 |
 | Estado del sistema, cola de comandos | 🔜 Fase 2 |
-| App móvil Android/iOS (Expo + EAS Build) | 🔜 Fase 2 |
+| App móvil Android/iOS (Expo + EAS Build) | 🔜 Fase 2 (prototipo en `docs/app-movil`, con cámaras en el mapa y video en vivo) |
 
 ## Desarrollo local
 

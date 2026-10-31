@@ -395,3 +395,53 @@ al disco de una sola vez después de la primera limpieza: `docker compose exec d
 - El escaneo con cámara usa el lector de códigos del navegador (Chrome en Android lo tiene); en otros navegadores el
   conductor escribe el código. La página debe abrirse por HTTPS para usar la cámara.
 
+## 20. Video en vivo sin cortes (web y app móvil)
+
+Lista de lo que hace falta para que el video en vivo de dashcams y MDVR sea estable. La plataforma ya envía los
+comandos (JT/T 1078 0x9101/0x9102, Jimi RTMP) y reproduce el video; el resto depende del servidor de video, la red y
+la configuración de las cámaras.
+
+**1. Servidor de video dedicado**
+- Un servidor de medios aparte del de Traccar (otro VPS o al menos otro contenedor con CPU y red propias): recibe
+  JT/T 1078 o RTMP de las cámaras y entrega a los usuarios. Opciones: las de la sección 6 para JT/T 1078, y
+  [SRS](https://github.com/ossrs/srs) o [ZLMediaKit](https://github.com/ZLMediaKit/ZLMediaKit) para convertir a
+  varios formatos (verifica el soporte JT/T 1078 de la versión que instales).
+- Que publique **varios formatos**: WebRTC (menos de 1 s de retraso, ideal para la app), HTTP-FLV (navegadores de
+  computadora) y HLS como respaldo. **El iPhone no reproduce FLV**: en iOS hay que usar WebRTC o HLS; en Android la
+  app puede usar FLV o WebRTC.
+- **Sin transcodificar**: configura las cámaras en **H.264** (no H.265, que muchos navegadores no reproducen) y deja
+  que el servidor solo reempaquete; transcodificar consume mucha CPU por canal. El audio G.711/G.726 sí suele
+  convertirse a AAC/Opus (barato).
+- Puertos abiertos: el de JT/T 1078 (`VIDEO_PORT`, TCP y UDP), 1935 para RTMP de las Jimi y el rango UDP de WebRTC
+  (si se usa); publica la reproducción por **HTTPS** en el mismo dominio (`/live/`), o el navegador la bloquea.
+
+**2. Ancho de banda (dimensionar)**
+- Por canal: **subflujo** de 256–512 kbps (360p) para el vivo; el flujo principal (1–2 Mbps, 720p/1080p) solo para
+  grabaciones o cuando el usuario pide HD.
+- Salida del servidor ≈ espectadores × bitrate: 50 personas viendo un canal a 512 kbps son ~26 Mbps de subida. El
+  servidor reenvía un solo flujo por canal aunque lo vean varias personas.
+- Datos de la SIM de la unidad: 512 kbps ≈ **230 MB por hora y canal** (4 canales ≈ 0,9 GB/h). Elige planes de datos
+  acordes y deja el **vivo bajo demanda**, no permanente.
+
+**3. Configuración de las cámaras**
+- Bitrate constante (CBR) y **intervalo de cuadros clave de 1–2 s** (GOP corto): el video arranca rápido y se
+  recupera solo después de un corte. Resolución del subflujo 360p/D1, 15 fps es suficiente para monitoreo.
+- APN correcto de la operadora, señal 4G (antena externa en camiones) y hora sincronizada.
+- `HUABAO_VIDEO_SERVER` (IP o dominio y puerto que la cámara usa para enviar el video) accesible desde la red móvil.
+
+**4. Comportamiento de la app y la web**
+- **Cierre automático**: detener el canal (comando 0x9102) tras unos minutos sin que nadie lo mire, al cerrar la
+  ventana o al pasar la app a segundo plano; ahorra datos de la SIM y capacidad del servidor.
+- **Reconexión automática** con reintentos y el indicador de latencia/estado por canal («reconectando»).
+- **Calidad adaptable**: subflujo por defecto, HD bajo pedido y «solo en Wi‑Fi» en la app para el celular del
+  usuario. Límite de canales simultáneos por cuenta según el plan.
+- Ventana flotante (PiP) y vista sobre el mapa usan el mismo flujo: no abrir dos conexiones al mismo canal.
+
+**5. Seguridad**
+- Direcciones de reproducción con **token temporal** (que caduque en minutos) y solo para usuarios con permiso sobre
+  la unidad; no exponer el puerto HTTP del servidor de video sin pasar por el dominio con HTTPS.
+
+**6. Probar antes de vender**
+- Con una cámara real en 4G: tiempo hasta la primera imagen (< 3 s), retraso (< 1–2 s con WebRTC), cortes en
+  movimiento, consumo de datos por hora y comportamiento con varios usuarios mirando a la vez.
+
