@@ -146,6 +146,13 @@ svg.s { width: 16px; height: 16px; }
 .ctlbar .on { color: #fff; }
 .ctlbar .rec { color: #ff6b6b; }
 .qual { position: absolute; right: 8px; bottom: 8px; background: rgba(0,0,0,.55); color: #9fe3a5; font-size: 9px; padding: 2px 6px; border-radius: 5px; font-family: monospace; }
+.tank { width: 14px; height: 38px; border-radius: 5px; background: #edf0f5; position: relative; overflow: hidden; flex-shrink: 0; border: 1px solid #dfe4ec; }
+.tank i { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 0 0 4px 4px; }
+.fuel-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.fuel-row:last-child { border-bottom: 0; }
+.fuel-row .pct { font-weight: 700; font-size: 14px; text-align: right; min-width: 42px; }
+.mini { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 6px; }
+.mini.up { background: var(--soft-green); color: #23804a; } .mini.down { background: var(--soft-red); color: #c0392b; }
 .note { max-width: 1320px; margin: 0 auto 40px; padding: 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 </style>
 </head>
@@ -376,6 +383,89 @@ svg.s { width: 16px; height: 16px; }
       </div>
     </div></div>
     <figcaption><b>Detalle de un sensor</b>Gráfico con el rango permitido, eventos marcados y su alerta</figcaption>
+  </figure>
+
+  <!-- 3d Combustible de la flota -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><h3>Combustible</h3><span class="chip">Hoy</span></div>
+      <div class="content">
+        <div class="kpis">
+          <div class="kpi"><b>1 240 L</b><span>Consumo</span></div>
+          <div class="kpi"><b style="color:var(--ok)">9</b><span>Cargas · 2 850 L</span></div>
+          <div class="kpi"><b style="color:var(--bad)">2</b><span>Descargas · −96 L</span></div>
+        </div>
+        <div class="card row" style="background:var(--soft-red);box-shadow:none;gap:10px">
+          <span style="width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:#fff;color:var(--bad)"><svg class="i s"><use href="#i-alert"/></svg></span>
+          <div class="grow"><b style="font-size:12px;color:#c0392b">Posible robo · CDF-452</b><div class="small" style="color:#8a3a33">−38 L detenido, motor apagado · 09:12</div></div>
+          <span class="chip bad" style="background:#fff">Evidencia</span>
+        </div>
+        <div class="seg"><span class="on">Todas 24</span><span>Nivel bajo 3</span><span>Alertas 2</span></div>
+        <div class="card" style="padding:2px 12px">
+          <div class="fuel-row"><div class="tank"><i style="height:68%;background:#2f9e5b"></i></div>
+            <div class="grow" style="min-width:0"><b style="font-size:12.5px">ABC-123 · Volvo FH</b><div class="small muted truncate">31 L/100 km · autonomía 650 km</div><span class="mini up">▲ +182 L 07:52</span></div>
+            <div><div class="pct" style="color:#2f9e5b">68%</div><div class="small muted" style="text-align:right">204 L</div></div></div>
+          <div class="fuel-row"><div class="tank"><i style="height:22%;background:#d9534f"></i></div>
+            <div class="grow" style="min-width:0"><b style="font-size:12.5px">CDF-452 · Hino 500</b><div class="small muted truncate">Detenido · Av. Argentina</div><span class="mini down">▼ −38 L 09:12</span></div>
+            <div><div class="pct" style="color:#d9534f">22%</div><div class="small muted" style="text-align:right">44 L</div></div></div>
+          <div class="fuel-row"><div class="tank"><i style="height:47%;background:#e79a2b"></i></div>
+            <div class="grow" style="min-width:0"><b style="font-size:12.5px">BXR-845 · Scania R450</b><div class="small muted truncate">34 L/100 km · autonomía 410 km</div></div>
+            <div><div class="pct" style="color:#e79a2b">47%</div><div class="small muted" style="text-align:right">188 L</div></div></div>
+          <div class="fuel-row"><div class="tank"><i style="height:81%;background:#2f9e5b"></i></div>
+            <div class="grow" style="min-width:0"><b style="font-size:12.5px">FGH-778 · Isuzu NQR</b><div class="small muted truncate">18 L/100 km · autonomía 520 km</div><span class="mini up">▲ +60 L 06:40</span></div>
+            <div><div class="pct" style="color:#2f9e5b">81%</div><div class="small muted" style="text-align:right">97 L</div></div></div>
+          <div class="fuel-row"><div class="tank"><i style="height:12%;background:#d9534f"></i></div>
+            <div class="grow" style="min-width:0"><b style="font-size:12.5px">JKL-102 · Cisterna 7</b><div class="small muted truncate">Bajo nivel · 2 tanques</div></div>
+            <div><div class="pct" style="color:#d9534f">12%</div><div class="small muted" style="text-align:right">72 L</div></div></div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg class="i"><use href="#i-map"/></svg>Mapa</div>
+        <div class="tab"><svg class="i"><use href="#i-cam"/></svg>Cámaras</div>
+        <div class="tab on"><svg class="i"><use href="#i-fuel"/></svg>Combustible</div>
+        <div class="tab"><span class="badge">3</span><svg class="i"><use href="#i-bell"/></svg>Alertas</div>
+        <div class="tab"><svg class="i"><use href="#i-user"/></svg>Cuenta</div>
+      </div>
+    </div></div>
+    <figcaption><b>Panel de combustible</b>Toda la flota: nivel, litros, autonomía, cargas, descargas y alertas en una sola pantalla</figcaption>
+  </figure>
+
+  <!-- 3e Combustible de una unidad -->
+  <figure>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>9:41</span><span class="icons"><i class="bar"></i><i class="bar" style="height:10px"></i><i class="bar" style="height:12px"></i> 5G</span></div>
+      <div class="appbar"><div class="icon-btn"><svg class="i s"><use href="#i-back"/></svg></div><div class="grow"><h3 style="font-size:16px">Combustible ABC-123</h3><div class="sub">2 tanques · sonda capacitiva · calibrado 12/09</div></div></div>
+      <div class="content">
+        <div class="row" style="gap:8px">
+          <div class="card grow" style="padding:10px"><div class="small muted">Tanque 1</div><div class="row" style="gap:6px;margin-top:2px"><div class="tank" style="height:30px"><i style="height:68%;background:#2f9e5b"></i></div><b style="font-size:16px">204 L</b><span class="small muted">/ 300</span></div></div>
+          <div class="card grow" style="padding:10px"><div class="small muted">Tanque 2</div><div class="row" style="gap:6px;margin-top:2px"><div class="tank" style="height:30px"><i style="height:48%;background:#e79a2b"></i></div><b style="font-size:16px">96 L</b><span class="small muted">/ 200</span></div></div>
+        </div>
+        <div class="seg"><span>6 h</span><span class="on">24 h</span><span>7 días</span></div>
+        <div class="card" style="padding:10px 6px 6px">
+          <svg viewBox="0 0 260 120" width="100%" height="120">
+            <g stroke="#edf0f5"><path d="M22 10h236M22 50h236M22 90h236"/></g>
+            <g font-size="8" fill="#7a8394" font-family="Inter"><text x="0" y="13">500</text><text x="0" y="53">300</text><text x="0" y="93">100</text>
+              <text x="22" y="114">00:00</text><text x="95" y="114">06:00</text><text x="165" y="114">12:00</text><text x="228" y="114">ahora</text></g>
+            <path d="M22 70 L60 74 L95 78 L104 80 L106 44 L140 50 L170 55 L200 60 L256 66 V100 H22z" fill="url(#fg2)" opacity=".55"/>
+            <path d="M22 70 L60 74 L95 78 L104 80 L106 44 L140 50 L170 55 L200 60 L256 66" fill="none" stroke="#2563c9" stroke-width="2.4" stroke-linejoin="round"/>
+            <defs><linearGradient id="fg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2563c9" stop-opacity=".4"/><stop offset="1" stop-color="#2563c9" stop-opacity="0"/></linearGradient></defs>
+            <circle cx="106" cy="44" r="4.5" fill="#2f9e5b" stroke="#fff" stroke-width="2"/><text x="96" y="36" font-size="8.5" font-weight="700" fill="#23804a" font-family="Inter">+182 L</text>
+          </svg>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><b>58 L</b><span>Consumo hoy</span></div>
+          <div class="kpi"><b>3.2</b><span>km por litro</span></div>
+          <div class="kpi"><b style="color:var(--warn)">6.5 L</b><span>En ralentí</span></div>
+        </div>
+        <div class="card" style="padding:2px 12px">
+          <div class="list-item"><span class="mini up">▲</span><div class="grow"><b style="font-size:12px">Carga +182 L · Grifo Primax</b><div class="small muted">07:52 · coincide con el gasto registrado</div></div></div>
+          <div class="list-item"><span class="mini" style="background:var(--soft-amber);color:#b5701a">◷</span><div class="grow"><b style="font-size:12px">Ralentí 45 min · 6.5 L</b><div class="small muted">10:20 · Almacén Callao, motor encendido detenido</div></div></div>
+          <div class="list-item"><span class="mini up">✓</span><div class="grow"><b style="font-size:12px">Sin descargas sospechosas</b><div class="small muted">Alerta si baja más de 15 L detenido</div></div></div>
+        </div>
+      </div>
+    </div></div>
+    <figcaption><b>Combustible de una unidad</b>Cada tanque, gráfico con cargas y descargas marcadas, rendimiento, ralentí y alertas</figcaption>
   </figure>
 
   <!-- 4 Corte de motor -->
