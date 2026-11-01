@@ -42,6 +42,7 @@ import VideocamIcon from '@mui/icons-material/Videocam';
 import { useTranslation } from './LocalizationProvider';
 import RemoveDialog from './RemoveDialog';
 import EngineCutDialog from './EngineCutDialog';
+import { convertVolume, deviceFuelUnit } from '../util/fuelUnits';
 import AddressValue from './AddressValue';
 import { useDeviceReadonly, useRestriction } from '../util/permissions';
 import { devicesActions } from '../../store';
@@ -287,7 +288,7 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
       key: 'ignition', icon: <PowerSettingsNewIcon />, label: t('positionIgnition'), value: formatBoolean(attributes.ignition, t), color: attributes.ignition ? theme.palette.success.main : theme.palette.text.secondary,
     },
     attributes.hasOwnProperty('fuel') && {
-      key: 'fuel', icon: <LocalGasStationIcon />, label: t('positionFuel'), value: `${Number(attributes.fuel).toFixed(1)} L`,
+      key: 'fuel', icon: <LocalGasStationIcon />, label: t('positionFuel'), value: `${convertVolume(attributes.fuel, 'L', deviceFuelUnit(device)).toFixed(1)} ${deviceFuelUnit(device)}`,
     },
     attributes.hasOwnProperty('power') && {
       key: 'power', icon: <BatteryChargingFullIcon />, label: t('positionPower'), value: `${Number(attributes.power).toFixed(1)} V`,

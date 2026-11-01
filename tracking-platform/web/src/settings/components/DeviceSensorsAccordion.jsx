@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Accordion, AccordionDetails, AccordionSummary, Box, Button, IconButton, ListSubheader, Menu, MenuItem, Stack, Table,
-  TableBody, TableCell, TableHead, TableRow, Tooltip, Typography,
+  TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import EditIcon from '@mui/icons-material/Edit';
@@ -17,6 +17,9 @@ import {
   SENSOR_GROUPS, SENSOR_TEMPLATES, SENSOR_TYPES, formatSensorValue, newSensor, parseSensors, sensorColor, withSensors,
 } from '../../common/util/sensors';
 import SensorDialog, { typeLabelKey } from './SensorDialog';
+import {
+  FUEL_UNITS, convertFuelSensor, deviceFuelUnit, fuelUnitLabel, isFuelSensor,
+} from '../../common/util/fuelUnits';
 
 const capitalize = (value) => value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -43,7 +46,14 @@ const DeviceSensorsAccordion = ({ item, setItem }) => {
     return () => clearTimeout(timer);
   }, [item.id, item.attributes?.sensors]);
 
-  const store = (list) => setItem(withSensors(item, list));
+  const fuelUnit = deviceFuelUnit(item);
+  // fuel sensors follow the vehicle's unit
+  const store = (list) => setItem(withSensors(item, list.map((sensor) => (isFuelSensor(sensor) && sensor.unit !== fuelUnit ? convertFuelSensor(sensor, fuelUnit) : sensor))));
+  const changeFuelUnit = (unit) => {
+    const converted = sensors.map((sensor) => (isFuelSensor(sensor) ? convertFuelSensor(sensor, unit) : sensor));
+    const next = withSensors(item, converted);
+    setItem({ ...next, attributes: { ...next.attributes, fuelUnit: unit } });
+  };
 
   const save = (sensor) => {
     const exists = sensors.some((existing) => existing.id === sensor.id);
@@ -70,6 +80,9 @@ const DeviceSensorsAccordion = ({ item, setItem }) => {
         <Typography variant="subtitle1">{`${t('sensorsTitle')} (${sensors.length})`}</Typography>
       </AccordionSummary>
       <AccordionDetails>
+        <TextField select size="small" label={t('fuelUnitTitle')} value={fuelUnit} onChange={(event) => changeFuelUnit(event.target.value)} helperText={t('fuelUnitHint')} sx={{ mb: 2, minWidth: 260 }}>
+          {FUEL_UNITS.map((unit) => <MenuItem key={unit} value={unit}>{fuelUnitLabel(unit, t)}</MenuItem>)}
+        </TextField>
         {sensors.length > 0 && (
           <Table size="small">
             <TableHead>
@@ -140,6 +153,7 @@ const DeviceSensorsAccordion = ({ item, setItem }) => {
           sensor={editing}
           sensors={sensors}
           deviceId={item.id}
+          fuelUnit={fuelUnit}
           onClose={() => setEditing(null)}
           onSave={save}
         />

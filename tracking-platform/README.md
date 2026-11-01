@@ -464,6 +464,18 @@ Onfleet, Track-POD):
   10. Cliente: seguimiento.
 - API: `GET/PUT /api/dispatch/fields`.
 
+## Litros o galones por vehículo (parche `0025`)
+
+- En la ficha de cada unidad (*Sensores → Unidad de combustible del vehículo*) se elige **litros o galones**. Al
+  cambiarla, la plataforma **convierte los sensores de combustible**: tabla de calibración (o multiplicador),
+  capacidad del tanque, umbrales de carga y descarga, límites y consumos por hora, así las lecturas siguen siendo
+  la misma cantidad de combustible.
+- Todo lo de esa unidad se muestra en su unidad: nivel, cargas y descargas, reporte y evidencia de robo, panel de
+  la unidad, tarjeta del mapa, mensajes de WhatsApp y la cantidad de los gastos de combustible.
+- Cada gasto de combustible guarda la unidad con que se registró; el resumen de gastos de la flota normaliza a
+  litros y también informa galones y precio por galón, y se muestra según la preferencia de volumen del usuario
+  (*Preferencias → Unidad de volumen*).
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -547,6 +559,7 @@ python3 server/tests/test_plans.py
 python3 server/tests/test_dispatch.py   # con media.path para las fotos y firmas
 python3 server/tests/test_logistics.py
 python3 server/tests/test_custom_fields.py
+python3 server/tests/test_fuel_units.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

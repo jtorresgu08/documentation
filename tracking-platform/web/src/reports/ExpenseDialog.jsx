@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { deviceFuelUnit } from '../common/util/fuelUnits';
 import {
   Autocomplete, Button, Dialog, DialogActions, DialogContent, DialogTitle, Grid, InputAdornment, MenuItem, TextField,
 } from '@mui/material';
@@ -98,7 +99,7 @@ const ExpenseDialog = ({
             <TextField
               fullWidth
               type="number"
-              label={t(item.type === 'fuel' ? 'expenseLitres' : 'expenseQuantity')}
+              label={item.type === 'fuel' ? `${t('expenseFuelQuantity')} (${deviceFuelUnit(devices[item.deviceId])})` : t('expenseQuantity')}
               value={item.quantity}
               onChange={(event) => update({ quantity: event.target.value })}
             />

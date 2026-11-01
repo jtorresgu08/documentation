@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { useAttributePreference } from '../common/util/preferences';
+import { normalizeFuelUnit } from '../common/util/fuelUnits';
 import {
   Alert, Autocomplete, Box, Button, Card, Chip, Container, Grid, IconButton, LinearProgress, MenuItem, Stack, Table,
   TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography, useTheme,
@@ -46,6 +48,9 @@ const ExpensesPage = () => {
   const readonly = useRestriction('readonly');
   const devices = useSelector((state) => state.devices.items);
   const currency = useSelector((state) => state.session.server.attributes.currencySymbol || 'S/');
+  // fleet totals in the user's volume preference, each expense in its vehicle's unit
+  const fleetGallons = useAttributePreference('volumeUnit', 'ltr') === 'usGal';
+  const expenseUnit = (expense) => normalizeFuelUnit(expense.attributes?.fuelUnit || devices[expense.deviceId]?.attributes?.fuelUnit);
 
   const [period, setPeriod] = useState('thisMonth');
   const [selected, setSelected] = useState([]);
@@ -106,7 +111,7 @@ const ExpensesPage = () => {
       [t('expenseDate'), t('reportDevice'), t('sharedType'), t('expenseAmount'), t('expenseQuantity'), t('expenseOdometer'), t('expenseVendor'), t('expenseReference'), t('sharedDescription')],
       ...visible.map((expense) => [
         dayjs(expense.expenseTime).format('YYYY-MM-DD HH:mm'), devices[expense.deviceId]?.name || expense.deviceId, t(expenseLabelKey(expense.type)),
-        expense.amount.toFixed(2), expense.quantity || '', expense.odometer || '', expense.vendor || '', expense.reference || '', expense.description || '',
+        expense.amount.toFixed(2), expense.quantity ? `${expense.quantity}${expense.type === 'fuel' ? ` ${expenseUnit(expense)}` : ''}` : '', expense.odometer || '', expense.vendor || '', expense.reference || '', expense.description || '',
       ]),
     ];
     const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(';')).join('\r\n');
@@ -186,7 +191,7 @@ const ExpensesPage = () => {
               <Kpi icon={<RouteIcon />} color="#7c4dff" label={t('expenseCostPerKm')} value={summary.costPerKm ? money(summary.costPerKm) : '—'} caption={`${summary.distance.toLocaleString('es-PE')} km`} />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, lg: 2.4 }}>
-              <Kpi icon={<LocalGasStationIcon />} color={COLORS.fuel} label={t('expenseTypeFuel')} value={money(byType.fuel)} caption={summary.fuelPricePerLitre ? `${summary.fuelLitres.toFixed(0)} L · ${money(summary.fuelPricePerLitre)}/L` : '—'} />
+              <Kpi icon={<LocalGasStationIcon />} color={COLORS.fuel} label={t('expenseTypeFuel')} value={money(byType.fuel)} caption={summary.fuelPricePerLitre ? (fleetGallons ? `${summary.fuelGallons.toFixed(0)} gal · ${money(summary.fuelPricePerGallon)}/gal` : `${summary.fuelLitres.toFixed(0)} L · ${money(summary.fuelPricePerLitre)}/L`) : '—'} />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, lg: 2.4 }}>
               <Kpi icon={<BuildIcon />} color={COLORS.maintenance} label={t('expenseWorkshop')} value={money((byType.maintenance || 0) + (byType.repair || 0) + (byType.tires || 0))} caption={t('expenseWorkshopCaption')} />
@@ -343,7 +348,7 @@ const ExpensesPage = () => {
                         <Typography variant="body2">{expense.description || expense.vendor || '—'}</Typography>
                         {expense.description && expense.vendor && <Typography variant="caption" color="text.secondary">{expense.vendor}</Typography>}
                       </TableCell>
-                      <TableCell align="right">{expense.quantity ? `${expense.quantity}${expense.type === 'fuel' ? ' L' : ''}` : '—'}</TableCell>
+                      <TableCell align="right">{expense.quantity ? `${expense.quantity}${expense.type === 'fuel' ? ` ${expenseUnit(expense)}` : ''}` : '—'}</TableCell>
                       <TableCell align="right">{expense.odometer ? `${expense.odometer.toLocaleString('es-PE')} km` : '—'}</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{money(expense.amount)}</TableCell>
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>

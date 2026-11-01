@@ -16,6 +16,9 @@ import fetchOrThrow from '../../common/util/fetchOrThrow';
 import {
   FUEL_DEFAULTS, SENSOR_GROUPS, SENSOR_TYPES, VALIDATIONS, formatSensorValue, sensorColor,
 } from '../../common/util/sensors';
+import {
+  FUEL_UNITS, convertFuelSensor, fuelUnitLabel, isFuelSensor, normalizeFuelUnit,
+} from '../../common/util/fuelUnits';
 
 export const typeLabelKey = (type) => `sensorType${type.charAt(0).toUpperCase()}${type.slice(1)}`;
 const capitalize = (value) => value.charAt(0).toUpperCase() + value.slice(1);
@@ -28,6 +31,7 @@ const FUNCTIONS = ['abs()', 'round(x, 2)', 'min(a, b)', 'max(a, b)', 'if(c, a, b
 // table or multiplier, bounds, validation by another sensor, accumulation, smoothing, colors and texts, fuel
 // detection, and a live preview computed by the server from the unit's last messages
 const SensorDialog = ({
+  fuelUnit,
   open, sensor: initial, sensors = [], deviceId, onClose, onSave,
 }) => {
   const t = useTranslation();
@@ -140,7 +144,9 @@ const SensorDialog = ({
       type,
       unit: next.unit ?? '',
       accumulate: next.accumulate,
-      ...(type === 'fuel' ? { ...FUEL_DEFAULTS, ...sensor, type: 'fuel', unit: 'L', accumulate: undefined } : {}),
+      ...(type === 'fuel' ? {
+        ...FUEL_DEFAULTS, ...sensor, type: 'fuel', unit: fuelUnit || 'L', accumulate: undefined,
+      } : {}),
     });
   };
 
@@ -223,7 +229,13 @@ const SensorDialog = ({
             )}
             {!meta.text && !meta.digital && (
               <Grid size={{ xs: 12, sm: source === 'parameter' && !meta.calculated ? 4 : 6 }}>
-                <TextField fullWidth label={t('sensorUnit')} value={sensor.unit || ''} onChange={(event) => update({ unit: event.target.value })} />
+                {isFuelSensor(sensor) ? (
+                  <TextField fullWidth select label={t('sensorUnit')} value={normalizeFuelUnit(sensor.unit)} onChange={(event) => update(convertFuelSensor(sensor, event.target.value))} helperText={t('fuelUnitSensorHint')}>
+                    {FUEL_UNITS.map((unit) => <MenuItem key={unit} value={unit}>{fuelUnitLabel(unit, t)}</MenuItem>)}
+                  </TextField>
+                ) : (
+                  <TextField fullWidth label={t('sensorUnit')} value={sensor.unit || ''} onChange={(event) => update({ unit: event.target.value })} />
+                )}
               </Grid>
             )}
             {meta.digital && (

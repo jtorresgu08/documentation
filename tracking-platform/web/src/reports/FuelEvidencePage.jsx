@@ -92,8 +92,8 @@ const FuelEvidencePage = () => {
 
   const points = useMemo(() => report?.points || [], [report]);
   const events = useMemo(() => (change ? [{
-    key: change.time, kind: change.type, latitude: change.latitude, longitude: change.longitude, title: `−${change.amount.toFixed(1)} L`,
-  }] : []), [change]);
+    key: change.time, kind: change.type, latitude: change.latitude, longitude: change.longitude, title: `−${change.amount.toFixed(1)} ${report?.sensor?.unit || 'L'}`,
+  }] : []), [change, report]);
 
   if (error) {
     return <Container sx={{ py: 3 }}><Alert severity="warning">{error}</Alert></Container>;

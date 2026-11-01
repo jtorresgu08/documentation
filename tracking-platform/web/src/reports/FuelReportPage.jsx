@@ -33,6 +33,7 @@ import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useCatch } from '../reactHelper';
 import fetchOrThrow from '../common/util/fetchOrThrow';
+import { fuelUnitLabel } from '../common/util/fuelUnits';
 import { useDeviceReadonly } from '../common/util/permissions';
 import { devicesActions } from '../store';
 import AddressValue from '../common/components/AddressValue';
@@ -207,7 +208,7 @@ const FuelReportPage = () => {
         latitude: change.latitude,
         longitude: change.longitude,
         status: { valid: 'valid', false: 'false' }[review] || 'pending',
-        title: `${change.type === 'fill' ? '+' : '−'}${change.amount.toFixed(1)} L`,
+        title: `${change.type === 'fill' ? '+' : '−'}${change.amount.toFixed(1)} ${report?.sensor?.unit || 'L'}`,
       };
     });
     return [levelEvent(report.points[0], 'start'), ...changes, levelEvent(report.points[report.points.length - 1], 'end')]
@@ -367,7 +368,7 @@ const FuelReportPage = () => {
                 <SectionTitle icon={<LocalGasStationIcon />} title={t('fuelLevelTitle')}>
                   <Box sx={{ flexGrow: 1 }} />
                   <ToggleButtonGroup size="small" exclusive color="primary" value={percent ? 'percent' : 'litres'} onChange={(_, value) => value && setMode(value)} className="no-print">
-                    <ToggleButton value="litres">{t('fuelLitres')}</ToggleButton>
+                    <ToggleButton value="litres">{fuelUnitLabel(report?.sensor?.unit, t)}</ToggleButton>
                     <ToggleButton value="percent" disabled={!capacity} title={capacity ? '' : t('fuelPercentHelp')}>{t('fuelPercent')}</ToggleButton>
                   </ToggleButtonGroup>
                 </SectionTitle>

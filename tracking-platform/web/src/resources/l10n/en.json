@@ -2105,5 +2105,11 @@
     "dispatchFieldTypeDate": "Date",
     "dispatchFieldTypeSelect": "Option list",
     "dispatchFieldTypeCheckbox": "Checkbox (yes/no)",
-    "dispatchExportStops": "Deliveries (CSV)"
+    "dispatchExportStops": "Deliveries (CSV)",
+    "fuelUnitTitle": "Vehicle fuel unit",
+    "fuelUnitHint": "Sensors, tank capacity, fills, drains and expenses of this unit are shown in this unit. Changing it converts the fuel sensors.",
+    "fuelUnitLiters": "Liters (L)",
+    "fuelUnitGallons": "Gallons (gal)",
+    "fuelUnitSensorHint": "Changing the unit converts calibration, capacity and thresholds",
+    "expenseFuelQuantity": "Quantity"
 }

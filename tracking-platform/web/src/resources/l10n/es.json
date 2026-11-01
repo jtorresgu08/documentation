@@ -2105,5 +2105,11 @@
     "dispatchFieldTypeDate": "Fecha",
     "dispatchFieldTypeSelect": "Lista de opciones",
     "dispatchFieldTypeCheckbox": "Casilla (sí/no)",
-    "dispatchExportStops": "Entregas (CSV)"
+    "dispatchExportStops": "Entregas (CSV)",
+    "fuelUnitTitle": "Unidad de combustible del vehículo",
+    "fuelUnitHint": "Sensores, capacidad del tanque, cargas, descargas y gastos de esta unidad se muestran en esta unidad. Al cambiarla se convierten los sensores de combustible.",
+    "fuelUnitLiters": "Litros (L)",
+    "fuelUnitGallons": "Galones (gal)",
+    "fuelUnitSensorHint": "Al cambiar la unidad se convierte la calibración, la capacidad y los umbrales",
+    "expenseFuelQuantity": "Cantidad"
 }
