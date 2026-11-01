@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { useTranslation } from '../../common/components/LocalizationProvider';
 import { useAttributePreference } from '../../common/util/preferences';
+import { checkOwnMaps, ownMapStyle } from './ownMaps';
 
 const styleCustom = ({ tiles, minZoom, maxZoom, attribution }) => {
   const source = {
@@ -38,8 +39,20 @@ export default () => {
   const hereKey = useAttributePreference('hereKey');
   const mapboxAccessToken = useAttributePreference('mapboxAccessToken');
   const customMapUrl = useSelector((state) => state.session.server.mapUrl);
+  const [ownMaps, setOwnMaps] = useState(undefined);
+
+  useEffect(() => {
+    checkOwnMaps().then(setOwnMaps);
+  }, []);
 
   return useMemo(() => [
+    ...[['safeStreets', 'light', 'mapSafeStreets'], ['safeDark', 'dark', 'mapSafeDark'], ['safeGray', 'grayscale', 'mapSafeGray']].map(([id, flavor, title]) => ({
+      id,
+      title: t(title),
+      style: ownMapStyle(flavor),
+      available: ownMaps === true,
+      pending: ownMaps === undefined,
+    })),
     {
       id: 'openFreeMap',
       title: t('mapOpenFreeMap'),
@@ -271,5 +284,5 @@ export default () => {
       }),
       available: Boolean(customMapUrl),
     },
-  ], [t, mapTilerKey, locationIqKey, bingMapsKey, tomTomKey, hereKey, mapboxAccessToken, customMapUrl]);
+  ], [t, ownMaps, mapTilerKey, locationIqKey, bingMapsKey, tomTomKey, hereKey, mapboxAccessToken, customMapUrl]);
 };

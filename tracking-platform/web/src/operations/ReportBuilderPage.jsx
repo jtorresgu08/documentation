@@ -58,7 +58,7 @@ const ReportBuilderPage = () => {
   const groups = useSelector((state) => state.groups.items);
   const geofences = useSelector((state) => state.geofences.items);
   const currency = useSelector((state) => state.session.server.attributes.currencySymbol || 'S/');
-  const brand = useSelector((state) => state.session.server.attributes.title || 'Andes Tracking');
+  const brand = useSelector((state) => state.session.server.attributes.title || 'Safe Connection');
 
   const [templates, setTemplates] = useState([]);
   const [templateId, setTemplateId] = useState(null);

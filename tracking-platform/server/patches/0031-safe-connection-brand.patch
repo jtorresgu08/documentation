@@ -1,0 +1,31 @@
+diff --git a/src/main/java/org/traccar/api/resource/SecurityResource.java b/src/main/java/org/traccar/api/resource/SecurityResource.java
+index 5c2ebb0..6c84abd 100644
+--- a/src/main/java/org/traccar/api/resource/SecurityResource.java
++++ b/src/main/java/org/traccar/api/resource/SecurityResource.java
+@@ -98,7 +98,7 @@ public class SecurityResource extends BaseResource {
+     public Map<String, Object> setup() throws Exception {
+         User user = me();
+         Server server = permissionsService.getServer();
+-        String issuer = server.getString("title") != null ? server.getString("title") : "Andes Tracking";
++        String issuer = server.getString("title") != null ? server.getString("title") : "Safe Connection";
+         String key = new GoogleAuthenticator().createCredentials().getKey();
+         String label = URLEncoder.encode(issuer + ":" + user.getEmail(), StandardCharsets.UTF_8).replace("+", "%20");
+         Map<String, Object> result = new LinkedHashMap<>();
+diff --git a/src/main/java/org/traccar/web/OverrideTextFilter.java b/src/main/java/org/traccar/web/OverrideTextFilter.java
+index 779d858..7e02340 100644
+--- a/src/main/java/org/traccar/web/OverrideTextFilter.java
++++ b/src/main/java/org/traccar/web/OverrideTextFilter.java
+@@ -77,9 +77,10 @@ public class OverrideTextFilter implements Filter {
+                     throw new RuntimeException(e);
+                 }
+ 
+-                String title = server.getString("title", "Traccar");
+-                String description = server.getString("description", "Traccar GPS Tracking System");
+-                String colorPrimary = server.getString("colorPrimary", "#1a237e");
++                // SAFE CONNECTION is the master brand when the server does not set its own
++                String title = server.getString("title", "Safe Connection");
++                String description = server.getString("description", "Safe Connection · Plataforma de rastreo GPS");
++                String colorPrimary = server.getString("colorPrimary", "#163c7d");
+ 
+                 String alteredContent = new String(wrappedResponse.getCapture(), StandardCharsets.UTF_8)
+                         .replace("${title}", title)

@@ -2505,5 +2505,8 @@
     "machineTypeCrane": "Grúa",
     "machineTypeForklift": "Montacargas",
     "machineTypeGenerator": "Grupo electrógeno",
-    "machineTypeOther": "Otra"
+    "machineTypeOther": "Otra",
+    "mapSafeStreets": "Safe Connection · Calles",
+    "mapSafeDark": "Safe Connection · Oscuro",
+    "mapSafeGray": "Safe Connection · Gris"
 }

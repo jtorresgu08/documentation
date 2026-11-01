@@ -1,0 +1,3 @@
+infra/maps/*.pmtiles
+infra/maps/assets/
+infra/maps/.tools/

@@ -61,8 +61,8 @@ const MapView = ({ children }) => {
   const [mapReady, setMapReady] = useState(false);
 
   const mapStyles = useMapStyles();
-  const activeMapStyles = useAttributePreference('activeMapStyles', 'locationIqStreets,locationIqDark,openFreeMap');
-  const [defaultMapStyle] = usePersistedState('selectedMapStyle', usePreference('map', 'locationIqStreets'));
+  const activeMapStyles = useAttributePreference('activeMapStyles', 'safeStreets,safeDark,safeGray,openFreeMap');
+  const [defaultMapStyle] = usePersistedState('selectedMapStyle', usePreference('map', 'safeStreets'));
   const mapboxAccessToken = useAttributePreference('mapboxAccessToken');
   const maxZoom = useAttributePreference('web.maxZoom');
 
@@ -114,8 +114,12 @@ const MapView = ({ children }) => {
   }, [mapboxAccessToken]);
 
   useEffect(() => {
+    if (mapStyles.some((s) => s.pending)) {
+      return; // wait until it is known whether the own maps are installed
+    }
     const filteredStyles = mapStyles.filter((s) => s.available && activeMapStyles.includes(s.id));
-    const styles = filteredStyles.length ? filteredStyles : mapStyles.filter((s) => s.id === 'osm');
+    // own maps first; without them OpenFreeMap (free, no key) takes over
+    const styles = filteredStyles.length ? filteredStyles : mapStyles.filter((s) => s.id === 'openFreeMap');
     switcher.updateStyles(styles, defaultMapStyle);
   }, [mapStyles, defaultMapStyle, activeMapStyles, switcher]);
 

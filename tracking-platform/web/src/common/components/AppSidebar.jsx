@@ -62,8 +62,8 @@ import useFeatures from '../util/useFeatures';
 import usePersistedState from '../util/usePersistedState';
 import useLogout from '../util/useLogout';
 import { useBrandAttribute } from '../util/brand';
+import { BRAND_LOGO } from '../util/brandDefaults';
 import { useEffectAsync } from '../../reactHelper';
-import Logo from '../../resources/images/logo.svg?react';
 
 const COLLAPSED_WIDTH = 64;
 const EXPANDED_WIDTH = 288;
@@ -471,7 +471,7 @@ const AppSidebar = () => {
             {!brandLogo && brandName && (
               <Typography variant="h6" className={classes.brandName} noWrap>{brandName}</Typography>
             )}
-            {!brandLogo && !brandName && <Logo className={classes.logo} />}
+            {!brandLogo && !brandName && <img className={classes.logo} src={BRAND_LOGO} alt="Safe Connection" />}
           </Box>
         )}
         <IconButton

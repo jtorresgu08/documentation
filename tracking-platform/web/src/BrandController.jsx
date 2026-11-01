@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useEffectAsync } from './reactHelper';
 import { sessionActions } from './store';
 import { useBrandAttribute } from './common/util/brand';
+import { BRAND_NAME } from './common/util/brandDefaults';
 
 const BrandController = () => {
   const dispatch = useDispatch();
@@ -17,9 +18,7 @@ const BrandController = () => {
   }, [userId]);
 
   useEffect(() => {
-    if (title) {
-      document.title = title;
-    }
+    document.title = title || BRAND_NAME;
   }, [title]);
 
   return null;

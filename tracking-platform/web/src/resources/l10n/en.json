@@ -2505,5 +2505,8 @@
     "machineTypeCrane": "Crane",
     "machineTypeForklift": "Forklift",
     "machineTypeGenerator": "Generator",
-    "machineTypeOther": "Other"
+    "machineTypeOther": "Other",
+    "mapSafeStreets": "Safe Connection · Streets",
+    "mapSafeDark": "Safe Connection · Dark",
+    "mapSafeGray": "Safe Connection · Gray"
 }

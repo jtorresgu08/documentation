@@ -20,6 +20,15 @@
 		-Server
 	}
 
+	# Mapas propios de Safe Connection: un archivo PMTiles de Latinoamérica más tipografías e íconos, servidos
+	# desde el disco por partes (Range); el navegador dibuja el mapa. Ver scripts/mapas-latam.sh
+	handle_path /maps/* {
+		root * /srv/maps
+		header Cache-Control "public, max-age=86400"
+		header Access-Control-Allow-Origin "*"
+		file_server
+	}
+
 	# La consola de base de datos y el endpoint de salud no se exponen
 	@blocked path /console* /api/health
 	respond @blocked 404
@@ -29,6 +38,7 @@
 	# 	reverse_proxy video:8080
 	# }
 
+	# (directiva suelta a propósito: Caddy aplica antes handle_path /maps y el bloqueo de arriba)
 	reverse_proxy traccar:8082
 }
 

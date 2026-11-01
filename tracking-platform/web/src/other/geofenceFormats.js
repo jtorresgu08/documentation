@@ -569,7 +569,7 @@ const toGpx = (items, title) => {
     return `  <trk><name>${escapeXml(geofence.name)}</name>${geofence.description ? `<desc>${escapeXml(geofence.description)}</desc>` : ''}<type>${type === 'line' ? 'line' : 'polygon'}</type><trkseg>${segment}</trkseg></trk>`;
   }).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Andes Tracking" xmlns="http://www.topografix.com/GPX/1/1">
+<gpx version="1.1" creator="Safe Connection" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata><name>${escapeXml(title)}</name></metadata>
 ${tracks}
 </gpx>

@@ -1,4 +1,4 @@
-# Plataforma de rastreo GPS (base Traccar)
+# SAFE CONNECTION · Plataforma de rastreo GPS (base Traccar)
 
 Plataforma comercializable de rastreo GPS con jerarquía multinivel de gerentes y marca blanca, construida sobre
 [Traccar](https://www.traccar.org) 6.9.1 (Apache 2.0). Incluye **todas las funciones de Traccar** (más de 200
@@ -588,6 +588,22 @@ Capturas: `docs/capturas/v30-*.png`. Notas de uso de las claves de mapas sin exc
 
 Capturas: `docs/capturas/v31-*.png` (en las de Google, el recuadro muestra qué carga Google con la clave; el
 entorno de prueba no tiene clave ni salida a Google).
+
+## Marca SAFE CONNECTION y mapas propios de Latinoamérica (parche `0031`)
+
+- **SAFE CONNECTION es la marca maestra**: logo (versión a color para fondos claros y blanca para fondos azules),
+  íconos de la app instalable y del navegador, colores (azul `#163c7d` y celeste `#0eabf1`), título y descripción por
+  defecto del servidor y emisor del 2FA. Los distribuidores siguen pudiendo usar su propia marca (marca blanca por
+  dominio o por cuenta); sin ella se ve SAFE CONNECTION. Archivos en `web/public/brand/` y muestra en
+  `docs/marca/safe-connection-marca.png`.
+- **Mapas propios**: el mapa de calles es un solo archivo PMTiles de Latinoamérica (México a Tierra del Fuego y el
+  Caribe) en `infra/maps/`, servido por Caddy en `/maps` y dibujado en el navegador con los estilos de Protomaps en
+  español: *Safe Connection · Calles*, *Oscuro* y *Gris*. Sin costo por vista ni límite de usuarios. Si el archivo no
+  está instalado, la plataforma usa OpenFreeMap automáticamente. Antes el mapa por defecto era LocationIQ con una clave
+  pública de prueba compartida por todas las instalaciones de Traccar.
+- Se genera y actualiza con `infra/scripts/mapas-latam.sh` (ver tamaños en la sección 24 de `infra/DEPLOY.md`).
+
+Capturas: `docs/capturas/v32-safe-connection-*.png`.
 
 ## Panel web
 

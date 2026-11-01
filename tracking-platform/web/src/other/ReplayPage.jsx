@@ -238,7 +238,7 @@ const ReplayPage = () => {
   const exportGpx = () => {
     const points = positions.map((position) => `<trkpt lat="${position.latitude}" lon="${position.longitude}"><ele>${position.altitude || 0}</ele><time>${dayjs(position.fixTime).toISOString()}</time><speed>${(position.speed * 0.514444).toFixed(2)}</speed></trkpt>`).join('');
     download(`${device?.name || 'ruta'}-${dayjs(range.from).format('YYYYMMDD')}.gpx`,
-      `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Andes Tracking" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>${device?.name || ''}</name><trkseg>${points}</trkseg></trk></gpx>`,
+      `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Safe Connection" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>${device?.name || ''}</name><trkseg>${points}</trkseg></trk></gpx>`,
       'application/gpx+xml');
   };
   const exportCsv = () => {

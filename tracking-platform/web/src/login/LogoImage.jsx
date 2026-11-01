@@ -1,7 +1,7 @@
 import { useTheme, useMediaQuery } from '@mui/material';
 import { useBrandAttribute } from '../common/util/brand';
 import { makeStyles } from 'tss-react/mui';
-import Logo from '../resources/images/logo.svg?react';
+import { BRAND_LOGO, BRAND_LOGO_WHITE } from '../common/util/brandDefaults';
 
 const useStyles = makeStyles()((theme) => ({
   image: {
@@ -29,7 +29,7 @@ const LogoImage = ({ color }) => {
     }
     return <img className={classes.image} src={logo} alt="" />;
   }
-  return <Logo className={classes.image} style={{ color }} />;
+  return <img className={classes.image} src={expanded && color ? BRAND_LOGO_WHITE : BRAND_LOGO} alt="Safe Connection" />;
 };
 
 export default LogoImage;

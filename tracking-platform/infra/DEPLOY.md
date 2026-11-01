@@ -508,3 +508,44 @@ la configuración de las cámaras.
   dominios (también los de los distribuidores) y pégala en *Ajustes del servidor → Clave de Google* (o por cuenta, en
   el atributo `googleKey`). El enlace de seguimiento del cliente usa la clave de la empresa dueña del viaje.
 
+## 24. Mapas propios de Latinoamérica (Safe Connection)
+
+**Generar o actualizar** (en el servidor, desde `infra/`):
+
+```bash
+./scripts/mapas-latam.sh                 # Latinoamérica, zoom 0-15
+REGION=peru ./scripts/mapas-latam.sh     # solo Perú, para probar rápido
+MAXZOOM=14 ./scripts/mapas-latam.sh      # más liviano
+```
+
+El script descarga la herramienta `pmtiles`, extrae solo el recuadro de Latinoamérica del mapa mundial diario de
+Protomaps (datos de OpenStreetMap; baja solo las partes necesarias), agrega tipografías e íconos y muestra el tamaño
+real al terminar. Programa una actualización mensual con cron, p. ej. `0 4 1 * * cd /opt/plataforma/infra &&
+./scripts/mapas-latam.sh`. El archivo nuevo reemplaza al anterior solo al terminar bien. No hace falta reiniciar nada:
+los usuarios lo ven al recargar.
+
+**Espacio en disco (estimado; el script informa el valor real)**:
+
+| Contenido | Tamaño aproximado |
+|---|---|
+| Latinoamérica, zoom 0-15 (calles, números de casa, nombres) | 10–15 GB |
+| Latinoamérica, zoom 0-14 | 6–9 GB |
+| Solo Perú, zoom 0-15 | 0,8–1,5 GB |
+| Tipografías e íconos | ~100 MB |
+| Espacio libre para la actualización (archivo nuevo + anterior) | 2 × el tamaño del mapa |
+
+Recomendación: reserva **unos 30 GB** de SSD para mapas de Latinoamérica. No usa memoria ni CPU apreciable: Caddy
+entrega partes del archivo y el navegador dibuja; los mosaicos quedan en la caché del navegador. Cada usuario descarga
+del orden de 1–3 MB por sesión de mapa, según cuánto se mueva.
+
+**Lo que no conviene alojar**:
+
+- **Satélite**: las imágenes de Latinoamérica con detalle de calle ocupan varios terabytes; se contrata a un proveedor
+  (MapTiler, Esri) y se activa solo en los planes que lo incluyen.
+- **Direcciones (Nominatim)**: Latinoamérica completa pide unos 200–300 GB de SSD, 32–64 GB de RAM y 1–3 días de
+  importación. Para empezar basta Perú (≈ 20–40 GB, 8–16 GB de RAM, algunas horas) o un proveedor con caché de
+  direcciones (`geocoder.cache`) y búsqueda solo a pedido (`geocoder.onRequest=true`).
+
+**Requisitos de red del servidor**: salida HTTPS a `api.github.com`, `github.com` y `build.protomaps.com` solo
+mientras corre el script.
+
