@@ -14,6 +14,7 @@ import { sessionActions } from '../store';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import { useBrandAttribute } from '../common/util/brand';
 import DispatchMap from './DispatchMap';
+import GoogleEmbed from '../common/components/GoogleEmbed';
 import { formatHour, formatWindow } from './dispatchUtils';
 
 // Customer tracking page (public link per stop): status of the delivery, estimated arrival, stops before theirs,
@@ -30,6 +31,7 @@ const DeliveryTrackPage = () => {
   const [error, setError] = useState(false);
   const [stars, setStars] = useState(0);
   const [comment, setComment] = useState('');
+  const [showRoute, setShowRoute] = useState(false);
 
   const rate = async () => {
     const response = await fetch(`/api/dispatch/track/${token}/rating`, {
@@ -103,6 +105,11 @@ const DeliveryTrackPage = () => {
                 <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.25 }}>{headline}</Typography>
               </Box>
             </Stack>
+            {data.googleKey && data.position && (
+              showRoute
+                ? <GoogleEmbed googleKey={data.googleKey} height={220} title={t('googleRoute')} mode="directions" origin={data.position} destination={data} />
+                : <Button size="small" variant="outlined" onClick={() => setShowRoute(true)}>{t('googleSeeRoute')}</Button>
+            )}
             {data.status === 'pending' && data.tripStatus === 'inProgress' && data.stopsBefore > 0 && (
               <Typography variant="body2">{t('dispatchTrackStopsBefore').replace('{0}', data.stopsBefore)}</Typography>
             )}

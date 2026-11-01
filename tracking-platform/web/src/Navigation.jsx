@@ -49,6 +49,7 @@ import AssetsPage from './assets/AssetsPage';
 import AgroPage from './agro/AgroPage';
 import DeviceConfigPage from './deviceConfig/DeviceConfigPage';
 import SecurityPage from './security/SecurityPage';
+import MachineryPage from './machinery/MachineryPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -168,6 +169,7 @@ const Navigation = () => {
         <Route path="tpms" element={<TpmsPage />} />
         <Route path="assets" element={<AssetsPage />} />
         <Route path="agro" element={<AgroPage />} />
+        <Route path="machinery" element={<MachineryPage />} />
         <Route path="device-config" element={<DeviceConfigPage />} />
         <Route path="security" element={<SecurityPage />} />
         <Route path="emulator" element={<EmulatorPage />} />

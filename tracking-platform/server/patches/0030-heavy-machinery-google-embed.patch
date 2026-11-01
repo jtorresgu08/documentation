@@ -1,0 +1,667 @@
+diff --git a/src/main/java/org/traccar/api/resource/DispatchResource.java b/src/main/java/org/traccar/api/resource/DispatchResource.java
+index 3d1f5eb..f7b1410 100644
+--- a/src/main/java/org/traccar/api/resource/DispatchResource.java
++++ b/src/main/java/org/traccar/api/resource/DispatchResource.java
+@@ -163,6 +163,14 @@ public class DispatchResource extends BaseResource {
+         if (position != null && DispatchTrip.IN_PROGRESS.equals(trip.getStatus())) {
+             result.put("position", Map.of("latitude", position.getLatitude(), "longitude", position.getLongitude(),
+                     "course", position.getCourse(), "fixTime", position.getFixTime()));
++            // Google key of the company (or the server) for the embedded route; meant to be restricted by domain
++            User owner = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", trip.getUserId())));
++            String key = owner != null ? owner.getString("googleKey") : null;
++            if (key == null) {
++                key = permissionsService.getServer().getString("googleKey");
++            }
++            result.put("googleKey", key);
+         }
+         return result;
+     }
+@@ -1327,6 +1335,14 @@ public class DispatchResource extends BaseResource {
+         if (position != null && DispatchTrip.IN_PROGRESS.equals(trip.getStatus()) && !stop.done()) {
+             result.put("position", Map.of("latitude", position.getLatitude(), "longitude", position.getLongitude(),
+                     "course", position.getCourse(), "fixTime", position.getFixTime()));
++            // Google key of the company (or the server) for the embedded route; meant to be restricted by domain
++            User owner = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", trip.getUserId())));
++            String key = owner != null ? owner.getString("googleKey") : null;
++            if (key == null) {
++                key = permissionsService.getServer().getString("googleKey");
++            }
++            result.put("googleKey", key);
+         }
+         return result;
+     }
+diff --git a/src/main/java/org/traccar/api/resource/MachineryResource.java b/src/main/java/org/traccar/api/resource/MachineryResource.java
+new file mode 100644
+index 0000000..4fb1f92
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/MachineryResource.java
+@@ -0,0 +1,279 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.machinery.MachineryAnalyzer;
++import org.traccar.model.Device;
++import org.traccar.model.Driver;
++import org.traccar.model.Geofence;
++import org.traccar.model.Maintenance;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.time.ZoneId;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Heavy machinery: hour meter (engine hours of the device plus the offset that matches the dashboard), work, idle
++ * and off hours with utilization, hours by site and operator, engine time outside the work schedule, fuel per engine
++ * hour, next maintenance by hours and the rental amount by hour.
++ */
++@Path("machinery")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class MachineryResource extends BaseResource {
++
++    public static final String MODE = "machineMode";
++    public static final String TYPE = "machineType";
++    public static final String OFFSET = "hourMeterOffset";
++    public static final String WORK = "workAttribute";
++    public static final String SCHEDULE = "workSchedule";
++    public static final String DAYS = "workDays";
++    public static final String RATE = "hourRate";
++    public static final String BILLING = "billing";
++
++    private static final long LIVE_MILLIS = 30 * 60_000L;
++    private static final long OFF_MILLIS = 24 * 3_600_000L;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    private ZoneId zone() throws StorageException {
++        User user = permissionsService.getUser(getUserId());
++        String value = user.getString("timezone");
++        if (value == null) {
++            value = permissionsService.getServer().getString("timezone");
++        }
++        try {
++            return value != null ? ZoneId.of(value) : ZoneId.systemDefault();
++        } catch (RuntimeException e) {
++            return ZoneId.systemDefault();
++        }
++    }
++
++    private static Boolean flag(Object value) {
++        if (value instanceof Boolean bool) {
++            return bool;
++        }
++        if (value instanceof Number number) {
++            return number.doubleValue() > 0;
++        }
++        if (value != null) {
++            String text = String.valueOf(value);
++            return "1".equals(text) || "true".equalsIgnoreCase(text);
++        }
++        return null;
++    }
++
++    private static MachineryAnalyzer.Sample sample(Device device, Position position) {
++        String work = device.getString(WORK);
++        Boolean working = work != null && !work.isBlank()
++                ? Boolean.TRUE.equals(flag(position.getAttributes().get(work))) : null;
++        Object fuel = position.getAttributes().get(Position.KEY_FUEL_USED);
++        return new MachineryAnalyzer.Sample(position.getFixTime().getTime(),
++                flag(position.getAttributes().get(Position.KEY_IGNITION)), working,
++                UnitsConverter.kphFromKnots(position.getSpeed()),
++                position.getGeofenceIds() != null ? position.getGeofenceIds() : List.of(),
++                position.getString(Position.KEY_DRIVER_UNIQUE_ID),
++                fuel instanceof Number number ? number.doubleValue() : null);
++    }
++
++    public static double hourMeter(Device device, Position position) {
++        double raw = position != null ? position.getLong(Position.KEY_HOURS) / 3_600_000.0 : 0;
++        return Math.round((raw + device.getDouble(OFFSET)) * 10) / 10.0;
++    }
++
++    private List<Map<String, Object>> maintenances(Device device, Position position) throws StorageException {
++        List<Map<String, Object>> result = new ArrayList<>();
++        long raw = position != null ? position.getLong(Position.KEY_HOURS) : 0;
++        for (Maintenance maintenance : storage.getObjects(Maintenance.class, new Request(new Columns.All(),
++                new Condition.Permission(Device.class, device.getId(), Maintenance.class)))) {
++            if (!Position.KEY_HOURS.equals(maintenance.getType()) || maintenance.getPeriod() <= 0) {
++                continue;
++            }
++            double done = Math.max(0, Math.floor((raw - maintenance.getStart()) / maintenance.getPeriod()) + 1);
++            double next = maintenance.getStart() + done * maintenance.getPeriod();
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("name", maintenance.getName());
++            item.put("everyHours", Math.round(maintenance.getPeriod() / 360_000.0) / 10.0);
++            item.put("remainingHours", Math.round((next - raw) / 360_000.0) / 10.0);
++            result.add(item);
++        }
++        result.sort((a, b) -> Double.compare((Double) a.get("remainingHours"), (Double) b.get("remainingHours")));
++        return result;
++    }
++
++    private Map<String, Object> summary(Device device, Date from, Date to, boolean detail) throws Exception {
++        Position latest = FleetUtil.latest(storage, cacheManager, device);
++        List<MachineryAnalyzer.Sample> samples = new ArrayList<>();
++        for (Position position : FleetUtil.positions(storage, device.getId(),
++                new Date(from.getTime() - 6 * 3_600_000L), to)) {
++            samples.add(sample(device, position));
++        }
++        // the state at the start of the period comes from the last message before it
++        int first = 0;
++        for (int i = 0; i < samples.size(); i++) {
++            if (samples.get(i).time() <= from.getTime()) {
++                first = i;
++            }
++        }
++        samples = samples.subList(first, samples.size());
++        Map<String, Object> analysis = MachineryAnalyzer.analyze(samples, from.getTime(), to.getTime(), zone(),
++                MachineryAnalyzer.schedule(device.getString(SCHEDULE), device.getString(DAYS)), detail);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("deviceId", device.getId());
++        result.put("name", device.getName());
++        result.put("machineType", device.getString(TYPE));
++        result.put("hourMeter", hourMeter(device, latest));
++        result.put("workAttribute", device.getString(WORK));
++        result.put("workSchedule", device.getString(SCHEDULE));
++        result.put("workDays", device.getString(DAYS));
++        result.put("hourRate", device.getDouble(RATE) > 0 ? device.getDouble(RATE) : null);
++        result.put("billing", device.getString(BILLING) != null ? device.getString(BILLING) : "engine");
++        // many trackers stop reporting with the engine off: an off machine stays off for a day, an engine on without
++        // news for half an hour is without signal
++        String now = "noSignal";
++        if (latest != null) {
++            String state = MachineryAnalyzer.state(sample(device, latest));
++            long age = System.currentTimeMillis() - latest.getFixTime().getTime();
++            if (age < LIVE_MILLIS || MachineryAnalyzer.OFF.equals(state) && age < OFF_MILLIS) {
++                now = state;
++            }
++        }
++        result.put("now", now);
++        result.put("lastUpdate", latest != null ? latest.getFixTime() : null);
++        if (latest != null) {
++            result.put("latitude", latest.getLatitude());
++            result.put("longitude", latest.getLongitude());
++        }
++        result.putAll(analysis);
++        Map<Long, String> geofenceNames = new HashMap<>();
++        for (Geofence geofence : storage.getObjects(Geofence.class, new Request(new Columns.All()))) {
++            geofenceNames.put(geofence.getId(), geofence.getName());
++        }
++        @SuppressWarnings("unchecked")
++        List<Map<String, Object>> sites = (List<Map<String, Object>>) analysis.get("sites");
++        sites.forEach(site -> site.put("name", geofenceNames.getOrDefault((Long) site.get("geofenceId"), "—")));
++        result.put("site", latest != null && latest.getGeofenceIds() != null && !latest.getGeofenceIds().isEmpty()
++                ? geofenceNames.get(latest.getGeofenceIds().get(0)) : null);
++        Map<String, String> driverNames = new HashMap<>();
++        for (Driver driver : storage.getObjects(Driver.class, new Request(new Columns.All()))) {
++            driverNames.put(driver.getUniqueId(), driver.getName());
++        }
++        @SuppressWarnings("unchecked")
++        List<Map<String, Object>> operators = (List<Map<String, Object>>) analysis.get("operators");
++        operators.forEach(item -> item.put("name", driverNames.getOrDefault((String) item.get("operator"),
++                (String) item.get("operator"))));
++        double billable = "work".equals(result.get("billing"))
++                ? (Double) analysis.get("workHours") : (Double) analysis.get("engineHours");
++        result.put("billableHours", billable);
++        result.put("amount", device.getDouble(RATE) > 0 ? Math.round(billable * device.getDouble(RATE) * 100) / 100.0
++                : null);
++        List<Map<String, Object>> maintenances = maintenances(device, latest);
++        result.put("maintenances", maintenances);
++        result.put("nextMaintenance", maintenances.isEmpty() ? null : maintenances.get(0));
++        return result;
++    }
++
++    @GET
++    public List<Map<String, Object>> fleet(@QueryParam("from") Date from, @QueryParam("to") Date to)
++            throws Exception {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            if (device.getBoolean(MODE)) {
++                Map<String, Object> item = summary(device, from, to, false);
++                item.remove("days");
++                result.add(item);
++            }
++        }
++        return result;
++    }
++
++    private Device device(long deviceId) throws Exception {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        return storage.getObject(Device.class, new Request(new Columns.All(), new Condition.Equals("id", deviceId)));
++    }
++
++    @GET
++    @Path("{deviceId}")
++    public Map<String, Object> detail(
++            @PathParam("deviceId") long deviceId, @QueryParam("from") Date from, @QueryParam("to") Date to)
++            throws Exception {
++        return summary(device(deviceId), from, to, true);
++    }
++
++    /**
++     * Settings of a machine; hourMeter is the current dashboard reading, kept as the offset to the engine hours.
++     */
++    @PUT
++    @Path("{deviceId}")
++    public Map<String, Object> update(@PathParam("deviceId") long deviceId, Map<String, Object> body)
++            throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Device device = device(deviceId);
++        if (!Boolean.TRUE.equals(body.get("machineMode"))) {
++            device.getAttributes().remove(MODE);
++        } else {
++            device.set(MODE, true);
++        }
++        for (String key : List.of(TYPE, WORK, SCHEDULE, DAYS, BILLING)) {
++            Object value = body.get(key);
++            if (value != null && !String.valueOf(value).isBlank()) {
++                device.set(key, String.valueOf(value).trim());
++            } else {
++                device.getAttributes().remove(key);
++            }
++        }
++        if (body.get(SCHEDULE) != null && !String.valueOf(body.get(SCHEDULE)).isBlank()
++                && MachineryAnalyzer.schedule(String.valueOf(body.get(SCHEDULE)), (String) body.get(DAYS)) == null) {
++            throw new IllegalArgumentException("Schedule like 07:00-18:00");
++        }
++        if (body.get(RATE) instanceof Number number && number.doubleValue() > 0) {
++            device.set(RATE, number.doubleValue());
++        } else {
++            device.getAttributes().remove(RATE);
++        }
++        if (body.get("hourMeter") instanceof Number reading) {
++            Position latest = FleetUtil.latest(storage, cacheManager, device);
++            double raw = latest != null ? latest.getLong(Position.KEY_HOURS) / 3_600_000.0 : 0;
++            device.set(OFFSET, Math.round((reading.doubleValue() - raw) * 100) / 100.0);
++        }
++        FleetUtil.saveAttributes(storage, cacheManager, device);
++        Date now = new Date();
++        return summary(device, new Date(now.getTime() - 86_400_000L), now, false);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/machinery/MachineryAnalyzer.java b/src/main/java/org/traccar/machinery/MachineryAnalyzer.java
+new file mode 100644
+index 0000000..c269c77
+--- /dev/null
++++ b/src/main/java/org/traccar/machinery/MachineryAnalyzer.java
+@@ -0,0 +1,219 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.machinery;
++
++import java.time.DayOfWeek;
++import java.time.Instant;
++import java.time.LocalDate;
++import java.time.LocalTime;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.TreeMap;
++
++/**
++ * Use of a heavy machine from its positions: every interval between two messages takes the state of the first one,
++ * off (ignition off), work (the work input on or, without it, moving) or idle (engine on without work). Intervals
++ * longer than the gap limit only count the limit while the engine is on (the rest is time without data). Totals by
++ * day, site (geofence) and operator, engine time outside the work schedule, fuel per engine hour and segments for a
++ * timeline.
++ */
++public final class MachineryAnalyzer {
++
++    public static final String OFF = "off";
++    public static final String IDLE = "idle";
++    public static final String WORK = "work";
++    private static final long MAX_GAP = 30 * 60_000L;
++
++    public record Sample(long time, Boolean ignition, Boolean working, double speedKmh, List<Long> sites,
++            String operator, Double fuelUsed) {
++    }
++
++    public record Schedule(LocalTime from, LocalTime to, Set<DayOfWeek> days) {
++
++        boolean contains(ZonedDateTime moment) {
++            LocalTime time = moment.toLocalTime();
++            return days.contains(moment.getDayOfWeek()) && !time.isBefore(from) && time.isBefore(to);
++        }
++    }
++
++    private MachineryAnalyzer() {
++    }
++
++    public static String state(Sample sample) {
++        if (sample.ignition() != null && !sample.ignition()) {
++            return OFF;
++        }
++        if (sample.ignition() == null && sample.working() == null) {
++            return sample.speedKmh() >= 2 ? WORK : OFF;
++        }
++        if (sample.working() != null) {
++            return sample.working() ? WORK : IDLE;
++        }
++        return sample.speedKmh() >= 2 ? WORK : IDLE;
++    }
++
++    private static double hours(long millis) {
++        return Math.round(millis / 36_000.0) / 100.0;
++    }
++
++    private static Map<String, Object> bucket(long[] values) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("workHours", hours(values[0]));
++        result.put("idleHours", hours(values[1]));
++        result.put("offHours", hours(values[2]));
++        result.put("engineHours", hours(values[0] + values[1]));
++        result.put("utilization", values[0] + values[1] > 0
++                ? Math.round(values[0] * 1000.0 / (values[0] + values[1])) / 10.0 : null);
++        return result;
++    }
++
++    private static void add(long[] values, String state, long millis) {
++        values[WORK.equals(state) ? 0 : IDLE.equals(state) ? 1 : 2] += millis;
++    }
++
++    /**
++     * @param samples positions ordered by time
++     * @param from period start (millis)
++     * @param to period end (millis)
++     */
++    public static Map<String, Object> analyze(
++            List<Sample> samples, long from, long to, ZoneId zone, Schedule schedule, boolean withSegments) {
++        long[] total = new long[3];
++        long noData = 0;
++        long outOfHours = 0;
++        Map<LocalDate, long[]> days = new TreeMap<>();
++        Map<Long, long[]> sites = new LinkedHashMap<>();
++        Map<String, long[]> operators = new LinkedHashMap<>();
++        List<Map<String, Object>> segments = new ArrayList<>();
++        Double firstFuel = null;
++        Double lastFuel = null;
++        for (int i = 0; i < samples.size(); i++) {
++            Sample sample = samples.get(i);
++            if (sample.fuelUsed() != null) {
++                firstFuel = firstFuel == null ? sample.fuelUsed() : firstFuel;
++                lastFuel = sample.fuelUsed();
++            }
++            long start = Math.max(from, sample.time());
++            long end = Math.min(to, i + 1 < samples.size() ? samples.get(i + 1).time() : Math.min(to,
++                    System.currentTimeMillis()));
++            if (end <= start) {
++                continue;
++            }
++            String state = state(sample);
++            if (!OFF.equals(state) && end - start > MAX_GAP) {
++                noData += end - start - MAX_GAP;
++                end = start + MAX_GAP;
++            }
++            long duration = end - start;
++            add(total, state, duration);
++            for (Long site : sample.sites()) {
++                add(sites.computeIfAbsent(site, key -> new long[3]), state, duration);
++            }
++            if (sample.operator() != null && !OFF.equals(state)) {
++                add(operators.computeIfAbsent(sample.operator(), key -> new long[3]), state, duration);
++            }
++            // split by day (and count engine time outside the schedule) in steps of at most one hour
++            long cursor = start;
++            while (cursor < end) {
++                ZonedDateTime moment = Instant.ofEpochMilli(cursor).atZone(zone);
++                long dayEnd = moment.toLocalDate().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
++                long stepEnd = Math.min(end, Math.min(dayEnd, cursor + 3_600_000L));
++                add(days.computeIfAbsent(moment.toLocalDate(), key -> new long[3]), state, stepEnd - cursor);
++                if (schedule != null && !OFF.equals(state) && !schedule.contains(moment)) {
++                    outOfHours += stepEnd - cursor;
++                }
++                cursor = stepEnd;
++            }
++            if (withSegments) {
++                Map<String, Object> last = segments.isEmpty() ? null : segments.get(segments.size() - 1);
++                if (last != null && last.get("state").equals(state) && (Long) last.get("end") == start) {
++                    last.put("end", end);
++                } else if (segments.size() < 3000) {
++                    Map<String, Object> segment = new LinkedHashMap<>();
++                    segment.put("state", state);
++                    segment.put("start", start);
++                    segment.put("end", end);
++                    segments.add(segment);
++                }
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>(bucket(total));
++        result.put("noDataHours", hours(noData));
++        result.put("outOfHoursHours", schedule != null ? hours(outOfHours) : null);
++        double engine = (total[0] + total[1]) / 3_600_000.0;
++        boolean fuel = firstFuel != null && lastFuel > firstFuel;
++        result.put("fuelUsed", fuel ? Math.round((lastFuel - firstFuel) * 10) / 10.0 : null);
++        result.put("fuelPerHour", firstFuel != null && lastFuel > firstFuel && engine > 0.1
++                ? Math.round((lastFuel - firstFuel) / engine * 10) / 10.0 : null);
++        List<Map<String, Object>> dayList = new ArrayList<>();
++        days.forEach((date, values) -> {
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("date", date.toString());
++            item.putAll(bucket(values));
++            dayList.add(item);
++        });
++        result.put("days", dayList);
++        List<Map<String, Object>> siteList = new ArrayList<>();
++        sites.forEach((site, values) -> {
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("geofenceId", site);
++            item.putAll(bucket(values));
++            siteList.add(item);
++        });
++        result.put("sites", siteList);
++        List<Map<String, Object>> operatorList = new ArrayList<>();
++        operators.forEach((operator, values) -> {
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("operator", operator);
++            item.putAll(bucket(values));
++            operatorList.add(item);
++        });
++        result.put("operators", operatorList);
++        if (withSegments) {
++            result.put("segments", segments);
++        }
++        return result;
++    }
++
++    /**
++     * "07:00-18:00" and days "1-6" (Monday = 1) or a list "1,2,3,4,5".
++     */
++    public static Schedule schedule(String hours, String days) {
++        if (hours == null || !hours.matches("\\d{1,2}:\\d{2}\\s*-\\s*\\d{1,2}:\\d{2}")) {
++            return null;
++        }
++        String[] parts = hours.split("-");
++        Set<DayOfWeek> set = new java.util.TreeSet<>();
++        String value = days == null || days.isBlank() ? "1-6" : days.trim();
++        for (String item : value.split(",")) {
++            String[] range = item.trim().split("-");
++            int a = Integer.parseInt(range[0].trim());
++            int b = range.length > 1 ? Integer.parseInt(range[1].trim()) : a;
++            for (int day = a; day <= b; day++) {
++                set.add(DayOfWeek.of(day));
++            }
++        }
++        return new Schedule(LocalTime.parse(pad(parts[0].trim())), LocalTime.parse(pad(parts[1].trim())), set);
++    }
++
++    private static String pad(String time) {
++        return time.length() == 4 ? "0" + time : time;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/plans/ModuleRequestFilter.java b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+index 113d340..1107dca 100644
+--- a/src/main/java/org/traccar/plans/ModuleRequestFilter.java
++++ b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+@@ -50,6 +50,7 @@ public class ModuleRequestFilter implements ContainerRequestFilter {
+             Map.entry("assets", "assets"),
+             Map.entry("agro", "agro"),
+             Map.entry("device-config", "deviceConfig"),
++            Map.entry("machinery", "machinery"),
+             Map.entry("hierarchy/domains", "whitelabel"));
+ 
+     @Inject
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+index e1878f3..8818f89 100644
+--- a/src/main/java/org/traccar/plans/PlanService.java
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -54,7 +54,7 @@ public class PlanService {
+     public static final List<String> MODULES = List.of(
+             "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
+             "driving", "expenses", "maintenance", "reports", "dispatch", "transit", "tpms", "assets", "agro",
+-            "deviceConfig", "whitelabel");
++            "deviceConfig", "machinery", "whitelabel");
+ 
+     /** modules that existed before the catalog recorded which modules it knew */
+     private static final List<String> LEGACY_MODULES = List.of(
+@@ -67,11 +67,11 @@ public class PlanService {
+             new Plan("pro", "Profesional", "Flotas: sensores, combustible, alertas personalizadas y reportes",
+                     "#2563c9", 0, List.of("fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+                     "whatsapp", "driving", "expenses", "maintenance", "reports", "dispatch", "tpms", "assets",
+-                    "agro", "deviceConfig")),
++                    "agro", "deviceConfig", "machinery")),
+             new Plan("video", "Video", "Profesional más dashcams, video y chat con conductores", "#8e44ad", 0,
+                     List.of("video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+                     "whatsapp", "chat", "driving", "expenses", "maintenance", "reports", "dispatch", "tpms",
+-                    "assets", "agro", "deviceConfig")),
++                    "assets", "agro", "deviceConfig", "machinery")),
+             new Plan("reseller", "Distribuidor", "Todos los módulos y marca blanca para revender", "#1a9aa3", 0,
+                     MODULES));
+ 
+diff --git a/src/test/java/org/traccar/machinery/MachineryAnalyzerTest.java b/src/test/java/org/traccar/machinery/MachineryAnalyzerTest.java
+new file mode 100644
+index 0000000..d71eae5
+--- /dev/null
++++ b/src/test/java/org/traccar/machinery/MachineryAnalyzerTest.java
+@@ -0,0 +1,78 @@
++package org.traccar.machinery;
++
++import org.junit.jupiter.api.Test;
++
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++public class MachineryAnalyzerTest {
++
++    private static final ZoneId ZONE = ZoneId.of("America/Lima");
++
++    private static long at(int day, int hour, int minute) {
++        return ZonedDateTime.of(2026, 10, day, hour, minute, 0, 0, ZONE).toInstant().toEpochMilli();
++    }
++
++    private static MachineryAnalyzer.Sample sample(long time, Boolean ignition, Boolean working, long site, String operator) {
++        return new MachineryAnalyzer.Sample(time, ignition, working, 0, site > 0 ? List.of(site) : List.of(), operator,
++                null);
++    }
++
++    @Test
++    public void testDay() {
++        // 06:00 off, 07:00 on idle, 07:30 working until 12:00, 12:00 idle, 12:30 off, 19:00 on working (out of hours)
++        List<MachineryAnalyzer.Sample> samples = new ArrayList<>();
++        samples.add(sample(at(5, 6, 0), false, false, 0, null));
++        samples.add(sample(at(5, 7, 0), true, false, 7, "A1"));
++        for (int minute = 30; minute < 300; minute += 10) {
++            samples.add(sample(at(5, 7, 0) + minute * 60_000L, true, true, 7, "A1"));
++        }
++        samples.add(sample(at(5, 12, 0), true, false, 7, "A1"));
++        samples.add(sample(at(5, 12, 30), false, false, 7, null));
++        samples.add(sample(at(5, 19, 0), true, true, 0, "B2"));
++        samples.add(sample(at(5, 19, 20), true, true, 0, "B2"));
++        samples.add(sample(at(5, 19, 40), true, true, 0, "B2"));
++        samples.add(sample(at(5, 20, 0), false, false, 0, null));
++        Map<String, Object> result = MachineryAnalyzer.analyze(samples, at(5, 0, 0), at(6, 0, 0), ZONE,
++                MachineryAnalyzer.schedule("07:00-18:00", "1-6"), true);
++        assertEquals(5.5, (Double) result.get("workHours"), 0.01);
++        assertEquals(1.0, (Double) result.get("idleHours"), 0.01);
++        assertEquals(6.5, (Double) result.get("engineHours"), 0.01);
++        assertEquals(84.6, (Double) result.get("utilization"), 0.1);
++        assertEquals(1.0, (Double) result.get("outOfHoursHours"), 0.01);
++        List<?> sites = (List<?>) result.get("sites");
++        assertEquals(1, sites.size());
++        assertEquals(5.5, (Double) ((Map<?, ?>) sites.get(0)).get("engineHours"), 0.01);
++        assertEquals(2, ((List<?>) result.get("operators")).size());
++        assertEquals(1, ((List<?>) result.get("days")).size());
++    }
++
++    @Test
++    public void testGapAndDays() {
++        // engine on with no data for 5 hours across midnight: only 30 minutes count, the rest is without data
++        List<MachineryAnalyzer.Sample> samples = List.of(
++                sample(at(5, 22, 0), true, true, 0, null),
++                sample(at(6, 3, 0), false, false, 0, null),
++                sample(at(6, 4, 0), false, false, 0, null));
++        Map<String, Object> result = MachineryAnalyzer.analyze(samples, at(5, 20, 0), at(6, 5, 0), ZONE, null, false);
++        assertEquals(0.5, (Double) result.get("workHours"), 0.01);
++        assertEquals(4.5, (Double) result.get("noDataHours"), 0.01);
++        assertNull(result.get("outOfHoursHours"));
++    }
++
++    @Test
++    public void testNoWorkInput() {
++        // without a work input, moving is work and engine on standing is idle
++        MachineryAnalyzer.Sample moving = new MachineryAnalyzer.Sample(0, true, null, 5, List.of(), null, null);
++        MachineryAnalyzer.Sample standing = new MachineryAnalyzer.Sample(0, true, null, 0, List.of(), null, null);
++        assertEquals(MachineryAnalyzer.WORK, MachineryAnalyzer.state(moving));
++        assertEquals(MachineryAnalyzer.IDLE, MachineryAnalyzer.state(standing));
++    }
++
++}

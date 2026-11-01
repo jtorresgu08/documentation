@@ -492,3 +492,19 @@ la configuración de las cámaras.
   5. Si ofreces Google como mapa base a algunos clientes, hazlo como opción de un plan pagado y con una clave por
      cliente (atributo `googleKey` en su cuenta), para que el consumo lo asuma quien lo usa.
 
+## 23. Maquinaria pesada y Google Maps Embed
+
+- **Zona horaria**: fija `timezone` en el servidor (p. ej. `America/Lima`) o en cada usuario; el turno de las
+  máquinas, las horas por día y los mantenimientos se calculan en esa zona.
+- **Horas de motor**: Traccar las suma entre dos mensajes con la ignición encendida; si el equipo manda su propio
+  horómetro (atributo `hours`) se usa ese. Configura el equipo para reportar cada 1–5 min con motor encendido y al
+  apagar, e iguala el horómetro con la lectura del tablero al instalar.
+- **Trabajo real**: para excavadoras y cargadores conviene cablear una entrada (presión hidráulica, toma de fuerza o
+  sensor de vibración) y ponerla como «entrada que indica trabajo»; sin ella, una excavadora cavando quieta cuenta
+  como ralentí.
+- **Mantenimiento por horas**: crea en *Mantenimiento* uno de tipo «Horas de motor» (inicio y cada cuántas horas) y
+  asígnalo a la máquina o a su grupo.
+- **Google Maps Embed**: en Google Cloud activa solo «Maps Embed API» en la clave, restríngela por HTTP referrer a tus
+  dominios (también los de los distribuidores) y pégala en *Ajustes del servidor → Clave de Google* (o por cuenta, en
+  el atributo `googleKey`). El enlace de seguimiento del cliente usa la clave de la empresa dueña del viaje.
+

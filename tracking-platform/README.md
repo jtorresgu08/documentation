@@ -565,6 +565,30 @@ del equipo en la caché se hace bajo el mismo bloqueo que la cola. Se reprodujo 
 Capturas: `docs/capturas/v30-*.png`. Notas de uso de las claves de mapas sin exceder el nivel gratuito en la sección
 22 de `infra/DEPLOY.md`.
 
+## Maquinaria pesada y vistas de Google sin costo (parche `0030`)
+
+- **Maquinaria pesada** (*Maquinaria pesada*, módulo `machinery`): por máquina se define el tipo (excavadora,
+  cargador, retroexcavadora, volquete, rodillo...), la entrada que indica trabajo (hidráulico, toma de fuerza,
+  vibración; sin ella, trabajo = motor encendido y en movimiento), el turno y los días de trabajo y la tarifa de
+  alquiler por hora de motor o de trabajo.
+  - **Horómetro** desde las horas de motor del equipo, igualado al tablero con la lectura actual.
+  - **Estado ahora**: trabajando, en ralentí, apagada o sin señal (una máquina apagada sigue «apagada» hasta 24 h
+    sin reportar; con motor encendido, 30 min sin datos es «sin señal»).
+  - **Periodo**: horas de trabajo, de ralentí y apagada, utilización (trabajo / horas de motor), horas fuera de
+    horario, combustible por hora (si el equipo envía `fuelUsed`), horas por obra (geocercas) y por operador
+    (llavero o tarjeta RFID → conductor), gráfico por día, línea de tiempo, próximo mantenimiento por horas (los
+    mantenimientos de tipo «Horas de motor» de la unidad) y monto de alquiler. Parte diario y resumen en CSV.
+- **Vistas de Google con la Maps Embed API** (sin costo por carga; solo pide una clave restringida al dominio):
+  - Tarjeta de la unidad: *Vista de Google* (satélite y mapa), *Street View* y *Buscar cerca* (grifos, talleres,
+    llanterías, hospitales, comisarías, hospedajes).
+  - Centro de alertas: satélite, Street View o mapa del punto de la alerta.
+  - Despachos: *Ruta de Google* de la unidad por las paradas pendientes, y en el enlace de seguimiento del cliente
+    la ruta del vehículo a su entrega.
+  - Sin clave se ofrece la misma vista en Google Maps (nueva pestaña). El mapa principal no usa Google.
+
+Capturas: `docs/capturas/v31-*.png` (en las de Google, el recuadro muestra qué carga Google con la clave; el
+entorno de prueba no tiene clave ni salida a Google).
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -656,6 +680,7 @@ python3 server/tests/test_tpms.py
 python3 server/tests/test_assets.py
 python3 server/tests/test_device_config.py
 python3 server/tests/test_agro.py
+python3 server/tests/test_machinery.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

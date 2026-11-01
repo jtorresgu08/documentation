@@ -32,6 +32,8 @@ import { formatPeriod } from '../main/DeviceRow';
 import { devicesActions } from '../store';
 import { openVideoWindow } from '../common/util/videoWindows';
 import usePersistedState from '../common/util/usePersistedState';
+import GoogleEmbed from '../common/components/GoogleEmbed';
+import { useAttributePreference } from '../common/util/preferences';
 import {
   SEVERITIES, SEVERITY_COLORS, STATUS_COLORS, alertTitle, capitalize, playAlertSound,
 } from './alertUtils';
@@ -73,6 +75,8 @@ const AlertCenterPage = () => {
   const [checked, setChecked] = useState([]);
   const [note, setNote] = useState('');
   const [position, setPosition] = useState(null);
+  const [googleTab, setGoogleTab] = useState('satellite');
+  const googleKey = useAttributePreference('googleKey');
   const [error, setError] = useState(null);
   const known = useRef(null);
 
@@ -204,6 +208,25 @@ const AlertCenterPage = () => {
           {position.address && <Typography variant="body2">{position.address}</Typography>}
           <Typography variant="caption" color="text.secondary">{`${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)}`}</Typography>
         </Stack>
+      )}
+
+      {position && (
+        <Box sx={{ mt: 1.5 }}>
+          <Stack direction="row" spacing={0.75} sx={{ mb: 1 }}>
+            {[['satellite', t('googleSatellite')], ['streetview', 'Street View'], ['map', t('googleMap')]].map(([key, label]) => (
+              <Chip key={key} size="small" label={label} color={googleTab === key ? 'primary' : 'default'} onClick={() => setGoogleTab(key)} />
+            ))}
+          </Stack>
+          <GoogleEmbed
+            googleKey={googleKey}
+            height={220}
+            title={current.deviceName}
+            mode={googleTab === 'streetview' ? 'streetview' : 'place'}
+            maptype={googleTab === 'map' ? 'roadmap' : 'satellite'}
+            location={position}
+            heading={position.course}
+          />
+        </Box>
       )}
 
       <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>

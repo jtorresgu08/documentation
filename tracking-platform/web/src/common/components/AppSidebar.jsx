@@ -30,6 +30,7 @@ import DirectionsBusIcon from '@mui/icons-material/DirectionsBus';
 import TireRepairIcon from '@mui/icons-material/TireRepair';
 import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
 import AgricultureIcon from '@mui/icons-material/Agriculture';
+import ConstructionIcon from '@mui/icons-material/Construction';
 import SettingsRemoteIcon from '@mui/icons-material/SettingsRemote';
 import ShieldIcon from '@mui/icons-material/Shield';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -305,6 +306,9 @@ const AppSidebar = () => {
     },
     hasModule('agro') && {
       key: 'agro', title: t('agroTitle'), icon: <AgricultureIcon />, href: '/agro', match: /^\/agro/,
+    },
+    hasModule('machinery') && {
+      key: 'machinery', title: t('machineryTitle'), icon: <ConstructionIcon />, href: '/machinery', match: /^\/machinery/,
     },
     hasModule('deviceConfig') && !readonly && !limitCommands && {
       key: 'deviceConfig', title: t('deviceConfigTitle'), icon: <SettingsRemoteIcon />, href: '/device-config', match: /^\/device-config/,

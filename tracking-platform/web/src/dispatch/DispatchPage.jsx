@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import {
+  DialogActions as GoogleDialogActions, DialogContent as GoogleDialogContent, DialogTitle as GoogleDialogTitle,
+} from '@mui/material';
+import DirectionsIcon from '@mui/icons-material/Directions';
+import GoogleEmbed from '../common/components/GoogleEmbed';
+import { useAttributePreference } from '../common/util/preferences';
 import {
   Alert, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, IconButton, LinearProgress, ListItemIcon,
   ListItemText, Menu, MenuItem, Paper, Snackbar, Stack, Tab, Tabs, TextField, Tooltip, Typography,
@@ -46,6 +53,9 @@ const whatsappLink = (phone, text) => `https://wa.me/${(phone || '').replace(/[^
 // pending route) and its stops with estimated arrival, delivery window, proof of delivery and actions
 const DispatchPage = () => {
   const t = useTranslation();
+  const googleKey = useAttributePreference('googleKey');
+  const livePositions = useSelector((state) => state.session.positions);
+  const [googleRoute, setGoogleRoute] = useState(false);
   const theme = useTheme();
   const navigate = useNavigate();
   const readonly = useRestriction('readonly');
@@ -224,6 +234,7 @@ const DispatchPage = () => {
                   {selected.status === 'planned' && <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={() => tripAction('start')}>{t('dispatchStart')}</Button>}
                   {selected.status !== 'cancelled' && <Button size="small" variant="outlined" startIcon={<EditIcon />} onClick={() => setEditing(selected)}>{t('sharedEdit')}</Button>}
                   <Button size="small" startIcon={<LinkIcon />} onClick={() => copy(driverUrl)}>{t('dispatchDriverLink')}</Button>
+                  <Button size="small" startIcon={<DirectionsIcon />} onClick={() => setGoogleRoute(true)}>{t('googleRoute')}</Button>
                   {selected.driverPhone && (
                     <IconButton size="small" color="success" component="a" target="_blank" rel="noreferrer" href={whatsappLink(selected.driverPhone, `${t('dispatchDriverMessage')} ${selected.name}: ${driverUrl}`)}>
                       <WhatsAppIcon fontSize="small" />
@@ -354,6 +365,29 @@ const DispatchPage = () => {
         />
       )}
       <Snackbar open={!!message} autoHideDuration={2500} onClose={() => setMessage(null)} message={message} />
+      {googleRoute && selected && (() => {
+        const pending = selected.stops.filter((stop) => stop.status === 'pending' || stop.status === 'arrived').sort((a, b) => a.sequence - b.sequence);
+        const route = pending.length ? pending : selected.stops;
+        const live = livePositions[selected.deviceId];
+        const origin = live || route[0];
+        return (
+          <Dialog open fullWidth maxWidth="md" onClose={() => setGoogleRoute(false)}>
+            <GoogleDialogTitle>{`${t('googleRoute')} · ${selected.name}`}</GoogleDialogTitle>
+            <GoogleDialogContent>
+              <GoogleEmbed
+                googleKey={googleKey}
+                height={460}
+                title={selected.name}
+                mode="directions"
+                origin={origin}
+                destination={route[route.length - 1]}
+                waypoints={route.slice(live ? 0 : 1, -1)}
+              />
+            </GoogleDialogContent>
+            <GoogleDialogActions><Button onClick={() => setGoogleRoute(false)}>{t('sharedHide')}</Button></GoogleDialogActions>
+          </Dialog>
+        );
+      })()}
     </Box>
   );
 };

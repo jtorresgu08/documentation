@@ -18,6 +18,7 @@ export const MODULE_LABELS = {
   assets: 'moduleAssets',
   agro: 'moduleAgro',
   deviceConfig: 'moduleDeviceConfig',
+  machinery: 'moduleMachinery',
   whitelabel: 'moduleWhitelabel',
 };
 
