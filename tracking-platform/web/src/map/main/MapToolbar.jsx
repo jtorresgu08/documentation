@@ -10,6 +10,7 @@ import BubbleChartIcon from '@mui/icons-material/BubbleChart';
 import NavigationIcon from '@mui/icons-material/Navigation';
 import StraightenIcon from '@mui/icons-material/Straighten';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import TrafficIcon from '@mui/icons-material/Traffic';
 import { useTranslation } from '../../common/components/LocalizationProvider';
 
 const useStyles = makeStyles()((theme) => ({
@@ -60,6 +61,7 @@ const MapToolbar = ({ tools, distance }) => {
     { key: 'cluster', title: t('mapCluster'), icon: <BubbleChartIcon /> },
     { key: 'follow', title: t('mapFollowSelected'), icon: <NavigationIcon /> },
     { key: 'ruler', title: t('mapRuler'), icon: <StraightenIcon /> },
+    { key: 'traffic', title: t('mapTraffic'), icon: <TrafficIcon /> },
     { key: 'fullscreen', title: t('mapFullscreen'), icon: <FullscreenIcon />, action: true },
   ];
 

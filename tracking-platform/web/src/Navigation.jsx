@@ -44,6 +44,11 @@ import DeliveryTrackPage from './dispatch/DeliveryTrackPage';
 import TransitPage from './transit/TransitPage';
 import TransitReportPage from './transit/TransitReportPage';
 import DriverTransitPage from './transit/DriverTransitPage';
+import TpmsPage from './tpms/TpmsPage';
+import AssetsPage from './assets/AssetsPage';
+import AgroPage from './agro/AgroPage';
+import DeviceConfigPage from './deviceConfig/DeviceConfigPage';
+import SecurityPage from './security/SecurityPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -160,6 +165,11 @@ const Navigation = () => {
         <Route path="dispatch/orders" element={<OrdersPage />} />
         <Route path="dispatch/planner" element={<PlannerPage />} />
         <Route path="transit" element={<TransitPage />} />
+        <Route path="tpms" element={<TpmsPage />} />
+        <Route path="assets" element={<AssetsPage />} />
+        <Route path="agro" element={<AgroPage />} />
+        <Route path="device-config" element={<DeviceConfigPage />} />
+        <Route path="security" element={<SecurityPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
         <Route path="admin" element={<ResellerDashboardPage />} />
         <Route path="dashcam" element={<DashcamPage />} />

@@ -27,6 +27,11 @@ import PaletteIcon from '@mui/icons-material/Palette';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import DirectionsBusIcon from '@mui/icons-material/DirectionsBus';
+import TireRepairIcon from '@mui/icons-material/TireRepair';
+import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
+import AgricultureIcon from '@mui/icons-material/Agriculture';
+import SettingsRemoteIcon from '@mui/icons-material/SettingsRemote';
+import ShieldIcon from '@mui/icons-material/Shield';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PeopleIcon from '@mui/icons-material/People';
 import SpeedIcon from '@mui/icons-material/Speed';
@@ -277,6 +282,9 @@ const AppSidebar = () => {
     !disableReports && {
       key: 'alertCenter', title: t('alertCenterTitle'), icon: <NotificationsActiveIcon />, href: '/alert-center', match: /^\/alert-center/,
     },
+    {
+      key: 'security', title: t('securityTitle'), icon: <ShieldIcon />, href: '/security', match: /^\/security/,
+    },
     hasModule('alerts') && {
       key: 'alertRules', title: t('ruleTitle'), icon: <RuleIcon />, href: '/alert-rules', match: /^\/alert-rules/,
     },
@@ -288,6 +296,18 @@ const AppSidebar = () => {
     },
     hasModule('transit') && {
       key: 'transit', title: t('transitTitle'), icon: <DirectionsBusIcon />, href: '/transit', match: /^\/(transit|reports\/transit)/,
+    },
+    hasModule('tpms') && {
+      key: 'tpms', title: t('tpmsTitle'), icon: <TireRepairIcon />, href: '/tpms', match: /^\/tpms/,
+    },
+    hasModule('assets') && {
+      key: 'assets', title: t('assetsTitle'), icon: <BatteryChargingFullIcon />, href: '/assets', match: /^\/assets/,
+    },
+    hasModule('agro') && {
+      key: 'agro', title: t('agroTitle'), icon: <AgricultureIcon />, href: '/agro', match: /^\/agro/,
+    },
+    hasModule('deviceConfig') && !readonly && !limitCommands && {
+      key: 'deviceConfig', title: t('deviceConfigTitle'), icon: <SettingsRemoteIcon />, href: '/device-config', match: /^\/device-config/,
     },
     hasModule('video') && {
       key: 'cameras', title: t('navCameras'), icon: <VideocamIcon />, href: '/dashcam',

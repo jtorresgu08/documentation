@@ -1,4 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import TwoFactorGate from './security/TwoFactorGate';
 import { useDispatch, useSelector } from 'react-redux';
 import { makeStyles } from 'tss-react/mui';
 import AppSidebar from './common/components/AppSidebar';
@@ -73,7 +74,7 @@ const App = () => {
     );
   }
   return (
-    <>
+    <TwoFactorGate>
       <SocketController />
       <CachingController />
       <UpdateController />
@@ -84,7 +85,7 @@ const App = () => {
         </div>
       </div>
       <FloatingPanels />
-    </>
+    </TwoFactorGate>
   );
 };
 

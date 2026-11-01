@@ -106,12 +106,20 @@ def main():
     check('alert position', status == 200 and abs(position['latitude'] - lat) < 0.001, position)
 
     server = api.req('GET', '/api/server')[1]
+    previous = server['attributes'].get('alerts.severity')
     server['attributes']['alerts.severity'] = 'alarm:door=critical, alarm:sos=low'
     api.req('PUT', '/api/server', server)
     status, items = api.req('GET', '/api/alerts?' + period)
     severities = {item['attributes'].get('alarm'): item['severity'] for item in items}
     check('severity overrides from server settings', severities == {'sos': 'low', 'door': 'critical', 'hardBraking': 'high'},
           severities)
+    # leave the server settings as they were, so the test can run again
+    server = api.req('GET', '/api/server')[1]
+    if previous is None:
+        server['attributes'].pop('alerts.severity', None)
+    else:
+        server['attributes']['alerts.severity'] = previous
+    api.req('PUT', '/api/server', server)
 
     viewer, status = login('ops-viewer@test', 'secret123', 'viewer', admin=api)
     status, items = viewer.req('GET', '/api/alerts?' + period)
@@ -201,6 +209,8 @@ def main():
     status, _ = api.req('DELETE', f"/api/report-templates/{template['id']}")
     check('template deleted', status == 204, status)
 
+    for device in (good, bad):
+        api.req('DELETE', f"/api/devices/{device['id']}")
     failed = [name for name, ok in results if not ok]
     print(f'\n{len(results) - len(failed)}/{len(results)} OK')
     sys.exit(1 if failed else 0)

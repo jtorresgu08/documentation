@@ -62,6 +62,7 @@ import { mapIconKey, mapIcons } from '../../map/core/preloadImages';
 import { map } from '../../map/core/MapView';
 import { formatPeriod, statusOf } from '../../main/DeviceRow';
 import { openVideoWindow } from '../util/videoWindows';
+import StreetViewDialog, { streetViewUrl } from './StreetViewDialog';
 
 const SENSOR_ICONS = {
   fuel: <LocalGasStationIcon />,
@@ -235,6 +236,8 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
   const navigationAppTitle = useAttributePreference('navigationAppTitle');
 
   const [anchorEl, setAnchorEl] = useState(null);
+  const [streetView, setStreetView] = useState(false);
+  const googleKey = useAttributePreference('googleKey');
 
   const [removing, setRemoving] = useState(false);
 
@@ -438,7 +441,9 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
           )}
           {position && !readonly && <MenuItem onClick={handleGeofence}>{t('sharedCreateGeofence')}</MenuItem>}
           {position && <MenuItem component="a" target="_blank" href={`https://www.google.com/maps/search/?api=1&query=${position.latitude}%2C${position.longitude}`}>{t('linkGoogleMaps')}</MenuItem>}
-          {position && <MenuItem component="a" target="_blank" href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${position.latitude}%2C${position.longitude}&heading=${position.course}`}>{t('linkStreetView')}</MenuItem>}
+          {position && (googleKey
+            ? <MenuItem onClick={() => setStreetView(true)}>{t('linkStreetView')}</MenuItem>
+            : <MenuItem component="a" target="_blank" href={streetViewUrl(position)}>{t('linkStreetView')}</MenuItem>)}
           {position && navigationAppTitle && <MenuItem component="a" target="_blank" href={navigationAppLink.replace('{latitude}', position.latitude).replace('{longitude}', position.longitude)}>{navigationAppTitle}</MenuItem>}
           {!shareDisabled && !user.temporary && (
             <MenuItem onClick={() => navigate(`/settings/device/${deviceId}/share`)}>{t('deviceShare')}</MenuItem>
@@ -449,6 +454,7 @@ const StatusCard = ({ deviceId, position, onClose, disableActions, desktopPaddin
         </Menu>
       )}
       <EngineCutDialog deviceId={engineMode ? deviceId : null} mode={engineMode} onClose={() => setEngineMode(null)} />
+      <StreetViewDialog open={streetView} position={position} googleKey={googleKey} title={device?.name} onClose={() => setStreetView(false)} />
       <RemoveDialog
         open={removing}
         endpoint="devices"

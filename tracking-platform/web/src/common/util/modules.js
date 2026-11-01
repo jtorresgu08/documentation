@@ -14,6 +14,10 @@ export const MODULE_LABELS = {
   reports: 'moduleReports',
   dispatch: 'moduleDispatch',
   transit: 'moduleTransit',
+  tpms: 'moduleTpms',
+  assets: 'moduleAssets',
+  agro: 'moduleAgro',
+  deviceConfig: 'moduleDeviceConfig',
   whitelabel: 'moduleWhitelabel',
 };
 

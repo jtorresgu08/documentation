@@ -23,6 +23,10 @@ import usePersistedState from '../common/util/usePersistedState';
 import { useAttributePreference } from '../common/util/preferences';
 import { map } from '../map/core/MapView';
 import MapToolbar from '../map/main/MapToolbar';
+import MapTraffic from '../map/main/MapTraffic';
+import useMapOverlays from '../map/overlay/useMapOverlays';
+import { Snackbar } from '@mui/material';
+import { useTranslation } from '../common/components/LocalizationProvider';
 import MapRuler from '../map/main/MapRuler';
 import PanelMapLayers from '../panels/PanelMapLayers';
 import PanelLauncher from '../panels/PanelLauncher';
@@ -47,6 +51,10 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
   const [toolValues, setToolValues] = usePersistedState('mapTools', {});
   const [ruler, setRuler] = useState(false);
   const [distance, setDistance] = useState(null);
+  const [trafficHint, setTrafficHint] = useState(false);
+  const t = useTranslation();
+  const overlays = useMapOverlays();
+  const trafficOverlay = ['googleTraffic', 'tomTomFlow', 'hereFlow'].map((key) => overlays.find((overlay) => overlay.id === key && overlay.available)).find(Boolean);
 
   const values = {
     geofences: toolValues.geofences ?? geofencesPreference,
@@ -54,6 +62,7 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
     cluster: toolValues.cluster ?? clusterPreference,
     follow: toolValues.follow ?? followPreference,
     ruler,
+    traffic: Boolean(toolValues.traffic && trafficOverlay),
   };
 
   const fitAll = () => {
@@ -85,6 +94,8 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
         }
       } else if (key === 'ruler') {
         setRuler(!ruler);
+      } else if (key === 'traffic' && !trafficOverlay) {
+        setTrafficHint(true);
       } else {
         setToolValues({ ...toolValues, [key]: !values[key] });
       }
@@ -95,6 +106,7 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
     <>
       <MapView>
         <MapOverlay />
+        {values.traffic && <MapTraffic overlay={trafficOverlay} />}
         {values.geofences && <MapGeofence />}
         <MapAccuracy positions={filteredPositions} />
         <MapLiveRoutes />
@@ -117,6 +129,7 @@ const MainMap = ({ filteredPositions, selectedPosition, onEventsClick }) => {
       <PanelLauncher />
       <MapToolbar tools={tools} distance={ruler ? (distance ?? 0) : null} />
       <MapScale />
+      <Snackbar open={trafficHint} autoHideDuration={8000} onClose={() => setTrafficHint(false)} message={t('mapTrafficHint')} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
       <MapCurrentLocation />
       <MapGeocoder />
       {!features.disableEvents && (

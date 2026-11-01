@@ -464,3 +464,31 @@ la configuración de las cámaras.
 - El parche `0028` corrige un bloqueo de la cola de posiciones de Traccar que podía dejar a un equipo sin actualizarse
   hasta reiniciar; aplícalo aunque no uses transporte público.
 
+## 22. TPMS, activos, agro, configuración en lote, 2FA y mapas de Google
+
+- La tabla `tc_agro_implements` se crea sola. Los campos son geocercas con el atributo `agroField`; los planes
+  guardados reciben solos los módulos nuevos (`tpms`, `assets`, `agro`, `deviceConfig`).
+- **TPMS**: revisa con qué atributos manda tu equipo cada neumático (en *Posiciones* o en el registro del servidor) y
+  usa ese patrón en la configuración, p. ej. `tire{n}Pressure`, `tpms{n}` o `io{n}`; si el equipo manda IDs de sensor
+  en lugar de posición, usa un atributo calculado para pasarlos a número de neumático.
+- **Activos**: los equipos a batería suelen reportar por HTTP o SMS una o pocas veces al día; fija el intervalo en el
+  activo igual al que tiene el equipo. La revisión de reportes atrasados corre cada 5 minutos.
+- **Configuración en lote**: los envíos se guardan en memoria (los últimos 200) y se pierden al reiniciar el servidor;
+  los comandos que quedaron en cola sí se conservan en la base de datos.
+- **2FA**: sin clave de servidor adicional. Si alguien pierde el celular y los códigos de recuperación, un
+  administrador puede quitar la clave TOTP de su cuenta desde la ficha del usuario. Activar `totpForce` en el servidor
+  exige 2FA a todos.
+- **Mapas de Google sin pasar el nivel gratuito**:
+  1. Usa un mapa base que no sea de Google para el uso diario (OpenStreetMap/MapTiler o tus propias teselas
+     vectoriales). Es donde está casi todo el consumo: cada usuario mirando el mapa pide teselas sin parar.
+  2. Deja Google solo para lo que se pide puntualmente: *Street View* embebido usa la Maps Embed API (sin costo por
+     uso según la tarifa de Google al momento de escribir esto; revísala en tu consola) y el botón *Tráfico* solo pide
+     teselas mientras está encendido.
+  3. Direcciones: no uses Google Geocoding por cada posición. Activa la caché de direcciones del servidor
+     (`geocoder.cache`) y `geocoder.onRequest=true` para buscar la dirección solo cuando alguien la pide, o usa
+     Nominatim/LocationIQ propios.
+  4. En la consola de Google Cloud: restringe la clave por dominio (HTTP referrer) y por API, pon **cuotas diarias**
+     por API (p. ej. tope de cargas por día) y una **alerta de presupuesto**; así nunca se pasa del monto que definas.
+  5. Si ofreces Google como mapa base a algunos clientes, hazlo como opción de un plan pagado y con una clave por
+     cliente (atributo `googleKey` en su cuenta), para que el consumo lo asuma quien lo usa.
+

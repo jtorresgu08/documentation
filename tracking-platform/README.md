@@ -534,6 +534,37 @@ del equipo en la caché se hace bajo el mismo bloqueo que la cola. Se reprodujo 
 `server/tests/test_processing_queue.py` es una prueba de carga que verifica que todos los equipos terminen con su
 última posición y sigan aceptando nuevas (no reproduce por sí sola el caso original, que depende del momento exacto).
 
+## TPMS, activos a batería, agro, configuración en lote, 2FA, tráfico y Street View (parche `0029`)
+
+- **Neumáticos (TPMS)**: por vehículo se define la disposición (ejes de 2 o 4 llantas), los atributos de presión y
+  temperatura de cada neumático (`tire{n}Pressure`, `{n}` = número), la unidad que envía el equipo (psi, bar, kPa) y
+  la que se muestra, y los límites. La página *Neumáticos (TPMS)* muestra la flota con cada vehículo dibujado y sus
+  llantas por color (normal, presión baja, alta, temperatura alta, sin dato), el detalle con presión y temperatura por
+  neumático y la presión de las últimas 24 h. Alerta `tpmsAlarm` una vez por cambio de estado.
+- **Activos a batería**: rastreadores que reportan pocas veces al día. Cada activo tiene su intervalo esperado; entre
+  reportes está «dormido» y pasa a «atrasado» si se demora un 25 % más. La batería sale del nivel en % o del voltaje
+  (rango lleno–vacío) y su tendencia de 30 días estima los días restantes. Alertas `assetMissedReport` y
+  `assetLowBattery` (una vez hasta que se recupera). Botón para enviar el intervalo al equipo (queda en cola hasta que
+  despierta).
+- **Agro y maquinaria**: implementos con ancho de trabajo y cómo saber que trabajan (una entrada del equipo, p. ej.
+  implemento abajo o toma de fuerza, o un rango de velocidad); campos = geocercas marcadas con su cultivo y área. La
+  labor de una unidad sobre un campo da hectáreas trabajadas, cobertura del campo, hectáreas sin labor, solape (zonas
+  pasadas dos o más veces), pasadas, horas, km y productividad (ha/h), con mapa coloreado por número de pasadas y el
+  recorrido. Resumen por unidad con CSV.
+- **Configuración de equipos en lote**: se eligen equipos (búsqueda, grupo, modelo), los comandos (a mano o desde
+  una plantilla propia o del distribuidor) y se envían; los equipos desconectados los reciben al conectarse. Cada envío
+  muestra por equipo: en cola, enviado, respondió (con la respuesta del equipo) o falló, con reintento. El corte y la
+  reanudación de motor no se envían en lote.
+- **Verificación en dos pasos (2FA)**: en *Seguridad* se activa con el QR de la app de autenticación, confirmando con
+  un código; se entregan 8 códigos de recuperación de un solo uso (sirven también para entrar). Un gerente o
+  distribuidor puede exigir 2FA a todas las cuentas que administra: quien no la tenga no puede usar la plataforma
+  hasta configurarla y no puede desactivarla. Un código equivocado cuenta como intento fallido de inicio de sesión.
+- **Tráfico y Street View**: botón *Tráfico* en el mapa (usa la clave de Google, TomTom o HERE que esté configurada);
+  *Street View* en el menú de la unidad, embebido si hay clave de Google y si no en Google Maps.
+
+Capturas: `docs/capturas/v30-*.png`. Notas de uso de las claves de mapas sin exceder el nivel gratuito en la sección
+22 de `infra/DEPLOY.md`.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -620,6 +651,11 @@ python3 server/tests/test_custom_fields.py
 python3 server/tests/test_fuel_units.py
 python3 server/tests/test_transit.py
 python3 server/tests/test_processing_queue.py
+python3 server/tests/test_two_factor.py
+python3 server/tests/test_tpms.py
+python3 server/tests/test_assets.py
+python3 server/tests/test_device_config.py
+python3 server/tests/test_agro.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

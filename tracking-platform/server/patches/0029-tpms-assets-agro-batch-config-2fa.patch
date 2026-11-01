@@ -1,0 +1,3197 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index 37af87f..acadcd3 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -433,4 +433,30 @@
+     <modifyDataType tableName="tc_transit_routes" columnName="schedule" newDataType="VARCHAR(8000)" />
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-agro">
++    <createTable tableName="tc_agro_implements">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT">
++        <constraints nullable="true" />
++      </column>
++      <column name="name" type="VARCHAR(128)">
++        <constraints nullable="false" />
++      </column>
++      <column name="type" type="VARCHAR(64)" />
++      <column name="width" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="workattribute" type="VARCHAR(64)" />
++      <column name="minspeed" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="maxspeed" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index b146523..dd11267 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -52,6 +52,8 @@ import org.traccar.handler.events.FuelEventHandler;
+ import org.traccar.handler.events.FuelSensorEventHandler;
+ import org.traccar.handler.events.DispatchEventHandler;
+ import org.traccar.handler.events.TransitEventHandler;
++import org.traccar.handler.events.TpmsEventHandler;
++import org.traccar.handler.events.AssetEventHandler;
+ import org.traccar.handler.events.GeofenceOverspeedEventHandler;
+ import org.traccar.handler.events.RuleEventHandler;
+ import org.traccar.handler.events.EngineStopEventHandler;
+@@ -138,6 +140,8 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 GeofenceOverspeedEventHandler.class,
+                 DispatchEventHandler.class,
+                 TransitEventHandler.class,
++                TpmsEventHandler.class,
++                AssetEventHandler.class,
+                 BehaviorEventHandler.class,
+                 FuelEventHandler.class,
+                 FuelSensorEventHandler.class,
+diff --git a/src/main/java/org/traccar/agro/AgroAnalyzer.java b/src/main/java/org/traccar/agro/AgroAnalyzer.java
+new file mode 100644
+index 0000000..eed9d83
+--- /dev/null
++++ b/src/main/java/org/traccar/agro/AgroAnalyzer.java
+@@ -0,0 +1,365 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.agro;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Field work from the track of a machine and the width of its implement. The working track is drawn on a grid as a
++ * swath as wide as the implement; every cell counts how many passes covered it (a pass ends when the heading turns
++ * more than 100 degrees from the direction it started with, as in a U-turn at the headland, or when work stops), so
++ * the worked area, the area applied twice or more (overlap) and the part of the field left without work come out of
++ * the same grid.
++ */
++public final class AgroAnalyzer {
++
++    private static final double EARTH = 6371008.8;
++    private static final double RAD = Math.PI / 180;
++    private static final int MAX_CELLS = 6_000_000;
++    private static final int MAX_DISPLAY_CELLS = 40_000;
++    private static final double TURN_DEGREES = 100;
++    private static final long MAX_GAP_MILLIS = 120_000;
++
++    public record Point(long time, double latitude, double longitude, double speedKmh, boolean working) {
++    }
++
++    private AgroAnalyzer() {
++    }
++
++    private static final class Projection {
++        private final double lat0;
++        private final double lon0;
++        private final double cos;
++
++        Projection(double lat0, double lon0) {
++            this.lat0 = lat0;
++            this.lon0 = lon0;
++            this.cos = Math.cos(lat0 * RAD);
++        }
++
++        double x(double lon) {
++            return (lon - lon0) * RAD * EARTH * cos;
++        }
++
++        double y(double lat) {
++            return (lat - lat0) * RAD * EARTH;
++        }
++
++        double lon(double x) {
++            return lon0 + x / (RAD * EARTH * cos);
++        }
++
++        double lat(double y) {
++            return lat0 + y / (RAD * EARTH);
++        }
++    }
++
++    private static double segmentDistance(double px, double py, double ax, double ay, double bx, double by) {
++        double dx = bx - ax;
++        double dy = by - ay;
++        double length2 = dx * dx + dy * dy;
++        double t = length2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / length2)) : 0;
++        return Math.hypot(px - ax - dx * t, py - ay - dy * t);
++    }
++
++    /**
++     * @param points track ordered by time
++     * @param width implement width in meters
++     * @param field field polygon as [lat, lon] points, or null to count all the work
++     */
++    public static Map<String, Object> analyze(List<Point> points, double width, List<double[]> field) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        if (width <= 0) {
++            throw new IllegalArgumentException("The implement needs a width");
++        }
++        List<Point> working = points.stream().filter(Point::working).toList();
++        double lat0;
++        double lon0;
++        if (field != null && field.size() >= 3) {
++            lat0 = field.stream().mapToDouble(p -> p[0]).average().orElse(0);
++            lon0 = field.stream().mapToDouble(p -> p[1]).average().orElse(0);
++        } else if (!working.isEmpty()) {
++            lat0 = working.get(0).latitude();
++            lon0 = working.get(0).longitude();
++        } else {
++            result.put("workedHa", 0.0);
++            result.put("passes", List.of());
++            return emptyResult(result, field);
++        }
++        Projection projection = new Projection(lat0, lon0);
++        double[] fx = null;
++        double[] fy = null;
++        double minX;
++        double minY;
++        double maxX;
++        double maxY;
++        if (field != null && field.size() >= 3) {
++            fx = field.stream().mapToDouble(p -> projection.x(p[1])).toArray();
++            fy = field.stream().mapToDouble(p -> projection.y(p[0])).toArray();
++            minX = Arrays.stream(fx).min().orElse(0);
++            maxX = Arrays.stream(fx).max().orElse(0);
++            minY = Arrays.stream(fy).min().orElse(0);
++            maxY = Arrays.stream(fy).max().orElse(0);
++        } else {
++            minX = working.stream().mapToDouble(p -> projection.x(p.longitude())).min().orElse(0) - width;
++            maxX = working.stream().mapToDouble(p -> projection.x(p.longitude())).max().orElse(0) + width;
++            minY = working.stream().mapToDouble(p -> projection.y(p.latitude())).min().orElse(0) - width;
++            maxY = working.stream().mapToDouble(p -> projection.y(p.latitude())).max().orElse(0) + width;
++        }
++        double cell = Math.max(0.5, Math.min(4, width / 4));
++        cell = Math.max(cell, Math.sqrt((maxX - minX) * (maxY - minY) / MAX_CELLS));
++        int nx = Math.max(1, (int) Math.ceil((maxX - minX) / cell));
++        int ny = Math.max(1, (int) Math.ceil((maxY - minY) / cell));
++        short[] counts = new short[nx * ny];
++        int[] lastPass = new int[nx * ny];
++        Arrays.fill(lastPass, -1);
++        boolean[] inside = new boolean[nx * ny];
++        if (fx != null) {
++            // scanline per row: the cells between pairs of edge crossings are inside the field
++            for (int row = 0; row < ny; row++) {
++                double y = minY + (row + 0.5) * cell;
++                List<Double> crossings = new ArrayList<>();
++                for (int i = 0, j = fx.length - 1; i < fx.length; j = i++) {
++                    if ((fy[i] > y) != (fy[j] > y)) {
++                        crossings.add(fx[i] + (y - fy[i]) / (fy[j] - fy[i]) * (fx[j] - fx[i]));
++                    }
++                }
++                crossings.sort(Double::compare);
++                for (int k = 0; k + 1 < crossings.size(); k += 2) {
++                    int from = Math.max(0, (int) Math.ceil((crossings.get(k) - minX) / cell - 0.5));
++                    int to = Math.min(nx - 1, (int) Math.floor((crossings.get(k + 1) - minX) / cell - 0.5));
++                    for (int col = from; col <= to; col++) {
++                        inside[row * nx + col] = true;
++                    }
++                }
++            }
++        } else {
++            Arrays.fill(inside, true);
++        }
++
++        double half = width / 2;
++        int pass = -1;
++        Double passHeading = null;
++        long workMillis = 0;
++        double workMeters = 0;
++        List<Map<String, Object>> passes = new ArrayList<>();
++        List<List<double[]>> tracks = new ArrayList<>();
++        List<double[]> track = null;
++        Map<String, Object> current = null;
++        for (int i = 1; i < points.size(); i++) {
++            Point a = points.get(i - 1);
++            Point b = points.get(i);
++            double ax = projection.x(a.longitude());
++            double ay = projection.y(a.latitude());
++            double bx = projection.x(b.longitude());
++            double by = projection.y(b.latitude());
++            double length = Math.hypot(bx - ax, by - ay);
++            long dt = b.time() - a.time();
++            if (!a.working() || !b.working() || dt <= 0 || dt > MAX_GAP_MILLIS || length > 300) {
++                passHeading = null;
++                current = null;
++                track = null;
++                continue;
++            }
++            if (length < 0.2) {
++                continue;
++            }
++            double heading = Math.toDegrees(Math.atan2(bx - ax, by - ay));
++            double turn = passHeading == null ? 360 : Math.abs(((heading - passHeading) % 360 + 540) % 360 - 180);
++            if (passHeading == null || turn > TURN_DEGREES) {
++                passHeading = heading;
++                pass++;
++                current = new LinkedHashMap<>();
++                current.put("number", pass + 1);
++                current.put("start", a.time());
++                current.put("meters", 0.0);
++                passes.add(current);
++                track = new ArrayList<>();
++                track.add(new double[] {a.latitude(), a.longitude()});
++                tracks.add(track);
++            }
++            current.put("end", b.time());
++            current.put("meters", (Double) current.get("meters") + length);
++            track.add(new double[] {b.latitude(), b.longitude()});
++            workMillis += dt;
++            workMeters += length;
++            int c0 = Math.max(0, (int) Math.floor((Math.min(ax, bx) - half - minX) / cell));
++            int c1 = Math.min(nx - 1, (int) Math.floor((Math.max(ax, bx) + half - minX) / cell));
++            int r0 = Math.max(0, (int) Math.floor((Math.min(ay, by) - half - minY) / cell));
++            int r1 = Math.min(ny - 1, (int) Math.floor((Math.max(ay, by) + half - minY) / cell));
++            for (int row = r0; row <= r1; row++) {
++                double cy = minY + (row + 0.5) * cell;
++                for (int col = c0; col <= c1; col++) {
++                    double cx = minX + (col + 0.5) * cell;
++                    int index = row * nx + col;
++                    if (lastPass[index] != pass && segmentDistance(cx, cy, ax, ay, bx, by) <= half) {
++                        lastPass[index] = pass;
++                        if (counts[index] < Short.MAX_VALUE) {
++                            counts[index]++;
++                        }
++                    }
++                }
++            }
++        }
++
++        double cellArea = cell * cell;
++        long worked = 0;
++        long applied = 0;
++        long outside = 0;
++        long fieldCells = 0;
++        for (int i = 0; i < counts.length; i++) {
++            if (inside[i]) {
++                fieldCells++;
++                if (counts[i] > 0) {
++                    worked++;
++                    applied += counts[i];
++                }
++            } else if (counts[i] > 0) {
++                outside++;
++            }
++        }
++        double workedHa = worked * cellArea / 10_000;
++        double appliedHa = applied * cellArea / 10_000;
++        double fieldHa = fx != null ? polygonArea(fx, fy) / 10_000 : 0;
++        double hours = workMillis / 3_600_000.0;
++        result.put("cellMeters", Math.round(cell * 100) / 100.0);
++        result.put("fieldHa", fx != null ? round(fieldHa, 2) : null);
++        result.put("workedHa", round(workedHa, 2));
++        result.put("appliedHa", round(appliedHa, 2));
++        result.put("overlapHa", round(appliedHa - workedHa, 2));
++        result.put("overlapPercent", appliedHa > 0 ? round((appliedHa - workedHa) / appliedHa * 100, 1) : 0.0);
++        result.put("coveragePercent", fx != null && fieldHa > 0 ? round(Math.min(100, workedHa / fieldHa * 100), 1)
++                : null);
++        result.put("missedHa", fx != null ? round(Math.max(0, fieldHa - workedHa), 2) : null);
++        result.put("outsideHa", fx != null ? round(outside * cellArea / 10_000, 2) : null);
++        result.put("workHours", round(hours, 2));
++        result.put("workKm", round(workMeters / 1000, 2));
++        result.put("averageSpeedKmh", hours > 0 ? round(workMeters / 1000 / hours, 1) : null);
++        result.put("haPerHour", hours > 0 ? round(workedHa / hours, 2) : null);
++        result.put("passCount", passes.size());
++        passes.forEach(item -> item.put("meters", Math.round((Double) item.get("meters"))));
++        result.put("passes", passes);
++        result.put("tracks", tracks);
++        result.put("coverage", display(counts, inside, nx, ny, cell, minX, minY, projection, fx != null));
++        return result;
++    }
++
++    private static Map<String, Object> emptyResult(Map<String, Object> result, List<double[]> field) {
++        result.put("appliedHa", 0.0);
++        result.put("overlapHa", 0.0);
++        result.put("overlapPercent", 0.0);
++        result.put("workHours", 0.0);
++        result.put("workKm", 0.0);
++        result.put("passCount", 0);
++        result.put("tracks", List.of());
++        result.put("coverage", Map.of("type", "FeatureCollection", "features", List.of()));
++        if (field != null && field.size() >= 3) {
++            Projection projection = new Projection(field.get(0)[0], field.get(0)[1]);
++            double[] fx = field.stream().mapToDouble(p -> projection.x(p[1])).toArray();
++            double[] fy = field.stream().mapToDouble(p -> projection.y(p[0])).toArray();
++            double fieldHa = polygonArea(fx, fy) / 10_000;
++            result.put("fieldHa", round(fieldHa, 2));
++            result.put("coveragePercent", 0.0);
++            result.put("missedHa", round(fieldHa, 2));
++        }
++        return result;
++    }
++
++    /**
++     * Coverage for the map: a coarser grid (at most about 40 000 cells) where each cell keeps the passes most of its
++     * covered cells had (1, 2 or 3+), cells left without work inside the field as 0, joined into rectangles per row.
++     */
++    private static Map<String, Object> display(
++            short[] counts, boolean[] inside, int nx, int ny, double cell, double minX, double minY,
++            Projection projection, boolean field) {
++        int factor = Math.max(1, (int) Math.ceil(Math.sqrt((double) nx * ny / MAX_DISPLAY_CELLS)));
++        int dx = (nx + factor - 1) / factor;
++        int dy = (ny + factor - 1) / factor;
++        List<Map<String, Object>> features = new ArrayList<>();
++        for (int row = 0; row < dy; row++) {
++            int runStart = -1;
++            int runValue = -1;
++            for (int col = 0; col <= dx; col++) {
++                int value = -1;
++                if (col < dx) {
++                    int[] buckets = new int[4];
++                    int insideCells = 0;
++                    int total = 0;
++                    for (int r = row * factor; r < Math.min(ny, (row + 1) * factor); r++) {
++                        for (int c = col * factor; c < Math.min(nx, (col + 1) * factor); c++) {
++                            int index = r * nx + c;
++                            total++;
++                            if (inside[index]) {
++                                insideCells++;
++                            }
++                            if (counts[index] > 0 && (inside[index] || !field)) {
++                                buckets[Math.min(3, counts[index])]++;
++                            } else if (inside[index] && field) {
++                                buckets[0]++;
++                            }
++                        }
++                    }
++                    int covered = buckets[1] + buckets[2] + buckets[3];
++                    if (covered * 2 >= Math.max(1, field ? insideCells : total) && covered > 0) {
++                        value = buckets[3] >= buckets[2] && buckets[3] >= buckets[1] ? 3
++                                : buckets[2] >= buckets[1] ? 2 : 1;
++                    } else if (field && insideCells * 2 >= total) {
++                        value = 0;
++                    }
++                }
++                if (value != runValue) {
++                    if (runValue >= 0) {
++                        double x0 = minX + runStart * factor * cell;
++                        double x1 = minX + Math.min(nx, col * factor) * cell;
++                        double y0 = minY + row * factor * cell;
++                        double y1 = minY + Math.min(ny, (row + 1) * factor) * cell;
++                        List<List<Double>> ring = new ArrayList<>();
++                        for (double[] corner : new double[][] {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}, {x0, y0}}) {
++                            ring.add(List.of(round(projection.lon(corner[0]), 7), round(projection.lat(corner[1]), 7)));
++                        }
++                        Map<String, Object> feature = new LinkedHashMap<>();
++                        feature.put("type", "Feature");
++                        feature.put("properties", Map.of("passes", runValue));
++                        feature.put("geometry", Map.of("type", "Polygon", "coordinates", List.of(ring)));
++                        features.add(feature);
++                    }
++                    runStart = col;
++                    runValue = value;
++                }
++            }
++        }
++        Map<String, Object> collection = new LinkedHashMap<>();
++        collection.put("type", "FeatureCollection");
++        collection.put("features", features);
++        return collection;
++    }
++
++    private static double polygonArea(double[] x, double[] y) {
++        double sum = 0;
++        for (int i = 0, j = x.length - 1; i < x.length; j = i++) {
++            sum += (x[j] + x[i]) * (y[j] - y[i]);
++        }
++        return Math.abs(sum / 2);
++    }
++
++    private static double round(double value, int digits) {
++        double factor = Math.pow(10, digits);
++        return Math.round(value * factor) / factor;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/AgroResource.java b/src/main/java/org/traccar/api/resource/AgroResource.java
+new file mode 100644
+index 0000000..46f95aa
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/AgroResource.java
+@@ -0,0 +1,407 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.databind.DeserializationFeature;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.agro.AgroAnalyzer;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.geofence.GeofenceCircle;
++import org.traccar.geofence.GeofenceGeometry;
++import org.traccar.geofence.GeofencePolygon;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.model.AgroImplement;
++import org.traccar.model.Device;
++import org.traccar.model.Geofence;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Agriculture and machinery: implements (width and how to know they work), fields (geofences marked as fields, with
++ * crop and area) and field work: worked hectares, overlap, coverage of the field, passes, hours and productivity.
++ */
++@Path("agro")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class AgroResource extends BaseResource {
++
++    public static final String IMPLEMENT = "agroImplementId";
++    public static final String FIELD = "agroField";
++    public static final String CROP = "crop";
++
++    @Inject
++    private CacheManager cacheManager;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    private Set<Long> visibleOwners() throws StorageException {
++        if (!permissionsService.notAdmin(getUserId())) {
++            return null;
++        }
++        Set<Long> owners = new HashSet<>(hierarchyService.getDescendants(getUserId()));
++        owners.add(getUserId());
++        for (long ancestorId : hierarchyService.getAncestors(getUserId())) {
++            User ancestor = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", ancestorId)));
++            if (ancestor != null && !ancestor.getAdministrator()) {
++                owners.add(ancestorId);
++            }
++        }
++        return owners;
++    }
++
++    public static long implementOf(Device device) {
++        Object value = device != null ? device.getAttributes().get(IMPLEMENT) : null;
++        try {
++            return value != null ? Long.parseLong(String.valueOf(value).replaceAll("\\.0$", "")) : 0;
++        } catch (NumberFormatException e) {
++            return 0;
++        }
++    }
++
++    // ---------- implements ----------
++
++    private Map<String, Object> view(AgroImplement implement) throws StorageException {
++        Map<String, Object> result = objectMapper.copy()
++                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).convertValue(implement, Map.class);
++        List<Long> deviceIds = new ArrayList<>();
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            if (implementOf(device) == implement.getId()) {
++                deviceIds.add(device.getId());
++            }
++        }
++        result.put("deviceIds", deviceIds);
++        return result;
++    }
++
++    @GET
++    @Path("implements")
++    public List<Map<String, Object>> implementsList() throws StorageException {
++        Set<Long> owners = visibleOwners();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (AgroImplement implement : storage.getObjects(AgroImplement.class, new Request(
++                new Columns.All(), new Order("name")))) {
++            if (owners == null || owners.contains(implement.getUserId())) {
++                result.add(view(implement));
++            }
++        }
++        return result;
++    }
++
++    private AgroImplement checkImplement(long id) throws StorageException {
++        AgroImplement implement = storage.getObject(AgroImplement.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        Set<Long> owners = visibleOwners();
++        if (implement == null || owners != null && !owners.contains(implement.getUserId())) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return implement;
++    }
++
++    private static void read(AgroImplement implement, Map<String, Object> body) {
++        String name = String.valueOf(body.getOrDefault("name", "")).trim();
++        double width = body.get("width") instanceof Number number ? number.doubleValue() : 0;
++        if (name.isEmpty() || width <= 0 || width > 60) {
++            throw new IllegalArgumentException("The implement needs a name and a width between 0 and 60 m");
++        }
++        implement.setName(name);
++        implement.setType((String) body.get("type"));
++        implement.setWidth(width);
++        String attribute = (String) body.get("workAttribute");
++        implement.setWorkAttribute(attribute != null && !attribute.isBlank() ? attribute.trim() : null);
++        implement.setMinSpeed(body.get("minSpeed") instanceof Number number ? number.doubleValue() : 0);
++        implement.setMaxSpeed(body.get("maxSpeed") instanceof Number number ? number.doubleValue() : 0);
++    }
++
++    @SuppressWarnings("unchecked")
++    private void assign(long implementId, Object deviceIds) throws Exception {
++        if (!(deviceIds instanceof List<?> list)) {
++            return;
++        }
++        Set<Long> wanted = new HashSet<>();
++        for (Object id : list) {
++            wanted.add(((Number) id).longValue());
++        }
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            boolean assigned = implementOf(device) == implementId;
++            boolean want = wanted.contains(device.getId());
++            if (assigned != want) {
++                permissionsService.checkPermission(Device.class, getUserId(), device.getId());
++                if (want) {
++                    device.set(IMPLEMENT, implementId);
++                } else {
++                    device.getAttributes().remove(IMPLEMENT);
++                }
++                FleetUtil.saveAttributes(storage, cacheManager, device);
++            }
++        }
++    }
++
++    @POST
++    @Path("implements")
++    public Map<String, Object> create(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        AgroImplement implement = new AgroImplement();
++        read(implement, body);
++        implement.setUserId(getUserId());
++        implement.setId(storage.addObject(implement, new Request(new Columns.Exclude("id"))));
++        assign(implement.getId(), body.get("deviceIds"));
++        return view(implement);
++    }
++
++    @PUT
++    @Path("implements/{id}")
++    public Map<String, Object> update(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        AgroImplement implement = checkImplement(id);
++        read(implement, body);
++        storage.updateObject(implement, new Request(
++                new Columns.Exclude("id", "userId"), new Condition.Equals("id", id)));
++        assign(id, body.get("deviceIds"));
++        return view(implement);
++    }
++
++    @DELETE
++    @Path("implements/{id}")
++    public Response remove(@PathParam("id") long id) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        checkImplement(id);
++        assign(id, List.of());
++        storage.removeObject(AgroImplement.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    // ---------- fields ----------
++
++    private static List<double[]> polygon(Geofence geofence) {
++        try {
++            GeofenceGeometry geometry = geofence.getGeometry();
++            List<double[]> result = new ArrayList<>();
++            if (geometry instanceof GeofencePolygon polygon) {
++                for (GeofenceGeometry.Coordinate coordinate : polygon.fromWkt(geofence.getArea())) {
++                    result.add(new double[] {coordinate.lat(), coordinate.lon()});
++                }
++            } else if (geometry instanceof GeofenceCircle circle) {
++                GeofenceCircle.DecodedCircle decoded = circle.fromWkt(geofence.getArea());
++                for (int i = 0; i < 64; i++) {
++                    double angle = 2 * Math.PI * i / 64;
++                    result.add(new double[] {
++                        decoded.latitude() + decoded.radius() * Math.cos(angle) / 111_320,
++                        decoded.longitude() + decoded.radius() * Math.sin(angle)
++                                / (111_320 * Math.cos(Math.toRadians(decoded.latitude())))});
++                }
++            }
++            return result.size() >= 3 ? result : null;
++        } catch (Exception e) {
++            return null;
++        }
++    }
++
++    private List<Geofence> geofences() throws StorageException {
++        return permissionsService.notAdmin(getUserId())
++                ? new ArrayList<>(storage.getObjects(Geofence.class, new Request(
++                        new Columns.All(), new Condition.Permission(User.class, getUserId(), Geofence.class))))
++                : new ArrayList<>(storage.getObjects(Geofence.class, new Request(new Columns.All())));
++    }
++
++    private Map<String, Object> fieldView(Geofence geofence) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", geofence.getId());
++        result.put("name", geofence.getName());
++        result.put("field", geofence.getBoolean(FIELD));
++        result.put("crop", geofence.getString(CROP));
++        List<double[]> polygon = polygon(geofence);
++        result.put("areaHa", polygon != null ? AgroAnalyzer.analyze(List.of(), 1, polygon).get("fieldHa") : null);
++        result.put("polygon", polygon);
++        return result;
++    }
++
++    /**
++     * Geofences that can be fields (polygons and circles); the ones marked as fields first.
++     */
++    @GET
++    @Path("fields")
++    public List<Map<String, Object>> fields(@QueryParam("all") boolean all) throws StorageException {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Geofence geofence : geofences()) {
++            if ((all || geofence.getBoolean(FIELD)) && polygon(geofence) != null) {
++                result.add(fieldView(geofence));
++            }
++        }
++        result.sort((a, b) -> Boolean.compare((Boolean) b.get("field"), (Boolean) a.get("field")));
++        return result;
++    }
++
++    @PUT
++    @Path("fields/{id}")
++    public Map<String, Object> markField(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        permissionsService.checkPermission(Geofence.class, getUserId(), id);
++        Geofence geofence = storage.getObject(Geofence.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (Boolean.TRUE.equals(body.get("field"))) {
++            geofence.set(FIELD, true);
++        } else {
++            geofence.getAttributes().remove(FIELD);
++        }
++        String crop = (String) body.get("crop");
++        if (crop != null && !crop.isBlank()) {
++            geofence.set(CROP, crop.trim());
++        } else {
++            geofence.getAttributes().remove(CROP);
++        }
++        storage.updateObject(geofence, new Request(
++                new Columns.Include("attributes"), new Condition.Equals("id", id)));
++        cacheManager.invalidateObject(true, Geofence.class, id, ObjectOperation.UPDATE);
++        return fieldView(geofence);
++    }
++
++    // ---------- field work ----------
++
++    /**
++     * Whether the implement works at a position: its input attribute when it has one, otherwise a speed range (and
++     * the ignition on, when the device reports it).
++     */
++    public static boolean working(AgroImplement implement, Position position) {
++        if (implement.getWorkAttribute() != null) {
++            Object value = position.getAttributes().get(implement.getWorkAttribute());
++            if (value instanceof Boolean flag) {
++                return flag;
++            }
++            if (value instanceof Number number) {
++                return number.doubleValue() > 0;
++            }
++            String text = String.valueOf(value);
++            return value != null && ("1".equals(text) || "true".equalsIgnoreCase(text));
++        }
++        double speed = UnitsConverter.kphFromKnots(position.getSpeed());
++        double min = implement.getMinSpeed() > 0 ? implement.getMinSpeed() : 2;
++        double max = implement.getMaxSpeed() > 0 ? implement.getMaxSpeed() : 20;
++        Object ignition = position.getAttributes().get(Position.KEY_IGNITION);
++        return speed >= min && speed <= max && !Boolean.FALSE.equals(ignition);
++    }
++
++    private Map<String, Object> analyze(
++            Device device, AgroImplement implement, Geofence field, Date from, Date to) throws StorageException {
++        List<AgroAnalyzer.Point> points = new ArrayList<>();
++        for (Position position : FleetUtil.positions(storage, device.getId(), from, to)) {
++            if (position.getValid()) {
++                points.add(new AgroAnalyzer.Point(position.getFixTime().getTime(), position.getLatitude(),
++                        position.getLongitude(), UnitsConverter.kphFromKnots(position.getSpeed()),
++                        working(implement, position)));
++            }
++        }
++        Map<String, Object> result = AgroAnalyzer.analyze(points, implement.getWidth(),
++                field != null ? polygon(field) : null);
++        result.put("deviceId", device.getId());
++        result.put("deviceName", device.getName());
++        result.put("implementId", implement.getId());
++        result.put("implementName", implement.getName());
++        result.put("width", implement.getWidth());
++        if (field != null) {
++            result.put("fieldId", field.getId());
++            result.put("fieldName", field.getName());
++            result.put("crop", field.getString(CROP));
++            result.put("fieldPolygon", polygon(field));
++        }
++        return result;
++    }
++
++    @GET
++    @Path("work")
++    public Map<String, Object> work(
++            @QueryParam("deviceId") long deviceId, @QueryParam("implementId") long implementId,
++            @QueryParam("fieldId") long fieldId, @QueryParam("from") Date from, @QueryParam("to") Date to)
++            throws Exception {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        Device device = storage.getObject(Device.class, new Request(
++                new Columns.All(), new Condition.Equals("id", deviceId)));
++        long id = implementId > 0 ? implementId : implementOf(device);
++        if (id == 0) {
++            throw new IllegalArgumentException("The unit has no implement");
++        }
++        Geofence field = null;
++        if (fieldId > 0) {
++            permissionsService.checkPermission(Geofence.class, getUserId(), fieldId);
++            field = storage.getObject(Geofence.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", fieldId)));
++        }
++        return analyze(device, checkImplement(id), field, from, to);
++    }
++
++    /**
++     * Worked hectares, hours and productivity of every unit with an implement in the period (no field limit).
++     */
++    @GET
++    @Path("summary")
++    public List<Map<String, Object>> summary(@QueryParam("from") Date from, @QueryParam("to") Date to)
++            throws Exception {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            long id = implementOf(device);
++            if (id == 0 || result.size() >= 100) {
++                continue;
++            }
++            AgroImplement implement = storage.getObject(AgroImplement.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", id)));
++            if (implement == null) {
++                continue;
++            }
++            Map<String, Object> analysis = analyze(device, implement, null, from, to);
++            Map<String, Object> item = new LinkedHashMap<>();
++            for (String key : List.of("deviceId", "deviceName", "implementId", "implementName", "width", "workedHa",
++                    "appliedHa", "overlapPercent", "workHours", "workKm", "averageSpeedKmh", "haPerHour",
++                    "passCount")) {
++                item.put(key, analysis.get(key));
++            }
++            result.add(item);
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/AssetResource.java b/src/main/java/org/traccar/api/resource/AssetResource.java
+new file mode 100644
+index 0000000..24a0f29
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/AssetResource.java
+@@ -0,0 +1,138 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.assets.AssetService;
++import org.traccar.database.CommandsManager;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.model.Command;
++import org.traccar.model.Device;
++import org.traccar.model.QueuedCommand;
++import org.traccar.model.UserRestrictions;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Battery powered assets: list with last and next report, battery and days left; settings per asset; battery history;
++ * sending the report interval to the tracker.
++ */
++@Path("assets")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class AssetResource extends BaseResource {
++
++    @Inject
++    private AssetService assetService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    @Inject
++    private CommandsManager commandsManager;
++
++    @GET
++    public List<Map<String, Object>> list() throws Exception {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            if (AssetService.isAsset(device)) {
++                result.add(assetService.summary(device, FleetUtil.latest(storage, cacheManager, device), true));
++            }
++        }
++        return result;
++    }
++
++    private Device device(long deviceId) throws Exception {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        return storage.getObject(Device.class, new Request(new Columns.All(), new Condition.Equals("id", deviceId)));
++    }
++
++    @PUT
++    @Path("{deviceId}")
++    public Map<String, Object> update(@PathParam("deviceId") long deviceId, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Device device = device(deviceId);
++        boolean asset = Boolean.TRUE.equals(body.get("assetMode"));
++        if (asset) {
++            device.set(AssetService.MODE, true);
++        } else {
++            device.getAttributes().remove(AssetService.MODE);
++        }
++        for (String key : List.of(AssetService.REPORT_HOURS, AssetService.BATTERY_LOW,
++                AssetService.FULL_VOLTS, AssetService.EMPTY_VOLTS)) {
++            if (body.get(key) instanceof Number number && number.doubleValue() > 0) {
++                device.set(key, number.doubleValue());
++            } else {
++                device.getAttributes().remove(key);
++            }
++        }
++        FleetUtil.saveAttributes(storage, cacheManager, device);
++        return assetService.summary(device, FleetUtil.latest(storage, cacheManager, device), true);
++    }
++
++    @GET
++    @Path("{deviceId}/battery")
++    public Map<String, Object> battery(@PathParam("deviceId") long deviceId, @QueryParam("days") int days)
++            throws Exception {
++        return assetService.batteryTrend(device(deviceId), days > 0 ? Math.min(days, 180) : 30);
++    }
++
++    /**
++     * Sends the report interval to the tracker (periodic position command); queued until it wakes up.
++     */
++    @POST
++    @Path("{deviceId}/interval")
++    public Map<String, Object> interval(@PathParam("deviceId") long deviceId) throws Exception {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getLimitCommands);
++        Device device = device(deviceId);
++        Command command = new Command();
++        command.setDeviceId(deviceId);
++        command.setType(Command.TYPE_POSITION_PERIODIC);
++        command.set(Command.KEY_FREQUENCY, Math.round(AssetService.reportHours(device) * 3600));
++        QueuedCommand queued = commandsManager.sendCommand(command);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("status", queued != null ? "queued" : "sent");
++        result.put("frequency", command.getAttributes().get(Command.KEY_FREQUENCY));
++        return result;
++    }
++
++    /**
++     * Runs the late report check now (administrators; it also runs every five minutes).
++     */
++    @POST
++    @Path("check")
++    public Map<String, Object> check() throws Exception {
++        permissionsService.checkAdmin(getUserId());
++        assetService.checkMissed();
++        return Map.of("checked", true);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/DeviceConfigResource.java b/src/main/java/org/traccar/api/resource/DeviceConfigResource.java
+new file mode 100644
+index 0000000..8579b04
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/DeviceConfigResource.java
+@@ -0,0 +1,335 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.database.CommandsManager;
++import org.traccar.model.Command;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.QueuedCommand;
++import org.traccar.model.User;
++import org.traccar.model.UserRestrictions;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.atomic.AtomicLong;
++
++/**
++ * Remote configuration of many devices at once: templates of commands (own and of the managers above, so a
++ * distributor shares them with its clients) and jobs that send them to the chosen devices. Each command is sent
++ * now or queued until the device connects; the job shows per device whether it was sent, is still queued, answered
++ * (with the device's reply) or failed. Engine stop and resume are never sent in batch.
++ */
++@Path("device-config")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class DeviceConfigResource extends BaseResource {
++
++    public static final String TEMPLATES = "configTemplates";
++    private static final int MAX_JOBS = 200;
++    private static final long REPLY_MARGIN = 60_000;
++    private static final Set<String> FORBIDDEN = Set.of(Command.TYPE_ENGINE_STOP, Command.TYPE_ENGINE_RESUME);
++
++    private static final Map<Long, Map<String, Object>> JOBS = Collections.synchronizedMap(new LinkedHashMap<>());
++    private static final AtomicLong IDS = new AtomicLong();
++
++    @Inject
++    private CommandsManager commandsManager;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    private List<Map<String, Object>> templatesOf(User user, boolean own) throws Exception {
++        String json = user != null ? user.getString(TEMPLATES) : null;
++        if (json == null || json.isBlank()) {
++            return new ArrayList<>();
++        }
++        List<Map<String, Object>> list = objectMapper.readValue(json, new TypeReference<>() { });
++        list.forEach(item -> {
++            item.put("own", own);
++            item.put("owner", user.getName());
++        });
++        return list;
++    }
++
++    @GET
++    @Path("templates")
++    public List<Map<String, Object>> templates() throws Exception {
++        List<Map<String, Object>> result = new ArrayList<>(templatesOf(permissionsService.getUser(getUserId()), true));
++        for (long ancestorId : hierarchyService.getAncestors(getUserId())) {
++            result.addAll(templatesOf(storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", ancestorId))), false));
++        }
++        return result;
++    }
++
++    @SuppressWarnings("unchecked")
++    private static List<Map<String, Object>> commands(Object raw) {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Map<String, Object> item : (List<Map<String, Object>>) raw) {
++            String type = String.valueOf(item.getOrDefault("type", ""));
++            if (type.isBlank()) {
++                throw new IllegalArgumentException("Every command needs a type");
++            }
++            if (FORBIDDEN.contains(type)) {
++                throw new IllegalArgumentException("Engine stop and resume are not sent in batch");
++            }
++            Map<String, Object> command = new LinkedHashMap<>();
++            command.put("type", type);
++            command.put("textChannel", Boolean.TRUE.equals(item.get("textChannel")));
++            command.put("attributes", item.get("attributes") instanceof Map<?, ?> map ? map : Map.of());
++            result.add(command);
++        }
++        if (result.isEmpty() || result.size() > 20) {
++            throw new IllegalArgumentException("Between 1 and 20 commands");
++        }
++        return result;
++    }
++
++    /**
++     * Replaces the own templates: [{id, name, description, commands: [{type, textChannel, attributes}]}].
++     */
++    @PUT
++    @Path("templates")
++    public List<Map<String, Object>> saveTemplates(List<Map<String, Object>> body) throws Exception {
++        User user = permissionsService.getUser(getUserId());
++        if (user.getReadonly()) {
++            throw new SecurityException("Read-only user");
++        }
++        List<Map<String, Object>> clean = new ArrayList<>();
++        for (Map<String, Object> item : body) {
++            if (Boolean.FALSE.equals(item.get("own"))) {
++                continue;
++            }
++            Map<String, Object> template = new LinkedHashMap<>();
++            template.put("id", String.valueOf(item.getOrDefault("id", Long.toString(System.nanoTime(), 36))));
++            template.put("name", String.valueOf(item.getOrDefault("name", "")).trim());
++            template.put("description", item.get("description"));
++            template.put("commands", commands(item.get("commands")));
++            if (((String) template.get("name")).isEmpty()) {
++                throw new IllegalArgumentException("Every template needs a name");
++            }
++            clean.add(template);
++        }
++        String json = objectMapper.writeValueAsString(clean);
++        if (json.length() > 3800) {
++            throw new IllegalArgumentException("Too many templates");
++        }
++        user.set(TEMPLATES, json);
++        storage.updateObject(user, new Request(new Columns.Include("attributes"),
++                new Condition.Equals("id", user.getId())));
++        cacheManager.invalidateObject(true, User.class, user.getId(), ObjectOperation.UPDATE);
++        return templates();
++    }
++
++    /**
++     * Sends the commands to every device: {name, deviceIds, commands}.
++     */
++    @POST
++    @Path("jobs")
++    @SuppressWarnings("unchecked")
++    public Map<String, Object> create(Map<String, Object> body) throws Exception {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getLimitCommands);
++        List<Map<String, Object>> commands = commands(body.get("commands"));
++        List<Long> deviceIds = ((List<Number>) body.getOrDefault("deviceIds", List.of())).stream()
++                .map(Number::longValue).distinct().toList();
++        if (deviceIds.isEmpty() || deviceIds.size() > 2000) {
++            throw new IllegalArgumentException("Between 1 and 2000 devices");
++        }
++        for (long deviceId : deviceIds) {
++            permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        }
++        Map<String, Object> job = new LinkedHashMap<>();
++        long id = IDS.incrementAndGet();
++        job.put("id", id);
++        job.put("userId", getUserId());
++        job.put("name", String.valueOf(body.getOrDefault("name", "Configuración")));
++        job.put("created", new Date());
++        job.put("commands", commands);
++        List<Map<String, Object>> results = new ArrayList<>();
++        for (long deviceId : deviceIds) {
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", deviceId)));
++            Map<String, Object> result = new LinkedHashMap<>();
++            result.put("deviceId", deviceId);
++            result.put("name", device != null ? device.getName() : String.valueOf(deviceId));
++            result.put("queued", new ArrayList<Long>());
++            send(result, commands);
++            results.add(result);
++        }
++        job.put("results", results);
++        synchronized (JOBS) {
++            JOBS.put(id, job);
++            while (JOBS.size() > MAX_JOBS) {
++                JOBS.remove(JOBS.keySet().iterator().next());
++            }
++        }
++        return refresh(job);
++    }
++
++    @SuppressWarnings("unchecked")
++    private void send(Map<String, Object> result, List<Map<String, Object>> commands) {
++        List<Long> queued = (List<Long>) result.get("queued");
++        queued.clear();
++        result.remove("error");
++        result.remove("reply");
++        result.put("sentAt", new Date());
++        try {
++            for (Map<String, Object> item : commands) {
++                Command command = new Command();
++                command.setDeviceId((Long) result.get("deviceId"));
++                command.setType((String) item.get("type"));
++                command.setTextChannel(Boolean.TRUE.equals(item.get("textChannel")));
++                ((Map<String, Object>) item.get("attributes")).forEach((key, value) ->
++                        command.getAttributes().put(key, value));
++                QueuedCommand queuedCommand = commandsManager.sendCommand(command);
++                if (queuedCommand != null) {
++                    queued.add(queuedCommand.getId());
++                }
++            }
++            result.put("status", queued.isEmpty() ? "sent" : "queued");
++        } catch (Exception e) {
++            result.put("status", "failed");
++            result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
++        }
++    }
++
++    /**
++     * Current state: queued commands that left the queue were delivered when the device connected; a command
++     * result event from the device after sending marks it answered with its reply.
++     */
++    @SuppressWarnings("unchecked")
++    private Map<String, Object> refresh(Map<String, Object> job) throws Exception {
++        Map<String, Integer> counts = new LinkedHashMap<>();
++        for (Map<String, Object> result : (List<Map<String, Object>>) job.get("results")) {
++            if ("queued".equals(result.get("status"))) {
++                List<Long> queued = (List<Long>) result.get("queued");
++                queued.removeIf(queuedId -> {
++                    try {
++                        return storage.getObject(QueuedCommand.class, new Request(
++                                new Columns.Include("id"), new Condition.Equals("id", queuedId))) == null;
++                    } catch (Exception e) {
++                        return false;
++                    }
++                });
++                if (queued.isEmpty()) {
++                    result.put("status", "sent");
++                    result.put("sentAt", new Date());
++                }
++            }
++            if ("sent".equals(result.get("status"))) {
++                List<Event> replies = storage.getObjects(Event.class, new Request(
++                        new Columns.All(), Condition.merge(List.of(
++                                new Condition.Equals("deviceId", result.get("deviceId")),
++                                new Condition.Equals("type", Event.TYPE_COMMAND_RESULT),
++                                // replies carry the device clock (fix time), which may run a little behind
++                                new Condition.Between("eventTime", new Date(
++                                        ((Date) job.get("created")).getTime() - REPLY_MARGIN), new Date()))),
++                        new Order("eventTime", true, 1)));
++                if (!replies.isEmpty()) {
++                    result.put("status", "answered");
++                    result.put("reply", replies.get(0).getString("result"));
++                    result.put("repliedAt", replies.get(0).getEventTime());
++                }
++            }
++            counts.merge(String.valueOf(result.get("status")), 1, Integer::sum);
++        }
++        Map<String, Object> view = new LinkedHashMap<>(job);
++        view.remove("userId");
++        view.put("counts", counts);
++        return view;
++    }
++
++    private Map<String, Object> job(long id) throws Exception {
++        Map<String, Object> job = JOBS.get(id);
++        if (job == null || !Long.valueOf(getUserId()).equals(job.get("userId"))
++                && permissionsService.notAdmin(getUserId())) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return job;
++    }
++
++    @GET
++    @Path("jobs")
++    public List<Map<String, Object>> jobs() throws Exception {
++        List<Map<String, Object>> result = new ArrayList<>();
++        List<Map<String, Object>> list;
++        synchronized (JOBS) {
++            list = new ArrayList<>(JOBS.values());
++        }
++        Collections.reverse(list);
++        for (Map<String, Object> job : list) {
++            if (Long.valueOf(getUserId()).equals(job.get("userId"))) {
++                result.add(refresh(job));
++            }
++        }
++        return result;
++    }
++
++    @GET
++    @Path("jobs/{id}")
++    public Map<String, Object> get(@PathParam("id") long id) throws Exception {
++        return refresh(job(id));
++    }
++
++    /**
++     * Sends again to the devices that failed.
++     */
++    @POST
++    @Path("jobs/{id}/retry")
++    @SuppressWarnings("unchecked")
++    public Map<String, Object> retry(@PathParam("id") long id) throws Exception {
++        permissionsService.checkRestriction(getUserId(), UserRestrictions::getLimitCommands);
++        Map<String, Object> job = job(id);
++        for (Map<String, Object> result : (List<Map<String, Object>>) job.get("results")) {
++            if ("failed".equals(result.get("status"))) {
++                send(result, (List<Map<String, Object>>) job.get("commands"));
++            }
++        }
++        return refresh(job);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/SecurityResource.java b/src/main/java/org/traccar/api/resource/SecurityResource.java
+new file mode 100644
+index 0000000..5c2ebb0
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/SecurityResource.java
+@@ -0,0 +1,198 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.warrenstrange.googleauth.GoogleAuthenticator;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.api.security.TwoFactor;
++import org.traccar.api.security.TwoFactorRequestFilter;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.Server;
++import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.net.URLEncoder;
++import java.nio.charset.StandardCharsets;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Two-factor authentication of the own account: state, setup with an authenticator app (the key is saved only after
++ * a valid code), recovery codes, turning it off, and a manager requiring it for an account and everything below it.
++ */
++@Path("security")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class SecurityResource extends BaseResource {
++
++    private static final int RECOVERY_COUNT = 8;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    private User me() throws Exception {
++        return storage.getObject(User.class, new Request(new Columns.All(), new Condition.Equals("id", getUserId())));
++    }
++
++    private void save(User user) throws Exception {
++        storage.updateObject(user, new Request(new Columns.Include("totpKey", "attributes"),
++                new Condition.Equals("id", user.getId())));
++        cacheManager.invalidateObject(true, User.class, user.getId(), ObjectOperation.UPDATE);
++        TwoFactorRequestFilter.invalidate(user.getId());
++    }
++
++    private static int code(Map<String, Object> body) {
++        Object value = body != null ? body.get("code") : null;
++        try {
++            return Integer.parseInt(String.valueOf(value).replaceAll("\\s", ""));
++        } catch (NumberFormatException e) {
++            throw new IllegalArgumentException("Invalid code");
++        }
++    }
++
++    @GET
++    public Map<String, Object> status() throws Exception {
++        User user = me();
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("enabled", user.getTotpKey() != null && !user.getTotpKey().isEmpty());
++        result.put("required", !user.getAdministrator()
++                && TwoFactor.required(storage, hierarchyService.getAncestors(user.getId()), user));
++        result.put("requiredForOthers", user.getBoolean(TwoFactor.REQUIRED));
++        result.put("recoveryLeft", TwoFactor.recoveryLeft(user));
++        return result;
++    }
++
++    /**
++     * New secret key and the otpauth link for the QR code; nothing is saved yet.
++     */
++    @POST
++    @Path("totp/setup")
++    public Map<String, Object> setup() throws Exception {
++        User user = me();
++        Server server = permissionsService.getServer();
++        String issuer = server.getString("title") != null ? server.getString("title") : "Andes Tracking";
++        String key = new GoogleAuthenticator().createCredentials().getKey();
++        String label = URLEncoder.encode(issuer + ":" + user.getEmail(), StandardCharsets.UTF_8).replace("+", "%20");
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("key", key);
++        result.put("uri", "otpauth://totp/" + label + "?secret=" + key
++                + "&issuer=" + URLEncoder.encode(issuer, StandardCharsets.UTF_8).replace("+", "%20"));
++        return result;
++    }
++
++    /**
++     * Turns two-factor on with the key from setup and a code from the app; answers the recovery codes (shown once).
++     */
++    @POST
++    @Path("totp/enable")
++    public Map<String, Object> enable(Map<String, Object> body) throws Exception {
++        String key = String.valueOf(body.getOrDefault("key", ""));
++        if (key.length() < 16 || !new GoogleAuthenticator().authorize(key, code(body))) {
++            throw new SecurityException("The code does not match, check the time of the phone");
++        }
++        User user = me();
++        user.setTotpKey(key);
++        List<Integer> codes = TwoFactor.generateRecovery(user, RECOVERY_COUNT);
++        save(user);
++        Map<String, Object> result = new LinkedHashMap<>(status());
++        result.put("recoveryCodes", codes);
++        return result;
++    }
++
++    private void checkCode(User user, int code) throws Exception {
++        boolean valid = code >= TwoFactor.RECOVERY_MIN
++                ? TwoFactor.consumeRecovery(storage, user, code)
++                : user.getTotpKey() != null && new GoogleAuthenticator().authorize(user.getTotpKey(), code);
++        if (!valid) {
++            throw new SecurityException("Invalid code");
++        }
++    }
++
++    /**
++     * New recovery codes (the old ones stop working); needs a current code.
++     */
++    @POST
++    @Path("totp/recovery")
++    public Map<String, Object> recovery(Map<String, Object> body) throws Exception {
++        User user = me();
++        checkCode(user, code(body));
++        List<Integer> codes = TwoFactor.generateRecovery(user, RECOVERY_COUNT);
++        save(user);
++        Map<String, Object> result = new LinkedHashMap<>(status());
++        result.put("recoveryCodes", codes);
++        return result;
++    }
++
++    @POST
++    @Path("totp/disable")
++    public Map<String, Object> disable(Map<String, Object> body) throws Exception {
++        User user = me();
++        if (!user.getAdministrator()
++                && TwoFactor.required(storage, hierarchyService.getAncestors(user.getId()), user)) {
++            throw new SecurityException("Two-factor authentication is required for this account");
++        }
++        checkCode(user, code(body));
++        user.setTotpKey(null);
++        user.getAttributes().remove(TwoFactor.RECOVERY);
++        save(user);
++        return status();
++    }
++
++    /**
++     * A manager requires two-factor for an account (itself or one it manages) and every account below it.
++     */
++    @PUT
++    @Path("required/{userId}")
++    public Map<String, Object> require(@PathParam("userId") long userId, Map<String, Object> body) throws Exception {
++        if (userId != getUserId()) {
++            permissionsService.checkUser(getUserId(), userId);
++        }
++        permissionsService.checkManager(getUserId());
++        User user = storage.getObject(User.class, new Request(new Columns.All(), new Condition.Equals("id", userId)));
++        if (Boolean.TRUE.equals(body.get("required"))) {
++            user.set(TwoFactor.REQUIRED, true);
++        } else {
++            user.getAttributes().remove(TwoFactor.REQUIRED);
++        }
++        storage.updateObject(user, new Request(new Columns.Include("attributes"),
++                new Condition.Equals("id", user.getId())));
++        cacheManager.invalidateObject(true, User.class, user.getId(), ObjectOperation.UPDATE);
++        TwoFactorRequestFilter.invalidate(user.getId());
++        for (long descendant : hierarchyService.getDescendants(userId)) {
++            TwoFactorRequestFilter.invalidate(descendant);
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("userId", userId);
++        result.put("required", user.getBoolean(TwoFactor.REQUIRED));
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/SessionResource.java b/src/main/java/org/traccar/api/resource/SessionResource.java
+index 4bf0bd8..f17da7e 100644
+--- a/src/main/java/org/traccar/api/resource/SessionResource.java
++++ b/src/main/java/org/traccar/api/resource/SessionResource.java
+@@ -121,6 +121,14 @@ public class SessionResource extends BaseResource {
+                     .header("WWW-Authenticate", "TOTP")
+                     .build();
+             throw new WebApplicationException(response);
++        } catch (SecurityException e) {
++            if (!LoginService.CODE_FAILED.equals(e.getMessage())) {
++                throw e;
++            }
++            // wrong one-time or recovery code: a failed login like a wrong password (disabled or expired accounts
++            // keep their message)
++            actionLogger.failedLogin(request);
++            throw new WebApplicationException(Response.status(Response.Status.UNAUTHORIZED).build());
+         }
+         if (loginResult != null) {
+             User user = loginResult.getUser();
+diff --git a/src/main/java/org/traccar/api/resource/TpmsResource.java b/src/main/java/org/traccar/api/resource/TpmsResource.java
+new file mode 100644
+index 0000000..9c643fa
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/TpmsResource.java
+@@ -0,0 +1,152 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.core.MediaType;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++import org.traccar.tpms.TpmsService;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Tire pressure monitoring: tires of the fleet with their state, configuration per vehicle and history.
++ */
++@Path("tpms")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class TpmsResource extends BaseResource {
++
++    @Inject
++    private TpmsService tpmsService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    private Map<String, Object> view(Device device, TpmsService.Config config, Position position) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("deviceId", device.getId());
++        result.put("name", device.getName());
++        result.put("config", config != null ? TpmsService.toMap(config) : null);
++        if (config != null) {
++            List<TpmsService.Wheel> wheels = tpmsService.evaluate(config, position);
++            result.put("wheels", wheels.stream().map(wheel -> {
++                Map<String, Object> item = new LinkedHashMap<>();
++                item.put("number", wheel.number());
++                item.put("axle", wheel.axle());
++                item.put("index", wheel.index());
++                item.put("name", wheel.name());
++                item.put("pressure", wheel.pressure());
++                item.put("temperature", wheel.temperature());
++                item.put("status", wheel.status().name().toLowerCase());
++                return item;
++            }).toList());
++            result.put("alarms", wheels.stream().filter(wheel -> wheel.status() != TpmsService.Status.OK
++                    && wheel.status() != TpmsService.Status.NO_DATA).count());
++        }
++        result.put("fixTime", position != null ? position.getFixTime() : null);
++        return result;
++    }
++
++    @GET
++    public List<Map<String, Object>> fleet() throws Exception {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            TpmsService.Config config = tpmsService.config(device);
++            if (config != null) {
++                result.add(view(device, config, FleetUtil.latest(storage, cacheManager, device)));
++            }
++        }
++        return result;
++    }
++
++    private Device device(long deviceId) throws Exception {
++        permissionsService.checkPermission(Device.class, getUserId(), deviceId);
++        return storage.getObject(Device.class, new Request(new Columns.All(), new Condition.Equals("id", deviceId)));
++    }
++
++    @GET
++    @Path("{deviceId}")
++    public Map<String, Object> get(@PathParam("deviceId") long deviceId) throws Exception {
++        Device device = device(deviceId);
++        return view(device, tpmsService.config(device), FleetUtil.latest(storage, cacheManager, device));
++    }
++
++    @PUT
++    @Path("{deviceId}")
++    public Map<String, Object> update(@PathParam("deviceId") long deviceId, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Device device = device(deviceId);
++        if (body == null || Boolean.FALSE.equals(body.get("enabled"))) {
++            device.getAttributes().remove(TpmsService.ATTRIBUTE);
++        } else {
++            TpmsService.Config config = TpmsService.config(body);
++            device.set(TpmsService.ATTRIBUTE, objectMapper.writeValueAsString(TpmsService.toMap(config)));
++        }
++        FleetUtil.saveAttributes(storage, cacheManager, device);
++        return view(device, tpmsService.config(device), FleetUtil.latest(storage, cacheManager, device));
++    }
++
++    /**
++     * Pressure and temperature of every tire over time (at most about 400 points).
++     */
++    @GET
++    @Path("{deviceId}/history")
++    public Map<String, Object> history(
++            @PathParam("deviceId") long deviceId, @QueryParam("from") Date from, @QueryParam("to") Date to)
++            throws Exception {
++        Device device = device(deviceId);
++        TpmsService.Config config = tpmsService.config(device);
++        List<Position> positions = FleetUtil.positions(storage, deviceId, from, to);
++        int step = Math.max(1, positions.size() / 400);
++        List<Map<String, Object>> points = new ArrayList<>();
++        for (int i = 0; config != null && i < positions.size(); i += step) {
++            Position position = positions.get(i);
++            Map<String, Object> point = new LinkedHashMap<>();
++            point.put("time", position.getFixTime());
++            for (TpmsService.Wheel wheel : tpmsService.evaluate(config, position)) {
++                point.put("p" + wheel.number(), wheel.pressure());
++                point.put("t" + wheel.number(), wheel.temperature());
++            }
++            points.add(point);
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("config", config != null ? TpmsService.toMap(config) : null);
++        result.put("points", points);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/security/LoginService.java b/src/main/java/org/traccar/api/security/LoginService.java
+index 507288c..9fd82f6 100644
+--- a/src/main/java/org/traccar/api/security/LoginService.java
++++ b/src/main/java/org/traccar/api/security/LoginService.java
+@@ -40,6 +40,8 @@ import java.security.GeneralSecurityException;
+ public class LoginService {
+ 
+     private final Config config;
++    public static final String CODE_FAILED = "User authorization failed";
++
+     private final Storage storage;
+     private final TokenManager tokenManager;
+     private final LdapProvider ldapProvider;
+@@ -141,15 +143,22 @@ public class LoginService {
+         user.checkDisabled();
+     }
+ 
+-    private void checkUserCode(User user, Integer code) throws SecurityException {
++    private void checkUserCode(User user, Integer code) throws SecurityException, StorageException {
+         String key = user.getTotpKey();
+         if (key != null && !key.isEmpty()) {
+             if (code == null) {
+                 throw new CodeRequiredException();
+             }
++            // nine digits: one of the recovery codes, each valid once
++            if (code >= TwoFactor.RECOVERY_MIN) {
++                if (!TwoFactor.consumeRecovery(storage, user, code)) {
++                    throw new SecurityException(CODE_FAILED);
++                }
++                return;
++            }
+             GoogleAuthenticator authenticator = new GoogleAuthenticator();
+             if (!authenticator.authorize(key, code)) {
+-                throw new SecurityException("User authorization failed");
++                throw new SecurityException(CODE_FAILED);
+             }
+         }
+     }
+diff --git a/src/main/java/org/traccar/api/security/TwoFactor.java b/src/main/java/org/traccar/api/security/TwoFactor.java
+new file mode 100644
+index 0000000..94d396d
+--- /dev/null
++++ b/src/main/java/org/traccar/api/security/TwoFactor.java
+@@ -0,0 +1,124 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.security;
++
++import org.traccar.config.Keys;
++import org.traccar.model.Server;
++import org.traccar.model.User;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.security.SecureRandom;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Set;
++
++/**
++ * Two-factor authentication helpers: one-time recovery codes (nine digits, stored hashed) and whether an account must
++ * use a second factor (its own setting, a manager above it or the whole server).
++ */
++public final class TwoFactor {
++
++    public static final String RECOVERY = "totpRecovery";
++    public static final String REQUIRED = "totpRequired";
++    public static final int RECOVERY_MIN = 100_000_000;
++
++    private static final SecureRandom RANDOM = new SecureRandom();
++
++    private TwoFactor() {
++    }
++
++    public static String hash(int code) {
++        try {
++            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
++                    String.valueOf(code).getBytes(StandardCharsets.US_ASCII));
++            return HexFormat.of().formatHex(digest);
++        } catch (NoSuchAlgorithmException e) {
++            throw new IllegalStateException(e);
++        }
++    }
++
++    public static List<Integer> generateRecovery(User user, int count) {
++        List<Integer> codes = new ArrayList<>();
++        List<String> hashes = new ArrayList<>();
++        for (int i = 0; i < count; i++) {
++            int code = RECOVERY_MIN + RANDOM.nextInt(900_000_000);
++            codes.add(code);
++            hashes.add(hash(code));
++        }
++        user.set(RECOVERY, String.join(",", hashes));
++        return codes;
++    }
++
++    public static int recoveryLeft(User user) {
++        String value = user.getString(RECOVERY);
++        return value == null || value.isBlank() ? 0 : value.split(",").length;
++    }
++
++    /**
++     * Uses a recovery code: true and removed from the list when it matches one.
++     */
++    public static boolean consumeRecovery(Storage storage, User user, int code) throws StorageException {
++        String value = user.getString(RECOVERY);
++        if (value == null || value.isBlank()) {
++            return false;
++        }
++        List<String> hashes = new ArrayList<>(Arrays.asList(value.split(",")));
++        String hash = hash(code);
++        boolean found = false;
++        for (String item : hashes) {
++            found |= MessageDigest.isEqual(item.getBytes(StandardCharsets.US_ASCII),
++                    hash.getBytes(StandardCharsets.US_ASCII));
++        }
++        if (!found) {
++            return false;
++        }
++        hashes.remove(hash);
++        if (hashes.isEmpty()) {
++            user.getAttributes().remove(RECOVERY);
++        } else {
++            user.set(RECOVERY, String.join(",", hashes));
++        }
++        storage.updateObject(user, new Request(new Columns.Include("attributes"),
++                new Condition.Equals("id", user.getId())));
++        return true;
++    }
++
++    public static boolean required(Storage storage, Set<Long> ancestors, User user) throws StorageException {
++        if (user.getBoolean(REQUIRED)) {
++            return true;
++        }
++        Server server = storage.getObject(Server.class, new Request(new Columns.All()));
++        if (server != null && server.getBoolean(Keys.WEB_TOTP_FORCE.getKey())) {
++            return true;
++        }
++        for (long ancestorId : ancestors) {
++            User ancestor = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", ancestorId)));
++            if (ancestor != null && ancestor.getBoolean(REQUIRED)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/security/TwoFactorRequestFilter.java b/src/main/java/org/traccar/api/security/TwoFactorRequestFilter.java
+new file mode 100644
+index 0000000..2fc2495
+--- /dev/null
++++ b/src/main/java/org/traccar/api/security/TwoFactorRequestFilter.java
+@@ -0,0 +1,90 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.security;
++
++import jakarta.annotation.Priority;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Priorities;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.container.ContainerRequestContext;
++import jakarta.ws.rs.container.ContainerRequestFilter;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.model.User;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Accounts that must use two-factor authentication and have not set it up can only reach the session, the server
++ * information and the security endpoints (to set it up); everything else answers 403 until they do.
++ */
++@Priority(Priorities.USER + 50)
++public class TwoFactorRequestFilter implements ContainerRequestFilter {
++
++    private static final List<String> OPEN = List.of("session", "server", "security");
++    private static final long CACHE_MILLIS = 30_000;
++
++    private record Cached(boolean blocked, long time) {
++    }
++
++    private static final Map<Long, Cached> CACHE = new ConcurrentHashMap<>();
++
++    @Inject
++    private Storage storage;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    public static void invalidate(long userId) {
++        CACHE.remove(userId);
++    }
++
++    @Override
++    public void filter(ContainerRequestContext requestContext) {
++        if (!(requestContext.getSecurityContext().getUserPrincipal() instanceof UserPrincipal principal)) {
++            return;
++        }
++        String path = requestContext.getUriInfo().getPath();
++        String clean = path.startsWith("/") ? path.substring(1) : path;
++        if (OPEN.stream().anyMatch(prefix -> clean.equals(prefix) || clean.startsWith(prefix + "/"))) {
++            return;
++        }
++        try {
++            Cached cached = CACHE.get(principal.getUserId());
++            if (cached == null || System.currentTimeMillis() - cached.time() > CACHE_MILLIS) {
++                User user = storage.getObject(User.class, new Request(
++                        new Columns.All(), new Condition.Equals("id", principal.getUserId())));
++                boolean blocked = user != null && !user.getAdministrator()
++                        && (user.getTotpKey() == null || user.getTotpKey().isEmpty())
++                        && TwoFactor.required(storage, hierarchyService.getAncestors(user.getId()), user);
++                cached = new Cached(blocked, System.currentTimeMillis());
++                CACHE.put(principal.getUserId(), cached);
++            }
++            if (cached.blocked()) {
++                throw new WebApplicationException(Response.status(Response.Status.FORBIDDEN)
++                        .type(MediaType.TEXT_PLAIN).entity("Two-factor authentication setup required").build());
++            }
++        } catch (StorageException e) {
++            throw new WebApplicationException(e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/assets/AssetService.java b/src/main/java/org/traccar/assets/AssetService.java
+new file mode 100644
+index 0000000..3745c39
+--- /dev/null
++++ b/src/main/java/org/traccar/assets/AssetService.java
+@@ -0,0 +1,236 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.assets;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.traccar.database.NotificationManager;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Battery powered asset trackers that report a few times a day. Each asset has its expected interval: it is "sleeping"
++ * (normal) between reports and late when the next report does not arrive in time. The battery comes from the
++ * battery level or the battery voltage (mapped between empty and full) and its trend over the last days estimates how
++ * many days are left. Alerts: missed report and low battery, once until it recovers.
++ */
++@Singleton
++public class AssetService {
++
++    public static final String MODE = "assetMode";
++    public static final String REPORT_HOURS = "reportHours";
++    public static final String BATTERY_LOW = "batteryLow";
++    public static final String FULL_VOLTS = "batteryFullVolts";
++    public static final String EMPTY_VOLTS = "batteryEmptyVolts";
++
++    private static final double GRACE = 0.25;
++
++    private final Storage storage;
++    private final CacheManager cacheManager;
++    private final NotificationManager notificationManager;
++    private final Set<Long> missed = ConcurrentHashMap.newKeySet();
++    private final Set<Long> lowBattery = ConcurrentHashMap.newKeySet();
++
++    @Inject
++    public AssetService(Storage storage, CacheManager cacheManager, NotificationManager notificationManager) {
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++        this.notificationManager = notificationManager;
++    }
++
++    public static boolean isAsset(Device device) {
++        return device != null && device.getBoolean(MODE);
++    }
++
++    public static double reportHours(Device device) {
++        double hours = device.getDouble(REPORT_HOURS);
++        return hours > 0 ? hours : 24;
++    }
++
++    public static Double battery(Device device, Position position) {
++        if (position == null) {
++            return null;
++        }
++        Object level = position.getAttributes().get(Position.KEY_BATTERY_LEVEL);
++        if (level instanceof Number number) {
++            return Math.max(0, Math.min(100, number.doubleValue()));
++        }
++        Object volts = position.getAttributes().get(Position.KEY_BATTERY);
++        if (volts instanceof Number number) {
++            double full = device.getDouble(FULL_VOLTS) > 0 ? device.getDouble(FULL_VOLTS) : 4.2;
++            double empty = device.getDouble(EMPTY_VOLTS) > 0 ? device.getDouble(EMPTY_VOLTS) : 3.4;
++            return Math.round(Math.max(0, Math.min(100, (number.doubleValue() - empty) / (full - empty) * 100)) * 10)
++                    / 10.0;
++        }
++        return null;
++    }
++
++    /**
++     * Battery points of the last days, the percent lost per day (least squares) and the days left at that pace.
++     */
++    public Map<String, Object> batteryTrend(Device device, int days) throws StorageException {
++        Date to = new Date();
++        Date from = new Date(to.getTime() - days * 86_400_000L);
++        List<Map<String, Object>> points = new ArrayList<>();
++        double n = 0;
++        double sx = 0;
++        double sy = 0;
++        double sxx = 0;
++        double sxy = 0;
++        int reports = 0;
++        Date previous = null;
++        double intervalSum = 0;
++        for (Position position : FleetUtil.positions(storage, device.getId(), from, to)) {
++            reports++;
++            if (previous != null) {
++                intervalSum += (position.getFixTime().getTime() - previous.getTime()) / 3_600_000.0;
++            }
++            previous = position.getFixTime();
++            Double percent = battery(device, position);
++            if (percent == null) {
++                continue;
++            }
++            Map<String, Object> point = new LinkedHashMap<>();
++            point.put("time", position.getFixTime());
++            point.put("battery", percent);
++            points.add(point);
++            double x = (position.getFixTime().getTime() - from.getTime()) / 86_400_000.0;
++            n++;
++            sx += x;
++            sy += percent;
++            sxx += x * x;
++            sxy += x * percent;
++        }
++        Double perDay = null;
++        if (n >= 3 && n * sxx - sx * sx > 1e-9) {
++            perDay = -(n * sxy - sx * sy) / (n * sxx - sx * sx);
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("points", points);
++        result.put("dropPerDay", perDay != null ? Math.round(perDay * 100) / 100.0 : null);
++        result.put("reports", reports);
++        result.put("averageIntervalHours", reports > 1 ? Math.round(intervalSum / (reports - 1) * 10) / 10.0 : null);
++        return result;
++    }
++
++    public Map<String, Object> summary(Device device, Position position, boolean trend) throws StorageException {
++        double hours = reportHours(device);
++        long now = System.currentTimeMillis();
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("deviceId", device.getId());
++        result.put("name", device.getName());
++        result.put("reportHours", hours);
++        result.put("batteryLow", device.getDouble(BATTERY_LOW) > 0 ? device.getDouble(BATTERY_LOW) : 20);
++        result.put("batteryFullVolts", device.getDouble(FULL_VOLTS) > 0 ? device.getDouble(FULL_VOLTS) : null);
++        result.put("batteryEmptyVolts", device.getDouble(EMPTY_VOLTS) > 0 ? device.getDouble(EMPTY_VOLTS) : null);
++        if (position == null) {
++            result.put("status", "noData");
++            return result;
++        }
++        long last = position.getFixTime().getTime();
++        long next = last + Math.round(hours * 3_600_000);
++        result.put("lastReport", position.getFixTime());
++        result.put("nextReport", new Date(next));
++        result.put("hoursSince", Math.round((now - last) / 360_000.0) / 10.0);
++        result.put("status", now > next + hours * GRACE * 3_600_000 ? "late" : "sleeping");
++        result.put("latitude", position.getLatitude());
++        result.put("longitude", position.getLongitude());
++        result.put("address", position.getAddress());
++        Double battery = battery(device, position);
++        result.put("battery", battery);
++        if (trend) {
++            Map<String, Object> history = batteryTrend(device, 30);
++            Double perDay = (Double) history.get("dropPerDay");
++            result.put("dropPerDay", perDay);
++            result.put("daysLeft", battery != null && perDay != null && perDay > 0.01
++                    ? Math.round(battery / perDay) : null);
++            result.put("reports30d", history.get("reports"));
++            result.put("averageIntervalHours", history.get("averageIntervalHours"));
++        }
++        return result;
++    }
++
++    /**
++     * On every position of an asset: clears the missed report alert and checks the battery.
++     */
++    public List<Event> onPosition(Device device, Position position) throws StorageException {
++        List<Event> events = new ArrayList<>();
++        if (!isAsset(device)) {
++            return events;
++        }
++        missed.remove(device.getId());
++        Double battery = battery(device, position);
++        double limit = device.getDouble(BATTERY_LOW) > 0 ? device.getDouble(BATTERY_LOW) : 20;
++        if (battery != null && battery < limit && lowBattery.add(device.getId())) {
++            Map<String, Object> trend = batteryTrend(device, 30);
++            Double perDay = (Double) trend.get("dropPerDay");
++            Event event = new Event(Event.TYPE_ASSET_LOW_BATTERY, position);
++            event.set("batteryPercent", Math.round(battery));
++            event.set("daysLeft", perDay != null && perDay > 0.01 ? String.valueOf(Math.round(battery / perDay)) : "?");
++            event.set("severity", "medium");
++            events.add(event);
++        } else if (battery != null && battery >= limit + 5) {
++            lowBattery.remove(device.getId());
++        }
++        return events;
++    }
++
++    /**
++     * Periodic check: assets whose report is late raise one alert until they report again.
++     */
++    public void checkMissed() throws StorageException {
++        long now = System.currentTimeMillis();
++        Map<Event, Position> events = new HashMap<>();
++        for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
++            if (!isAsset(device) || missed.contains(device.getId())) {
++                continue;
++            }
++            Position position = FleetUtil.latest(storage, cacheManager, device);
++            if (position == null) {
++                continue;
++            }
++            double hours = reportHours(device);
++            double since = (now - position.getFixTime().getTime()) / 3_600_000.0;
++            if (since > hours * (1 + GRACE)) {
++                missed.add(device.getId());
++                Event event = new Event(Event.TYPE_ASSET_MISSED_REPORT, position);
++                event.setEventTime(new Date());
++                event.set("hours", String.valueOf(Math.round(since * 10) / 10.0));
++                event.set("reportHours", String.valueOf(hours));
++                event.set("severity", "medium");
++                events.put(event, position);
++            }
++        }
++        if (!events.isEmpty()) {
++            notificationManager.updateEvents(events);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/events/AssetEventHandler.java b/src/main/java/org/traccar/handler/events/AssetEventHandler.java
+new file mode 100644
+index 0000000..d13aee5
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/AssetEventHandler.java
+@@ -0,0 +1,58 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.assets.AssetService;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++
++/**
++ * Low battery of battery powered assets, and the end of a missed report alert when the asset reports again.
++ */
++public class AssetEventHandler extends BaseEventHandler {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(AssetEventHandler.class);
++
++    private final CacheManager cacheManager;
++    private final AssetService assetService;
++
++    @Inject
++    public AssetEventHandler(CacheManager cacheManager, AssetService assetService) {
++        this.cacheManager = cacheManager;
++        this.assetService = assetService;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        if (!PositionUtil.isLatest(cacheManager, position)) {
++            return;
++        }
++        Device device = cacheManager.getObject(Device.class, position.getDeviceId());
++        try {
++            for (Event event : assetService.onPosition(device, position)) {
++                callback.eventDetected(event);
++            }
++        } catch (StorageException e) {
++            LOGGER.warn("Asset check failed", e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/events/TpmsEventHandler.java b/src/main/java/org/traccar/handler/events/TpmsEventHandler.java
+new file mode 100644
+index 0000000..4a981af
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/TpmsEventHandler.java
+@@ -0,0 +1,49 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.tpms.TpmsService;
++
++/**
++ * Tire pressure and temperature alerts from the tires of the vehicle.
++ */
++public class TpmsEventHandler extends BaseEventHandler {
++
++    private final CacheManager cacheManager;
++    private final TpmsService tpmsService;
++
++    @Inject
++    public TpmsEventHandler(CacheManager cacheManager, TpmsService tpmsService) {
++        this.cacheManager = cacheManager;
++        this.tpmsService = tpmsService;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        if (!PositionUtil.isLatest(cacheManager, position)) {
++            return;
++        }
++        Device device = cacheManager.getObject(Device.class, position.getDeviceId());
++        for (Event event : tpmsService.onPosition(device, position)) {
++            callback.eventDetected(event);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/helper/model/FleetUtil.java b/src/main/java/org/traccar/helper/model/FleetUtil.java
+new file mode 100644
+index 0000000..9968a66
+--- /dev/null
++++ b/src/main/java/org/traccar/helper/model/FleetUtil.java
+@@ -0,0 +1,78 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.helper.model;
++
++import org.traccar.api.security.PermissionsService;
++import org.traccar.model.Device;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.Position;
++import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.Collection;
++import java.util.Date;
++import java.util.List;
++
++/**
++ * Helpers shared by the fleet modules: devices a user can see, latest position and saving device attributes.
++ */
++public final class FleetUtil {
++
++    private FleetUtil() {
++    }
++
++    public static Collection<Device> devices(
++            Storage storage, PermissionsService permissionsService, long userId) throws StorageException {
++        return permissionsService.notAdmin(userId)
++                ? storage.getObjects(Device.class, new Request(
++                        new Columns.All(), new Condition.Permission(User.class, userId, Device.class)))
++                : storage.getObjects(Device.class, new Request(new Columns.All()));
++    }
++
++    public static Position latest(Storage storage, CacheManager cacheManager, Device device) throws StorageException {
++        Position position = cacheManager.getPosition(device.getId());
++        if (position == null && device.getPositionId() > 0) {
++            position = storage.getObject(Position.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", device.getPositionId())));
++        }
++        return position;
++    }
++
++    public static List<Position> positions(Storage storage, long deviceId, Date from, Date to) throws StorageException {
++        return storage.getObjects(Position.class, new Request(
++                new Columns.All(), new Condition.And(
++                        new Condition.Equals("deviceId", deviceId),
++                        new Condition.Between("fixTime", from, to)),
++                new Order("fixTime")));
++    }
++
++    public static void saveAttributes(Storage storage, CacheManager cacheManager, Device device) throws Exception {
++        storage.updateObject(device, new Request(
++                new Columns.Include("attributes"), new Condition.Equals("id", device.getId())));
++        cacheManager.invalidateObject(true, Device.class, device.getId(), ObjectOperation.UPDATE);
++    }
++
++    public static void checkWritable(PermissionsService permissionsService, long userId) throws StorageException {
++        if (permissionsService.getUser(userId).getReadonly()) {
++            throw new SecurityException("Read-only user");
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/AgroImplement.java b/src/main/java/org/traccar/model/AgroImplement.java
+new file mode 100644
+index 0000000..ce818fb
+--- /dev/null
++++ b/src/main/java/org/traccar/model/AgroImplement.java
+@@ -0,0 +1,95 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++/**
++ * Farm implement (planter, sprayer, harvester head...): working width in meters and how to know it is working, an
++ * input attribute (implement down, PTO) or, without it, a speed range.
++ */
++@StorageName("tc_agro_implements")
++public class AgroImplement extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private String type;
++
++    public String getType() {
++        return type;
++    }
++
++    public void setType(String type) {
++        this.type = type;
++    }
++
++    private double width;
++
++    public double getWidth() {
++        return width;
++    }
++
++    public void setWidth(double width) {
++        this.width = width;
++    }
++
++    private String workAttribute;
++
++    public String getWorkAttribute() {
++        return workAttribute;
++    }
++
++    public void setWorkAttribute(String workAttribute) {
++        this.workAttribute = workAttribute;
++    }
++
++    private double minSpeed;
++
++    public double getMinSpeed() {
++        return minSpeed;
++    }
++
++    public void setMinSpeed(double minSpeed) {
++        this.minSpeed = minSpeed;
++    }
++
++    private double maxSpeed;
++
++    public double getMaxSpeed() {
++        return maxSpeed;
++    }
++
++    public void setMaxSpeed(double maxSpeed) {
++        this.maxSpeed = maxSpeed;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Event.java b/src/main/java/org/traccar/model/Event.java
+index 0f2db1c..77c414d 100644
+--- a/src/main/java/org/traccar/model/Event.java
++++ b/src/main/java/org/traccar/model/Event.java
+@@ -61,6 +61,9 @@ public class Event extends Message {
+     public static final String TYPE_TRANSIT_GAP = "transitGap";
+     public static final String TYPE_TRANSIT_OFF_ROUTE = "transitOffRoute";
+     public static final String TYPE_TRANSIT_DELAY = "transitDelay";
++    public static final String TYPE_TPMS_ALARM = "tpmsAlarm";
++    public static final String TYPE_ASSET_MISSED_REPORT = "assetMissedReport";
++    public static final String TYPE_ASSET_LOW_BATTERY = "assetLowBattery";
+     public static final String TYPE_DEVICE_FUEL_DROP = "deviceFuelDrop";
+     public static final String TYPE_DEVICE_FUEL_INCREASE = "deviceFuelIncrease";
+ 
+diff --git a/src/main/java/org/traccar/plans/ModuleRequestFilter.java b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+index 517df8a..113d340 100644
+--- a/src/main/java/org/traccar/plans/ModuleRequestFilter.java
++++ b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+@@ -46,6 +46,10 @@ public class ModuleRequestFilter implements ContainerRequestFilter {
+             Map.entry("report-templates", "reports"),
+             Map.entry("dispatch", "dispatch"),
+             Map.entry("transit", "transit"),
++            Map.entry("tpms", "tpms"),
++            Map.entry("assets", "assets"),
++            Map.entry("agro", "agro"),
++            Map.entry("device-config", "deviceConfig"),
+             Map.entry("hierarchy/domains", "whitelabel"));
+ 
+     @Inject
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+index 589c8ef..e1878f3 100644
+--- a/src/main/java/org/traccar/plans/PlanService.java
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -53,7 +53,8 @@ public class PlanService {
+ 
+     public static final List<String> MODULES = List.of(
+             "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
+-            "driving", "expenses", "maintenance", "reports", "dispatch", "transit", "whitelabel");
++            "driving", "expenses", "maintenance", "reports", "dispatch", "transit", "tpms", "assets", "agro",
++            "deviceConfig", "whitelabel");
+ 
+     /** modules that existed before the catalog recorded which modules it knew */
+     private static final List<String> LEGACY_MODULES = List.of(
+@@ -65,10 +66,12 @@ public class PlanService {
+                     List.of("geofenceSpeed")),
+             new Plan("pro", "Profesional", "Flotas: sensores, combustible, alertas personalizadas y reportes",
+                     "#2563c9", 0, List.of("fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+-                    "whatsapp", "driving", "expenses", "maintenance", "reports", "dispatch")),
++                    "whatsapp", "driving", "expenses", "maintenance", "reports", "dispatch", "tpms", "assets",
++                    "agro", "deviceConfig")),
+             new Plan("video", "Video", "Profesional más dashcams, video y chat con conductores", "#8e44ad", 0,
+                     List.of("video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+-                    "whatsapp", "chat", "driving", "expenses", "maintenance", "reports", "dispatch")),
++                    "whatsapp", "chat", "driving", "expenses", "maintenance", "reports", "dispatch", "tpms",
++                    "assets", "agro", "deviceConfig")),
+             new Plan("reseller", "Distribuidor", "Todos los módulos y marca blanca para revender", "#1a9aa3", 0,
+                     MODULES));
+ 
+diff --git a/src/main/java/org/traccar/schedule/ScheduleManager.java b/src/main/java/org/traccar/schedule/ScheduleManager.java
+index c0b1877..b631d35 100644
+--- a/src/main/java/org/traccar/schedule/ScheduleManager.java
++++ b/src/main/java/org/traccar/schedule/ScheduleManager.java
+@@ -53,7 +53,8 @@ public class ScheduleManager implements LifecycleObject {
+                 TaskWebSocketKeepalive.class,
+                 TaskStorageRetention.class,
+                 TaskMaintenanceReminder.class,
+-                TaskAlertRules.class)
++                TaskAlertRules.class,
++                TaskAssetWatch.class)
+                 .forEachOrdered(taskClass -> {
+                     var task = injector.getInstance(taskClass);
+                     if (task.multipleInstances() || !secondary) {
+diff --git a/src/main/java/org/traccar/schedule/TaskAssetWatch.java b/src/main/java/org/traccar/schedule/TaskAssetWatch.java
+new file mode 100644
+index 0000000..95075fb
+--- /dev/null
++++ b/src/main/java/org/traccar/schedule/TaskAssetWatch.java
+@@ -0,0 +1,52 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.schedule;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.assets.AssetService;
++
++import java.util.concurrent.ScheduledExecutorService;
++import java.util.concurrent.TimeUnit;
++
++/**
++ * Every five minutes, raises an alert for battery powered assets whose report is late.
++ */
++public class TaskAssetWatch extends SingleScheduleTask {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(TaskAssetWatch.class);
++
++    private final AssetService assetService;
++
++    @Inject
++    public TaskAssetWatch(AssetService assetService) {
++        this.assetService = assetService;
++    }
++
++    @Override
++    public void schedule(ScheduledExecutorService executor) {
++        executor.scheduleAtFixedRate(this, 2, 5, TimeUnit.MINUTES);
++    }
++
++    @Override
++    public void run() {
++        try {
++            assetService.checkMissed();
++        } catch (Exception e) {
++            LOGGER.warn("Asset watch failed", e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/tpms/TpmsService.java b/src/main/java/org/traccar/tpms/TpmsService.java
+new file mode 100644
+index 0000000..97d92c7
+--- /dev/null
++++ b/src/main/java/org/traccar/tpms/TpmsService.java
+@@ -0,0 +1,220 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.tpms;
++
++import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Tire pressure monitoring. Each vehicle has its layout (wheels per axle, front to back, left to right), the position
++ * attributes that carry each tire's pressure and temperature ({n} = tire number), the unit the device reports and the
++ * limits; tires are evaluated on every position and an alert is raised when a tire goes low, high or hot.
++ */
++@Singleton
++public class TpmsService {
++
++    public static final String ATTRIBUTE = "tpms";
++
++    public enum Status { OK, LOW, HIGH, HOT, NO_DATA }
++
++    public record Config(
++            List<Integer> axles, String pressureAttribute, String temperatureAttribute, String sourceUnit,
++            String unit, double minPressure, double maxPressure, double maxTemperature, Map<String, String> names) {
++
++        public int wheels() {
++            return axles.stream().mapToInt(Integer::intValue).sum();
++        }
++    }
++
++    public record Wheel(
++            int number, int axle, int index, String name, Double pressure, Double temperature, Status status) {
++    }
++
++    private final ObjectMapper objectMapper;
++    private final Map<String, Status> alarms = new ConcurrentHashMap<>();
++
++    @Inject
++    public TpmsService(ObjectMapper objectMapper) {
++        this.objectMapper = objectMapper;
++    }
++
++    private static double kpa(String unit) {
++        return switch (unit == null ? "psi" : unit.toLowerCase()) {
++            case "bar" -> 100;
++            case "kpa" -> 1;
++            default -> 6.894757;
++        };
++    }
++
++    public static double convert(double value, String from, String to) {
++        return value * kpa(from) / kpa(to);
++    }
++
++    @SuppressWarnings("unchecked")
++    public Config config(Device device) {
++        Object raw = device != null ? device.getAttributes().get(ATTRIBUTE) : null;
++        if (raw == null) {
++            return null;
++        }
++        try {
++            Map<String, Object> map = raw instanceof Map<?, ?> value ? (Map<String, Object>) value
++                    : objectMapper.readValue(String.valueOf(raw), new TypeReference<>() { });
++            return config(map);
++        } catch (Exception e) {
++            return null;
++        }
++    }
++
++    @SuppressWarnings("unchecked")
++    public static Config config(Map<String, Object> map) {
++        List<Integer> axles = new ArrayList<>();
++        for (Object axle : (List<Object>) map.getOrDefault("axles", List.of(2, 4))) {
++            int wheels = ((Number) axle).intValue();
++            if (wheels != 2 && wheels != 4) {
++                throw new IllegalArgumentException("Each axle has 2 or 4 wheels");
++            }
++            axles.add(wheels);
++        }
++        if (axles.isEmpty() || axles.size() > 8) {
++            throw new IllegalArgumentException("Between 1 and 8 axles");
++        }
++        Map<String, String> names = new LinkedHashMap<>();
++        if (map.get("names") instanceof Map<?, ?> value) {
++            value.forEach((key, name) -> names.put(String.valueOf(key), String.valueOf(name)));
++        }
++        String unit = String.valueOf(map.getOrDefault("unit", "psi"));
++        return new Config(axles,
++                String.valueOf(map.getOrDefault("pressureAttribute", "tire{n}Pressure")),
++                String.valueOf(map.getOrDefault("temperatureAttribute", "tire{n}Temperature")),
++                String.valueOf(map.getOrDefault("sourceUnit", unit)), unit,
++                number(map.get("minPressure"), convert(90, "psi", unit)),
++                number(map.get("maxPressure"), convert(130, "psi", unit)),
++                number(map.get("maxTemperature"), 75), names);
++    }
++
++    private static double number(Object value, double fallback) {
++        return value instanceof Number number ? number.doubleValue() : fallback;
++    }
++
++    public static Map<String, Object> toMap(Config config) {
++        Map<String, Object> map = new LinkedHashMap<>();
++        map.put("axles", config.axles());
++        map.put("pressureAttribute", config.pressureAttribute());
++        map.put("temperatureAttribute", config.temperatureAttribute());
++        map.put("sourceUnit", config.sourceUnit());
++        map.put("unit", config.unit());
++        map.put("minPressure", config.minPressure());
++        map.put("maxPressure", config.maxPressure());
++        map.put("maxTemperature", config.maxTemperature());
++        map.put("names", config.names());
++        return map;
++    }
++
++    private static Double attribute(Position position, String pattern, int number) {
++        if (position == null) {
++            return null;
++        }
++        Object value = position.getAttributes().get(pattern.replace("{n}", String.valueOf(number)));
++        if (value instanceof Number numeric) {
++            return numeric.doubleValue();
++        }
++        try {
++            return value != null ? Double.parseDouble(String.valueOf(value)) : null;
++        } catch (NumberFormatException e) {
++            return null;
++        }
++    }
++
++    public static String defaultName(Config config, int axle, int index) {
++        int wheels = config.axles().get(axle);
++        String side = index < wheels / 2 ? "I" : "D";
++        String inner = wheels == 4 && (index == 1 || index == 2) ? "int" : wheels == 4 ? "ext" : "";
++        return "E" + (axle + 1) + " " + side + (inner.isEmpty() ? "" : " " + inner);
++    }
++
++    public List<Wheel> evaluate(Config config, Position position) {
++        List<Wheel> result = new ArrayList<>();
++        int number = 1;
++        for (int axle = 0; axle < config.axles().size(); axle++) {
++            for (int index = 0; index < config.axles().get(axle); index++) {
++                Double raw = attribute(position, config.pressureAttribute(), number);
++                Double pressure = raw != null
++                        ? Math.round(convert(raw, config.sourceUnit(), config.unit()) * 10) / 10.0 : null;
++                Double temperature = attribute(position, config.temperatureAttribute(), number);
++                Status status;
++                if (pressure == null) {
++                    status = Status.NO_DATA;
++                } else if (pressure < config.minPressure()) {
++                    status = Status.LOW;
++                } else if (pressure > config.maxPressure()) {
++                    status = Status.HIGH;
++                } else if (temperature != null && temperature > config.maxTemperature()) {
++                    status = Status.HOT;
++                } else {
++                    status = Status.OK;
++                }
++                String name = config.names().getOrDefault(String.valueOf(number), defaultName(config, axle, index));
++                result.add(new Wheel(number, axle, index, name, pressure, temperature, status));
++                number++;
++            }
++        }
++        return result;
++    }
++
++    /**
++     * Alerts for tires that changed to low, high or hot since the last position (one per change).
++     */
++    public List<Event> onPosition(Device device, Position position) {
++        List<Event> events = new ArrayList<>();
++        Config config = config(device);
++        if (config == null) {
++            return events;
++        }
++        for (Wheel wheel : evaluate(config, position)) {
++            String key = device.getId() + ":" + wheel.number();
++            if (wheel.status() == Status.NO_DATA) {
++                continue;
++            }
++            Status previous = alarms.put(key, wheel.status());
++            if (wheel.status() != Status.OK && wheel.status() != previous) {
++                Event event = new Event(Event.TYPE_TPMS_ALARM, position);
++                event.set("wheel", wheel.number());
++                event.set("wheelName", wheel.name());
++                event.set("alarm", wheel.status().name().toLowerCase());
++                event.set("alarmText", switch (wheel.status()) {
++                    case LOW -> "con presión baja";
++                    case HIGH -> "con presión alta";
++                    default -> "con temperatura alta";
++                });
++                event.set("value", wheel.status() == Status.HOT ? wheel.temperature() : wheel.pressure());
++                event.set("unit", wheel.status() == Status.HOT ? "°C" : config.unit());
++                event.set("severity", wheel.status() == Status.HIGH ? "medium" : "high");
++                events.add(event);
++            }
++        }
++        return events;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/web/WebServer.java b/src/main/java/org/traccar/web/WebServer.java
+index 5c17404..8594a27 100644
+--- a/src/main/java/org/traccar/web/WebServer.java
++++ b/src/main/java/org/traccar/web/WebServer.java
+@@ -50,6 +50,7 @@ import org.traccar.api.StreamWriter;
+ import org.traccar.api.resource.ServerResource;
+ import org.traccar.api.security.SecurityRequestFilter;
+ import org.traccar.plans.ModuleRequestFilter;
++import org.traccar.api.security.TwoFactorRequestFilter;
+ import org.traccar.config.Config;
+ import org.traccar.config.Keys;
+ import org.traccar.helper.ObjectMapperContextResolver;
+@@ -177,6 +178,7 @@ public class WebServer implements LifecycleObject {
+                 DateParameterConverterProvider.class,
+                 SecurityRequestFilter.class,
+                 ModuleRequestFilter.class,
++                TwoFactorRequestFilter.class,
+                 CorsResponseFilter.class,
+                 ResourceErrorHandler.class,
+                 StreamWriter.class);
+diff --git a/src/test/java/org/traccar/agro/AgroAnalyzerTest.java b/src/test/java/org/traccar/agro/AgroAnalyzerTest.java
+new file mode 100644
+index 0000000..b510536
+--- /dev/null
++++ b/src/test/java/org/traccar/agro/AgroAnalyzerTest.java
+@@ -0,0 +1,70 @@
++package org.traccar.agro;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class AgroAnalyzerTest {
++
++    private static final double LAT = -12.0;
++    private static final double LON = -77.0;
++    private static final double M_LAT = 1 / 111_195.0;
++    private static final double M_LON = 1 / (111_195.0 * Math.cos(Math.toRadians(LAT)));
++
++    private static List<double[]> square(double meters) {
++        return List.of(new double[] {LAT, LON}, new double[] {LAT, LON + meters * M_LON},
++                new double[] {LAT + meters * M_LAT, LON + meters * M_LON}, new double[] {LAT + meters * M_LAT, LON});
++    }
++
++    // passes north-south 10 m apart, a point every 5 m at 9 km/h
++    private static List<AgroAnalyzer.Point> serpentine(int passes, double spacing) {
++        List<AgroAnalyzer.Point> points = new ArrayList<>();
++        long time = 0;
++        for (int pass = 0; pass < passes; pass++) {
++            double x = spacing / 2 + pass * spacing;
++            for (int step = 0; step <= 20; step++) {
++                double y = pass % 2 == 0 ? step * 5 : 100 - step * 5;
++                points.add(new AgroAnalyzer.Point(time, LAT + y * M_LAT, LON + x * M_LON, 9, true));
++                time += 2000;
++            }
++        }
++        return points;
++    }
++
++    @Test
++    public void testCoverage() {
++        Map<String, Object> result = AgroAnalyzer.analyze(serpentine(10, 10), 10, square(100));
++        assertEquals(1.0, (Double) result.get("fieldHa"), 0.01);
++        assertEquals(10, result.get("passCount"));
++        assertTrue((Double) result.get("coveragePercent") > 95, result.get("coveragePercent").toString());
++        assertTrue((Double) result.get("overlapPercent") < 5, result.get("overlapPercent").toString());
++        // only the headland turns (half the implement past the edge) fall outside the field
++        assertTrue((Double) result.get("outsideHa") < 0.1, result.get("outsideHa").toString());
++    }
++
++    @Test
++    public void testOverlapAndMissed() {
++        // 15 m implement at 10 m spacing on 6 passes: a third applied twice and the east part left without work
++        Map<String, Object> result = AgroAnalyzer.analyze(serpentine(6, 10), 15, square(100));
++        assertTrue((Double) result.get("overlapPercent") > 20, result.get("overlapPercent").toString());
++        assertTrue((Double) result.get("missedHa") > 0.3, result.get("missedHa").toString());
++        assertTrue((Double) result.get("coveragePercent") < 70, result.get("coveragePercent").toString());
++    }
++
++    @Test
++    public void testNotWorking() {
++        List<AgroAnalyzer.Point> points = new ArrayList<>();
++        for (AgroAnalyzer.Point point : serpentine(4, 10)) {
++            points.add(new AgroAnalyzer.Point(point.time(), point.latitude(), point.longitude(), 9, false));
++        }
++        Map<String, Object> result = AgroAnalyzer.analyze(points, 10, square(100));
++        assertEquals(0.0, (Double) result.get("workedHa"), 0.001);
++        assertEquals(0.0, (Double) result.get("coveragePercent"), 0.001);
++    }
++
++}
+diff --git a/templates/notifications/de/assetLowBattery.vm b/templates/notifications/de/assetLowBattery.vm
+new file mode 100644
+index 0000000..03e94b6
+--- /dev/null
++++ b/templates/notifications/de/assetLowBattery.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: Asset-Batterie schwach")
++#set($digest = "$device.name: Batterie bei $event.getString('batteryPercent') %, noch etwa $event.getString('daysLeft') Tage")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Batterie bei $event.getString('batteryPercent') %, noch etwa $event.getString('daysLeft') Tage<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abmelden</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/assetMissedReport.vm b/templates/notifications/de/assetMissedReport.vm
+new file mode 100644
+index 0000000..6c1c1ca
+--- /dev/null
++++ b/templates/notifications/de/assetMissedReport.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: Asset hat sich nicht gemeldet")
++#set($digest = "$device.name: Keine Meldung seit $event.getString('hours') h (erwartet alle $event.getString('reportHours') h)")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Keine Meldung seit $event.getString('hours') h (erwartet alle $event.getString('reportHours') h)<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abmelden</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/tpmsAlarm.vm b/templates/notifications/de/tpmsAlarm.vm
+new file mode 100644
+index 0000000..a8206ed
+--- /dev/null
++++ b/templates/notifications/de/tpmsAlarm.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: Reifen $event.getString('wheelName') $event.getString('alarm')")
++#set($digest = "$device.name: Reifen $event.getString('wheelName'): $event.getString('alarm') ($event.getString('value') $event.getString('unit'))")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Reifen $event.getString('wheelName'): $event.getString('alarm') ($event.getString('value') $event.getString('unit'))<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abmelden</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/assetLowBattery.vm b/templates/notifications/en/assetLowBattery.vm
+new file mode 100644
+index 0000000..7ce5afc
+--- /dev/null
++++ b/templates/notifications/en/assetLowBattery.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: asset battery low")
++#set($digest = "$device.name: Battery at $event.getString('batteryPercent') %, about $event.getString('daysLeft') days left")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Battery at $event.getString('batteryPercent') %, about $event.getString('daysLeft') days left<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/assetMissedReport.vm b/templates/notifications/en/assetMissedReport.vm
+new file mode 100644
+index 0000000..6140a29
+--- /dev/null
++++ b/templates/notifications/en/assetMissedReport.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: asset missed its report")
++#set($digest = "$device.name: No report for $event.getString('hours') h (expected every $event.getString('reportHours') h)")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++No report for $event.getString('hours') h (expected every $event.getString('reportHours') h)<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/tpmsAlarm.vm b/templates/notifications/en/tpmsAlarm.vm
+new file mode 100644
+index 0000000..e2615bc
+--- /dev/null
++++ b/templates/notifications/en/tpmsAlarm.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: tire $event.getString('wheelName') $event.getString('alarm')")
++#set($digest = "$device.name: Tire $event.getString('wheelName'): $event.getString('alarm') ($event.getString('value') $event.getString('unit'))")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Tire $event.getString('wheelName'): $event.getString('alarm') ($event.getString('value') $event.getString('unit'))<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/assetLowBattery.vm b/templates/notifications/es/assetLowBattery.vm
+new file mode 100644
+index 0000000..0986ca5
+--- /dev/null
++++ b/templates/notifications/es/assetLowBattery.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: batería baja del activo")
++#set($digest = "$device.name: Batería al $event.getString('batteryPercent') %, quedan unos $event.getString('daysLeft') días")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Batería al $event.getString('batteryPercent') %, quedan unos $event.getString('daysLeft') días<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/assetMissedReport.vm b/templates/notifications/es/assetMissedReport.vm
+new file mode 100644
+index 0000000..264d405
+--- /dev/null
++++ b/templates/notifications/es/assetMissedReport.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: el activo no reportó a tiempo")
++#set($digest = "$device.name: No reporta desde hace $event.getString('hours') h (esperado cada $event.getString('reportHours') h)")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++No reporta desde hace $event.getString('hours') h (esperado cada $event.getString('reportHours') h)<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/tpmsAlarm.vm b/templates/notifications/es/tpmsAlarm.vm
+new file mode 100644
+index 0000000..e1e4432
+--- /dev/null
++++ b/templates/notifications/es/tpmsAlarm.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: neumático $event.getString('wheelName') $event.getString('alarmText')")
++#set($digest = "$device.name: Neumático $event.getString('wheelName'): $event.getString('alarmText') ($event.getString('value') $event.getString('unit'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Neumático $event.getString('wheelName'): $event.getString('alarmText') ($event.getString('value') $event.getString('unit'))<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/assetLowBattery.vm b/templates/notifications/pt_BR/assetLowBattery.vm
+new file mode 100644
+index 0000000..f9482e0
+--- /dev/null
++++ b/templates/notifications/pt_BR/assetLowBattery.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: bateria do ativo baixa")
++#set($digest = "$device.name: Bateria em $event.getString('batteryPercent') %, cerca de $event.getString('daysLeft') dias")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Bateria em $event.getString('batteryPercent') %, cerca de $event.getString('daysLeft') dias<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/assetMissedReport.vm b/templates/notifications/pt_BR/assetMissedReport.vm
+new file mode 100644
+index 0000000..8191472
+--- /dev/null
++++ b/templates/notifications/pt_BR/assetMissedReport.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: ativo não reportou")
++#set($digest = "$device.name: Sem relatório há $event.getString('hours') h (esperado a cada $event.getString('reportHours') h)")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Sem relatório há $event.getString('hours') h (esperado a cada $event.getString('reportHours') h)<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/tpmsAlarm.vm b/templates/notifications/pt_BR/tpmsAlarm.vm
+new file mode 100644
+index 0000000..0e21086
+--- /dev/null
++++ b/templates/notifications/pt_BR/tpmsAlarm.vm
+@@ -0,0 +1,13 @@
++#set($subject = "$device.name: pneu $event.getString('wheelName') $event.getString('alarm')")
++#set($digest = "$device.name: Pneu $event.getString('wheelName'): $event.getString('alarm') ($event.getString('value') $event.getString('unit'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Pneu $event.getString('wheelName'): $event.getString('alarm') ($event.getString('value') $event.getString('unit'))<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
