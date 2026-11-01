@@ -476,6 +476,31 @@ Onfleet, Track-POD):
   litros y también informa galones y precio por galón, y se muestra según la preferencia de volumen del usuario
   (*Preferencias → Unidad de volumen*).
 
+## Transporte público: líneas, horarios y distancia entre unidades (parche `0026`)
+
+Panel separado (*Transporte público* en la barra lateral, módulo `transit` del plan) para empresas de buses, rutas
+de personal o colectivos:
+
+- **Líneas** con código y color, circulares o de ida, paraderos (a mano o por CSV), recorrido trazado por calles con
+  OSRM y minutos de cada paradero desde la salida (si no se indican se calculan con la velocidad comercial).
+- **Horario** por frecuencia (franjas «de 06:00 a 09:00 cada 5 min») o por horas de salida; con horas de salida se
+  calcula el retraso en cada paradero.
+- **Distancia entre unidades de una misma línea**: cada bus se proyecta sobre el recorrido y se muestra la distancia
+  y los minutos al bus de adelante y al de atrás. En las líneas circulares los intervalos dan la vuelta y suman el largo
+  de la línea. Se ve en una franja con los paraderos y los buses (en rojo si están agrupados, naranja si hay hueco,
+  verde si están bien espaciados), en el mapa y en la tabla de unidades (avance, próximo paradero, adelante, atrás,
+  retraso, vuelta y velocidad), actualizada cada 10 s.
+- **Indicadores**: unidades en ruta, frecuencia planificada y su distancia equivalente, separación real (promedio,
+  mínima y máxima), agrupamientos, huecos y unidades fuera de ruta.
+- **Alertas** (centro de alertas, correo, WhatsApp, etc.): buses agrupados (`transitBunching`), hueco entre buses
+  (`transitGap`), bus fuera de ruta (`transitOffRoute`) y bus con retraso (`transitDelay`), con umbrales por línea.
+- **Reporte** (`/reports/transit`): vueltas, pasos por paraderos, puntualidad (de −1 a +5 min), intervalo real frente
+  al planificado y regularidad de la línea, por unidad y por paradero, con gráfico, CSV e impresión.
+- API: `GET/POST /api/transit/routes`, `PUT/DELETE /api/transit/routes/{id}`, `GET /api/transit/routes/{id}/live` y
+  `GET /api/transit/report?routeId=&from=&to=`. La unidad se asigna a la línea con el atributo `transitRouteId`.
+
+Capturas: `docs/capturas/v27-transporte-*.png`.
+
 ## Panel web
 
 Basado en tus capturas de referencia:
@@ -560,6 +585,7 @@ python3 server/tests/test_dispatch.py   # con media.path para las fotos y firmas
 python3 server/tests/test_logistics.py
 python3 server/tests/test_custom_fields.py
 python3 server/tests/test_fuel_units.py
+python3 server/tests/test_transit.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

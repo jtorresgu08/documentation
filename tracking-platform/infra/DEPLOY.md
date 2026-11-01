@@ -445,3 +445,13 @@ la configuración de las cámaras.
 - Con una cámara real en 4G: tiempo hasta la primera imagen (< 3 s), retraso (< 1–2 s con WebRTC), cortes en
   movimiento, consumo de datos por hora y comportamiento con varios usuarios mirando a la vez.
 
+## 21. Transporte público
+
+- Las tablas `tc_transit_routes` y `tc_transit_visits` se crean solas al actualizar. Cada paso por un paradero es una
+  fila de `tc_transit_visits`; entra en las copias de seguridad.
+- El módulo `transit` se activa por plan (*Planes*). Los planes guardados antes de esta versión lo reciben solos.
+- Fija la zona horaria en cada línea (*Alertas → Zona horaria* en el editor, atributo `timezone`) o en el servidor; los horarios de
+  salida y las franjas se interpretan en esa zona.
+- «Trazar por calles» usa el mismo OSRM de la sección 16; sin él la línea se dibuja recta entre paraderos y la
+  distancia entre buses se mide sobre esa línea.
+- Para que la distancia entre buses sea precisa, configura los equipos para reportar cada 10–30 s en movimiento.

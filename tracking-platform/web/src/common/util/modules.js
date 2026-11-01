@@ -13,6 +13,7 @@ export const MODULE_LABELS = {
   maintenance: 'moduleMaintenance',
   reports: 'moduleReports',
   dispatch: 'moduleDispatch',
+  transit: 'moduleTransit',
   whitelabel: 'moduleWhitelabel',
 };
 

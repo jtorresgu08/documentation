@@ -1,0 +1,1939 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index e6a9942..7c40577 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -366,4 +366,67 @@
+ 
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-transit">
++
++    <createTable tableName="tc_transit_routes">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="name" type="VARCHAR(128)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="code" type="VARCHAR(32)" />
++      <column name="color" type="VARCHAR(16)" />
++      <column name="circular" type="BOOLEAN" >
++        <constraints nullable="false" />
++      </column>
++      <column name="stops" type="VARCHAR(8000)" >
++        <constraints nullable="false" />
++      </column>
++      <column name="path" type="VARCHAR(8000)" />
++      <column name="schedule" type="VARCHAR(2000)" />
++      <column name="attributes" type="VARCHAR(4000)" >
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_transit_routes" baseColumnNames="userid" constraintName="fk_transit_routes_userid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_users" />
++
++    <createTable tableName="tc_transit_visits">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="deviceid" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="routeid" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="stopindex" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="time" type="TIMESTAMP" >
++        <constraints nullable="false" />
++      </column>
++      <column name="lap" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="delay" type="INT" >
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)" >
++        <constraints nullable="false" />
++      </column>
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_transit_visits" baseColumnNames="routeid" constraintName="fk_transit_visits_routeid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_transit_routes" />
++    <addForeignKeyConstraint baseTableName="tc_transit_visits" baseColumnNames="deviceid" constraintName="fk_transit_visits_deviceid" onDelete="CASCADE" referencedColumnNames="id" referencedTableName="tc_devices" />
++    <createIndex tableName="tc_transit_visits" indexName="idx_transit_visits_route_time">
++      <column name="routeid" />
++      <column name="time" />
++    </createIndex>
++
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index 4aa01b4..dca0967 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -51,6 +51,7 @@ import org.traccar.handler.events.DriverEventHandler;
+ import org.traccar.handler.events.FuelEventHandler;
+ import org.traccar.handler.events.FuelSensorEventHandler;
+ import org.traccar.handler.events.DispatchEventHandler;
++import org.traccar.handler.events.TransitEventHandler;
+ import org.traccar.handler.events.GeofenceOverspeedEventHandler;
+ import org.traccar.handler.events.RuleEventHandler;
+ import org.traccar.handler.events.EngineStopEventHandler;
+@@ -129,6 +130,7 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 OverspeedEventHandler.class,
+                 GeofenceOverspeedEventHandler.class,
+                 DispatchEventHandler.class,
++                TransitEventHandler.class,
+                 BehaviorEventHandler.class,
+                 FuelEventHandler.class,
+                 FuelSensorEventHandler.class,
+diff --git a/src/main/java/org/traccar/api/resource/TransitResource.java b/src/main/java/org/traccar/api/resource/TransitResource.java
+new file mode 100644
+index 0000000..e1b50ee
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/TransitResource.java
+@@ -0,0 +1,423 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.DeserializationFeature;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.model.Device;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.TransitRoute;
++import org.traccar.model.TransitVisit;
++import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++import org.traccar.transit.TransitGeometry;
++import org.traccar.transit.TransitService;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.TreeMap;
++
++/**
++ * Public transport lines: stops, path, schedule and assigned units; live view with the distance between consecutive
++ * units on the line; and the report of laps, punctuality per stop and regularity of the intervals.
++ */
++@Path("transit")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class TransitResource extends BaseResource {
++
++    private static final int MAX_JSON = 7900;
++    private static final Set<String> SETTINGS = Set.of(
++            "speedKmh", "bunchingKm", "gapKm", "offRouteMeters", "delayMinutes", "timezone");
++
++    @Inject
++    private TransitService transitService;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    @Inject
++    private ObjectMapper objectMapper;
++
++    private ObjectMapper lenient() {
++        return objectMapper.copy().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
++    }
++
++    private Set<Long> visibleOwners() throws StorageException {
++        if (!permissionsService.notAdmin(getUserId())) {
++            return null;
++        }
++        Set<Long> owners = new HashSet<>(hierarchyService.getDescendants(getUserId()));
++        owners.add(getUserId());
++        // lines of the managers above (the company), never the administrator's own
++        for (long ancestorId : hierarchyService.getAncestors(getUserId())) {
++            User ancestor = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", ancestorId)));
++            if (ancestor != null && !ancestor.getAdministrator()) {
++                owners.add(ancestorId);
++            }
++        }
++        return owners;
++    }
++
++    private Collection<Device> accessibleDevices() throws StorageException {
++        return permissionsService.notAdmin(getUserId())
++                ? storage.getObjects(Device.class, new Request(
++                        new Columns.All(), new Condition.Permission(User.class, getUserId(), Device.class)))
++                : storage.getObjects(Device.class, new Request(new Columns.All()));
++    }
++
++    private TransitRoute checkRoute(long id) throws StorageException {
++        TransitRoute route = storage.getObject(TransitRoute.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        Set<Long> owners = visibleOwners();
++        if (route == null || owners != null && !owners.contains(route.getUserId())) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return route;
++    }
++
++    private void checkWritable() throws StorageException {
++        if (permissionsService.getUser(getUserId()).getReadonly()) {
++            throw new SecurityException("Read-only user");
++        }
++    }
++
++    private List<Device> unitsOf(long routeId) throws StorageException {
++        List<Device> result = new ArrayList<>();
++        for (Device device : accessibleDevices()) {
++            if (TransitService.routeOf(device) == routeId) {
++                result.add(device);
++            }
++        }
++        return result;
++    }
++
++    private Map<String, Object> view(TransitRoute route) throws Exception {
++        Map<String, Object> result = lenient().convertValue(route, new TypeReference<>() { });
++        result.put("stops", objectMapper.readValue(route.getStops(), List.class));
++        result.put("path", route.getPath() != null && !route.getPath().isBlank()
++                ? objectMapper.readValue(route.getPath(), List.class) : List.of());
++        result.put("schedule", route.getSchedule() != null && !route.getSchedule().isBlank()
++                ? objectMapper.readValue(route.getSchedule(), Map.class) : Map.of());
++        result.put("deviceIds", unitsOf(route.getId()).stream().map(Device::getId).toList());
++        return result;
++    }
++
++    @SuppressWarnings("unchecked")
++    private void read(TransitRoute route, Map<String, Object> body) throws Exception {
++        String name = String.valueOf(body.getOrDefault("name", "")).trim();
++        if (name.isEmpty()) {
++            throw new IllegalArgumentException("The line needs a name");
++        }
++        route.setName(name);
++        route.setCode((String) body.get("code"));
++        route.setColor((String) body.get("color"));
++        route.setCircular(Boolean.TRUE.equals(body.get("circular")));
++        List<Map<String, Object>> stops = new ArrayList<>();
++        for (Map<String, Object> stop : (List<Map<String, Object>>) body.getOrDefault("stops", List.of())) {
++            if (!(stop.get("latitude") instanceof Number latitude)
++                    || !(stop.get("longitude") instanceof Number longitude)
++                    || Math.abs(latitude.doubleValue()) > 90 || Math.abs(longitude.doubleValue()) > 180) {
++                throw new IllegalArgumentException("Every stop needs valid coordinates");
++            }
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("name", String.valueOf(stop.getOrDefault("name", "Paradero " + (stops.size() + 1))));
++            item.put("latitude", latitude.doubleValue());
++            item.put("longitude", longitude.doubleValue());
++            if (stop.get("radius") instanceof Number radius) {
++                item.put("radius", radius.doubleValue());
++            }
++            if (stop.get("minutes") instanceof Number minutes) {
++                item.put("minutes", minutes.doubleValue());
++            }
++            stops.add(item);
++        }
++        if (stops.size() < 2) {
++            throw new IllegalArgumentException("A line needs at least two stops");
++        }
++        String stopsJson = objectMapper.writeValueAsString(stops);
++        if (stopsJson.length() > MAX_JSON) {
++            throw new IllegalArgumentException("Too many stops");
++        }
++        route.setStops(stopsJson);
++        List<double[]> path = new ArrayList<>();
++        for (Object point : (List<Object>) body.getOrDefault("path", List.of())) {
++            List<Number> pair = (List<Number>) point;
++            path.add(new double[] {pair.get(0).doubleValue(), pair.get(1).doubleValue()});
++        }
++        String pathJson = null;
++        double tolerance = 2;
++        while (path.size() >= 2) {
++            List<double[]> rounded = path.stream().map(point -> new double[] {
++                Math.round(point[0] * 1e5) / 1e5, Math.round(point[1] * 1e5) / 1e5}).toList();
++            pathJson = objectMapper.writeValueAsString(rounded);
++            if (pathJson.length() <= MAX_JSON) {
++                break;
++            }
++            path = TransitGeometry.simplify(path, tolerance);
++            tolerance *= 1.5;
++        }
++        route.setPath(pathJson);
++        Object schedule = body.get("schedule");
++        String scheduleJson = schedule != null ? objectMapper.writeValueAsString(schedule) : null;
++        if (scheduleJson != null && scheduleJson.length() > 2000) {
++            throw new IllegalArgumentException("Schedule too long");
++        }
++        route.setSchedule(scheduleJson);
++        Map<String, Object> attributes = new HashMap<>();
++        if (body.get("attributes") instanceof Map<?, ?> map) {
++            map.forEach((key, value) -> {
++                if (SETTINGS.contains(String.valueOf(key)) && value != null && !"".equals(value)) {
++                    attributes.put(String.valueOf(key), value);
++                }
++            });
++        }
++        route.setAttributes(attributes);
++    }
++
++    @SuppressWarnings("unchecked")
++    private void assign(long routeId, Object deviceIds) throws Exception {
++        Set<Long> wanted = new HashSet<>();
++        if (deviceIds instanceof List<?> list) {
++            for (Object id : list) {
++                wanted.add(((Number) id).longValue());
++            }
++        }
++        for (Device device : accessibleDevices()) {
++            boolean assigned = TransitService.routeOf(device) == routeId;
++            boolean want = wanted.contains(device.getId());
++            if (assigned == want) {
++                continue;
++            }
++            permissionsService.checkPermission(Device.class, getUserId(), device.getId());
++            if (want) {
++                device.set(TransitService.ATTRIBUTE, routeId);
++            } else {
++                device.getAttributes().remove(TransitService.ATTRIBUTE);
++            }
++            storage.updateObject(device, new Request(
++                    new Columns.Include("attributes"), new Condition.Equals("id", device.getId())));
++            cacheManager.invalidateObject(true, Device.class, device.getId(), ObjectOperation.UPDATE);
++        }
++    }
++
++    @GET
++    @Path("routes")
++    public List<Map<String, Object>> routes() throws Exception {
++        Set<Long> owners = visibleOwners();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (TransitRoute route : storage.getObjects(TransitRoute.class, new Request(
++                new Columns.All(), new Order("name")))) {
++            if (owners == null || owners.contains(route.getUserId())) {
++                result.add(view(route));
++            }
++        }
++        return result;
++    }
++
++    @POST
++    @Path("routes")
++    public Map<String, Object> create(Map<String, Object> body) throws Exception {
++        checkWritable();
++        TransitRoute route = new TransitRoute();
++        read(route, body);
++        route.setUserId(getUserId());
++        route.setId(storage.addObject(route, new Request(new Columns.Exclude("id"))));
++        assign(route.getId(), body.get("deviceIds"));
++        return view(route);
++    }
++
++    @PUT
++    @Path("routes/{id}")
++    public Map<String, Object> update(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        checkWritable();
++        TransitRoute route = checkRoute(id);
++        read(route, body);
++        storage.updateObject(route, new Request(new Columns.Exclude("id", "userId"), new Condition.Equals("id", id)));
++        transitService.invalidate(id);
++        assign(id, body.get("deviceIds"));
++        return view(route);
++    }
++
++    @DELETE
++    @Path("routes/{id}")
++    public Response remove(@PathParam("id") long id) throws Exception {
++        checkWritable();
++        checkRoute(id);
++        assign(id, List.of());
++        storage.removeObject(TransitRoute.class, new Request(new Condition.Equals("id", id)));
++        transitService.invalidate(id);
++        return Response.noContent().build();
++    }
++
++    @GET
++    @Path("routes/{id}/live")
++    public Map<String, Object> live(@PathParam("id") long id) throws Exception {
++        checkRoute(id);
++        return transitService.live(id, unitsOf(id));
++    }
++
++    /**
++     * Laps and average delay per unit, punctuality per stop (on time between 1 minute early and 5 late) and the
++     * real interval between consecutive buses at each stop against the planned one.
++     */
++    @GET
++    @Path("report")
++    public Map<String, Object> report(
++            @QueryParam("routeId") long routeId, @QueryParam("from") Date from, @QueryParam("to") Date to)
++            throws Exception {
++        TransitRoute route = checkRoute(routeId);
++        TransitService.Line line = transitService.line(routeId);
++        Set<Long> allowed = new HashSet<>();
++        accessibleDevices().forEach(device -> allowed.add(device.getId()));
++        List<TransitVisit> visits = storage.getObjects(TransitVisit.class, new Request(
++                new Columns.All(), Condition.merge(List.of(
++                        new Condition.Equals("routeId", routeId),
++                        new Condition.Between("time", from, to))),
++                new Order("time"))).stream().filter(visit -> allowed.contains(visit.getDeviceId())).toList();
++        Map<Long, Device> names = new HashMap<>();
++        accessibleDevices().forEach(device -> names.put(device.getId(), device));
++        Map<Long, Map<String, Object>> byUnit = new TreeMap<>();
++        Map<Integer, List<TransitVisit>> byStop = new TreeMap<>();
++        for (TransitVisit visit : visits) {
++            Map<String, Object> unit = byUnit.computeIfAbsent(visit.getDeviceId(), key -> {
++                Device device = names.get(key);
++                Map<String, Object> item = new LinkedHashMap<>();
++                item.put("deviceId", key);
++                item.put("name", device != null ? device.getName() : String.valueOf(key));
++                item.put("laps", new HashSet<Integer>());
++                item.put("visits", 0);
++                item.put("delaySum", 0L);
++                item.put("onTime", 0);
++                return item;
++            });
++            @SuppressWarnings("unchecked")
++            Set<Integer> laps = (Set<Integer>) unit.get("laps");
++            if (visit.getStopIndex() == 0) {
++                laps.add(visit.getLap());
++            }
++            unit.put("visits", (Integer) unit.get("visits") + 1);
++            unit.put("delaySum", (Long) unit.get("delaySum") + visit.getDelay());
++            if (visit.getDelay() >= -60 && visit.getDelay() <= 300) {
++                unit.put("onTime", (Integer) unit.get("onTime") + 1);
++            }
++            byStop.computeIfAbsent(visit.getStopIndex(), key -> new ArrayList<>()).add(visit);
++        }
++        List<Map<String, Object>> units = new ArrayList<>();
++        for (Map<String, Object> unit : byUnit.values()) {
++            int count = (Integer) unit.get("visits");
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("deviceId", unit.get("deviceId"));
++            item.put("name", unit.get("name"));
++            item.put("laps", ((Set<?>) unit.get("laps")).size());
++            item.put("visits", count);
++            item.put("averageDelayMinutes", Math.round((Long) unit.get("delaySum") / (double) count / 6) / 10.0);
++            item.put("onTimeRate", Math.round((Integer) unit.get("onTime") * 1000.0 / count) / 10.0);
++            units.add(item);
++        }
++        List<Map<String, Object>> stops = new ArrayList<>();
++        List<Double> allIntervals = new ArrayList<>();
++        double plannedSum = 0;
++        int plannedCount = 0;
++        for (Map.Entry<Integer, List<TransitVisit>> entry : byStop.entrySet()) {
++            List<TransitVisit> list = entry.getValue();
++            double delaySum = 0;
++            int onTime = 0;
++            List<Double> intervals = new ArrayList<>();
++            for (int i = 0; i < list.size(); i++) {
++                TransitVisit visit = list.get(i);
++                delaySum += visit.getDelay();
++                if (visit.getDelay() >= -60 && visit.getDelay() <= 300) {
++                    onTime++;
++                }
++                if (i > 0 && list.get(i - 1).getDeviceId() != visit.getDeviceId()) {
++                    intervals.add((visit.getTime().getTime() - list.get(i - 1).getTime().getTime()) / 60000.0);
++                    if (line != null) {
++                        Double planned = transitService.plannedHeadway(line, visit.getTime());
++                        if (planned != null) {
++                            plannedSum += planned;
++                            plannedCount++;
++                        }
++                    }
++                }
++            }
++            allIntervals.addAll(intervals);
++            Map<String, Object> item = new LinkedHashMap<>();
++            int index = entry.getKey();
++            item.put("index", index);
++            item.put("name", line != null && index < line.stops().size() ? line.stops().get(index).name()
++                    : "#" + (index + 1));
++            item.put("visits", list.size());
++            item.put("averageDelayMinutes", Math.round(delaySum / list.size() / 6) / 10.0);
++            item.put("onTimeRate", Math.round(onTime * 1000.0 / list.size()) / 10.0);
++            item.put("averageIntervalMinutes", intervals.isEmpty() ? null
++                    : Math.round(intervals.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 10) / 10.0);
++            stops.add(item);
++        }
++        double average = allIntervals.stream().mapToDouble(Double::doubleValue).average().orElse(0);
++        double deviation = Math.sqrt(allIntervals.stream().mapToDouble(value -> (value - average) * (value - average))
++                .average().orElse(0));
++        Map<String, Object> summary = new LinkedHashMap<>();
++        summary.put("route", route.getName());
++        summary.put("laps", units.stream().mapToInt(unit -> (Integer) unit.get("laps")).sum());
++        summary.put("visits", visits.size());
++        summary.put("onTimeRate", visits.isEmpty() ? null : Math.round(visits.stream()
++                .filter(visit -> visit.getDelay() >= -60 && visit.getDelay() <= 300).count() * 1000.0
++                / visits.size()) / 10.0);
++        summary.put("averageIntervalMinutes", allIntervals.isEmpty() ? null : Math.round(average * 10) / 10.0);
++        summary.put("plannedIntervalMinutes",
++                plannedCount > 0 ? Math.round(plannedSum / plannedCount * 10) / 10.0 : null);
++        // regularity: 100% when every interval equals the average
++        summary.put("regularity", allIntervals.size() < 2 || average == 0 ? null
++                : Math.round(Math.max(0, 1 - deviation / average) * 1000) / 10.0);
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("summary", summary);
++        result.put("units", units);
++        result.put("stops", stops);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/handler/events/TransitEventHandler.java b/src/main/java/org/traccar/handler/events/TransitEventHandler.java
+new file mode 100644
+index 0000000..9de4394
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/TransitEventHandler.java
+@@ -0,0 +1,56 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.helper.model.PositionUtil;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++import org.traccar.transit.TransitService;
++
++/**
++ * Public transport events from positions: bunching, gaps, leaving the line and delay at stops.
++ */
++public class TransitEventHandler extends BaseEventHandler {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(TransitEventHandler.class);
++
++    private final CacheManager cacheManager;
++    private final TransitService transitService;
++
++    @Inject
++    public TransitEventHandler(CacheManager cacheManager, TransitService transitService) {
++        this.cacheManager = cacheManager;
++        this.transitService = transitService;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        if (!PositionUtil.isLatest(cacheManager, position) || !position.getValid()) {
++            return;
++        }
++        try {
++            for (Event event : transitService.onPosition(position)) {
++                callback.eventDetected(event);
++            }
++        } catch (StorageException e) {
++            LOGGER.warn("Transit processing failed", e);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Event.java b/src/main/java/org/traccar/model/Event.java
+index 592c909..0f2db1c 100644
+--- a/src/main/java/org/traccar/model/Event.java
++++ b/src/main/java/org/traccar/model/Event.java
+@@ -57,6 +57,10 @@ public class Event extends Message {
+     public static final String TYPE_DISPATCH_DELIVERED = "dispatchDelivered";
+     public static final String TYPE_DISPATCH_FAILED = "dispatchFailed";
+     public static final String TYPE_DISPATCH_LATE = "dispatchLate";
++    public static final String TYPE_TRANSIT_BUNCHING = "transitBunching";
++    public static final String TYPE_TRANSIT_GAP = "transitGap";
++    public static final String TYPE_TRANSIT_OFF_ROUTE = "transitOffRoute";
++    public static final String TYPE_TRANSIT_DELAY = "transitDelay";
+     public static final String TYPE_DEVICE_FUEL_DROP = "deviceFuelDrop";
+     public static final String TYPE_DEVICE_FUEL_INCREASE = "deviceFuelIncrease";
+ 
+diff --git a/src/main/java/org/traccar/model/TransitRoute.java b/src/main/java/org/traccar/model/TransitRoute.java
+new file mode 100644
+index 0000000..51837bb
+--- /dev/null
++++ b/src/main/java/org/traccar/model/TransitRoute.java
+@@ -0,0 +1,105 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++/**
++ * Public transport line: ordered stops (JSON with name, position, radius and planned minutes from the start), the
++ * path the buses follow (JSON list of points), whether it is circular, and the schedule (JSON: frequency bands or
++ * departure times). Units are assigned with their transitRouteId attribute.
++ */
++@StorageName("tc_transit_routes")
++public class TransitRoute extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private String code;
++
++    public String getCode() {
++        return code;
++    }
++
++    public void setCode(String code) {
++        this.code = code;
++    }
++
++    private String color;
++
++    public String getColor() {
++        return color;
++    }
++
++    public void setColor(String color) {
++        this.color = color;
++    }
++
++    private boolean circular;
++
++    public boolean getCircular() {
++        return circular;
++    }
++
++    public void setCircular(boolean circular) {
++        this.circular = circular;
++    }
++
++    private String stops;
++
++    public String getStops() {
++        return stops;
++    }
++
++    public void setStops(String stops) {
++        this.stops = stops;
++    }
++
++    private String path;
++
++    public String getPath() {
++        return path;
++    }
++
++    public void setPath(String path) {
++        this.path = path;
++    }
++
++    private String schedule;
++
++    public String getSchedule() {
++        return schedule;
++    }
++
++    public void setSchedule(String schedule) {
++        this.schedule = schedule;
++    }
++}
+diff --git a/src/main/java/org/traccar/model/TransitVisit.java b/src/main/java/org/traccar/model/TransitVisit.java
+new file mode 100644
+index 0000000..965df27
+--- /dev/null
++++ b/src/main/java/org/traccar/model/TransitVisit.java
+@@ -0,0 +1,86 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Arrival of a unit at a stop of its line: lap, time and delay against the schedule in seconds (negative when
++ * early).
++ */
++@StorageName("tc_transit_visits")
++public class TransitVisit extends ExtendedModel {
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private long routeId;
++
++    public long getRouteId() {
++        return routeId;
++    }
++
++    public void setRouteId(long routeId) {
++        this.routeId = routeId;
++    }
++
++    private int stopIndex;
++
++    public int getStopIndex() {
++        return stopIndex;
++    }
++
++    public void setStopIndex(int stopIndex) {
++        this.stopIndex = stopIndex;
++    }
++
++    private Date time;
++
++    public Date getTime() {
++        return time;
++    }
++
++    public void setTime(Date time) {
++        this.time = time;
++    }
++
++    private int lap;
++
++    public int getLap() {
++        return lap;
++    }
++
++    public void setLap(int lap) {
++        this.lap = lap;
++    }
++
++    private int delay;
++
++    public int getDelay() {
++        return delay;
++    }
++
++    public void setDelay(int delay) {
++        this.delay = delay;
++    }
++}
+diff --git a/src/main/java/org/traccar/plans/ModuleRequestFilter.java b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+index f99c2ba..517df8a 100644
+--- a/src/main/java/org/traccar/plans/ModuleRequestFilter.java
++++ b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+@@ -45,6 +45,7 @@ public class ModuleRequestFilter implements ContainerRequestFilter {
+             Map.entry("maintenance-plans", "maintenance"),
+             Map.entry("report-templates", "reports"),
+             Map.entry("dispatch", "dispatch"),
++            Map.entry("transit", "transit"),
+             Map.entry("hierarchy/domains", "whitelabel"));
+ 
+     @Inject
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+index c15c51c..589c8ef 100644
+--- a/src/main/java/org/traccar/plans/PlanService.java
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -53,7 +53,7 @@ public class PlanService {
+ 
+     public static final List<String> MODULES = List.of(
+             "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
+-            "driving", "expenses", "maintenance", "reports", "dispatch", "whitelabel");
++            "driving", "expenses", "maintenance", "reports", "dispatch", "transit", "whitelabel");
+ 
+     /** modules that existed before the catalog recorded which modules it knew */
+     private static final List<String> LEGACY_MODULES = List.of(
+diff --git a/src/main/java/org/traccar/transit/TransitGeometry.java b/src/main/java/org/traccar/transit/TransitGeometry.java
+new file mode 100644
+index 0000000..415893c
+--- /dev/null
++++ b/src/main/java/org/traccar/transit/TransitGeometry.java
+@@ -0,0 +1,179 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.transit;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Geometry of a line: points of its path in a local metric projection with the cumulative distance, projection of a
++ * position onto the path (distance travelled along the line and offset from it) preferring the stretch closest to
++ * where the unit was before (lines that go and come back on the same street), and distance along the line between
++ * two units, wrapping around on circular lines.
++ */
++public final class TransitGeometry {
++
++    private static final double EARTH = 6371008.8;
++    private static final double RAD = Math.PI / 180;
++
++    private final double lat0;
++    private final double[] x;
++    private final double[] y;
++    private final double[] cumulative;
++    private final boolean circular;
++
++    public record Projection(double along, double offset) {
++    }
++
++    /**
++     * @param points path as [latitude, longitude] pairs, at least two
++     */
++    public TransitGeometry(List<double[]> points, boolean circular) {
++        if (points.size() < 2) {
++            throw new IllegalArgumentException("A line needs at least two points");
++        }
++        this.circular = circular;
++        lat0 = points.stream().mapToDouble(point -> point[0]).average().orElse(0) * RAD;
++        int count = points.size();
++        x = new double[count];
++        y = new double[count];
++        cumulative = new double[count];
++        for (int i = 0; i < count; i++) {
++            x[i] = points.get(i)[1] * RAD * Math.cos(lat0) * EARTH;
++            y[i] = points.get(i)[0] * RAD * EARTH;
++            if (i > 0) {
++                cumulative[i] = cumulative[i - 1] + Math.hypot(x[i] - x[i - 1], y[i] - y[i - 1]);
++            }
++        }
++    }
++
++    public double length() {
++        return cumulative[cumulative.length - 1];
++    }
++
++    public boolean circular() {
++        return circular;
++    }
++
++    /**
++     * Projects a position; with a previous distance along the line, among the stretches within 40 m of the closest
++     * one it picks the one reached moving forward the least from there.
++     */
++    public Projection project(double latitude, double longitude, Double previous) {
++        double px = longitude * RAD * Math.cos(lat0) * EARTH;
++        double py = latitude * RAD * EARTH;
++        List<double[]> candidates = new ArrayList<>();
++        double best = Double.MAX_VALUE;
++        for (int i = 0; i < x.length - 1; i++) {
++            double dx = x[i + 1] - x[i];
++            double dy = y[i + 1] - y[i];
++            double squared = dx * dx + dy * dy;
++            double t = squared > 0 ? ((px - x[i]) * dx + (py - y[i]) * dy) / squared : 0;
++            t = Math.max(0, Math.min(1, t));
++            double distance = Math.hypot(px - (x[i] + t * dx), py - (y[i] + t * dy));
++            candidates.add(new double[] {cumulative[i] + t * Math.sqrt(squared), distance});
++            best = Math.min(best, distance);
++        }
++        double[] chosen = null;
++        for (double[] candidate : candidates) {
++            if (candidate[1] > best + 40) {
++                continue;
++            }
++            if (chosen == null) {
++                chosen = candidate;
++            } else if (previous != null) {
++                if (forward(previous, candidate[0]) < forward(previous, chosen[0])) {
++                    chosen = candidate;
++                }
++            } else if (candidate[1] < chosen[1]) {
++                chosen = candidate;
++            }
++        }
++        return new Projection(chosen[0], chosen[1]);
++    }
++
++    /**
++     * Distance moving forward along the line from one position to another (on linear lines, negative if behind).
++     */
++    public double forward(double from, double to) {
++        double difference = to - from;
++        if (circular) {
++            double length = length();
++            return ((difference % length) + length) % length;
++        }
++        return difference >= -30 ? Math.max(0, difference) : Double.MAX_VALUE / 4 - difference;
++    }
++
++    /**
++     * Distance along the line from a unit to the one ahead of it.
++     */
++    public double gap(double behind, double ahead) {
++        double difference = ahead - behind;
++        if (circular) {
++            double length = length();
++            return ((difference % length) + length) % length;
++        }
++        return difference;
++    }
++
++    /**
++     * Douglas-Peucker simplification of a [latitude, longitude] path with a tolerance in meters.
++     */
++    public static List<double[]> simplify(List<double[]> points, double tolerance) {
++        if (points.size() <= 2) {
++            return points;
++        }
++        double base = points.get(0)[0] * RAD;
++        boolean[] keep = new boolean[points.size()];
++        keep[0] = true;
++        keep[points.size() - 1] = true;
++        java.util.ArrayDeque<int[]> stack = new java.util.ArrayDeque<>();
++        stack.push(new int[] {0, points.size() - 1});
++        while (!stack.isEmpty()) {
++            int[] range = stack.pop();
++            double ax = points.get(range[0])[1] * RAD * Math.cos(base) * EARTH;
++            double ay = points.get(range[0])[0] * RAD * EARTH;
++            double bx = points.get(range[1])[1] * RAD * Math.cos(base) * EARTH;
++            double by = points.get(range[1])[0] * RAD * EARTH;
++            double dx = bx - ax;
++            double dy = by - ay;
++            double squared = dx * dx + dy * dy;
++            int index = -1;
++            double max = tolerance;
++            for (int i = range[0] + 1; i < range[1]; i++) {
++                double px = points.get(i)[1] * RAD * Math.cos(base) * EARTH;
++                double py = points.get(i)[0] * RAD * EARTH;
++                double t = squared > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / squared)) : 0;
++                double distance = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
++                if (distance > max) {
++                    max = distance;
++                    index = i;
++                }
++            }
++            if (index > 0) {
++                keep[index] = true;
++                stack.push(new int[] {range[0], index});
++                stack.push(new int[] {index, range[1]});
++            }
++        }
++        List<double[]> result = new ArrayList<>();
++        for (int i = 0; i < points.size(); i++) {
++            if (keep[i]) {
++                result.add(points.get(i));
++            }
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/transit/TransitService.java b/src/main/java/org/traccar/transit/TransitService.java
+new file mode 100644
+index 0000000..9012a0d
+--- /dev/null
++++ b/src/main/java/org/traccar/transit/TransitService.java
+@@ -0,0 +1,548 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.transit;
++
++import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Device;
++import org.traccar.model.Event;
++import org.traccar.model.Position;
++import org.traccar.model.Server;
++import org.traccar.model.TransitRoute;
++import org.traccar.model.TransitVisit;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.time.LocalTime;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * Public transport lines: progress of every unit along its line, stops served (visits with delay against the
++ * schedule), laps, distance and time to the unit ahead and behind, and alerts for bunching, gaps, leaving the line
++ * and delay.
++ */
++@Singleton
++public class TransitService {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(TransitService.class);
++
++    public static final String ATTRIBUTE = "transitRouteId";
++    private static final long STALE = 10 * 60_000L;
++    private static final long ALERT_INTERVAL = 10 * 60_000L;
++
++    private final Storage storage;
++    private final CacheManager cacheManager;
++    private final ObjectMapper objectMapper;
++
++    public record Stop(String name, double latitude, double longitude, double radius, double minutes, double along) {
++    }
++
++    public record Band(LocalTime from, LocalTime to, double minutes) {
++    }
++
++    public record Line(
++            TransitRoute route, TransitGeometry geometry, List<Stop> stops, List<Band> bands,
++            List<LocalTime> departures,
++            double speedKmh, double bunchingMeters, double gapMeters, double offRouteMeters, double delayMinutes,
++            ZoneId zone) {
++    }
++
++    public static final class State {
++        private long routeId;
++        private String name;
++        private Double along;
++        private double offset;
++        private boolean offRoute;
++        private int offRouteCount;
++        private long time;
++        private double speed;
++        private int lap;
++        private Date tripStart;
++        private int lastStop = -1;
++        private Integer lastDelay;
++        private boolean delayAlerted;
++        private final Map<String, Long> alerts = new HashMap<>();
++    }
++
++    private final Map<Long, Line> lines = new ConcurrentHashMap<>();
++    private final Map<Long, State> states = new ConcurrentHashMap<>();
++
++    @Inject
++    public TransitService(Storage storage, CacheManager cacheManager, ObjectMapper objectMapper) {
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++        this.objectMapper = objectMapper;
++    }
++
++    public void invalidate(long routeId) {
++        lines.remove(routeId);
++    }
++
++    public static long routeOf(Device device) {
++        if (device == null || !device.hasAttribute(ATTRIBUTE)) {
++            return 0;
++        }
++        try {
++            return Long.parseLong(String.valueOf(device.getAttributes().get(ATTRIBUTE)).replaceAll("\\.0$", ""));
++        } catch (NumberFormatException e) {
++            return 0;
++        }
++    }
++
++    private static LocalTime time(Object value) {
++        try {
++            return value == null ? null : LocalTime.parse(String.valueOf(value).trim().length() == 4
++                    ? "0" + String.valueOf(value).trim() : String.valueOf(value).trim());
++        } catch (RuntimeException e) {
++            return null;
++        }
++    }
++
++    @SuppressWarnings("unchecked")
++    public Line line(long routeId) throws StorageException {
++        Line cached = lines.get(routeId);
++        if (cached != null) {
++            return cached;
++        }
++        TransitRoute route = storage.getObject(TransitRoute.class, new Request(
++                new Columns.All(), new Condition.Equals("id", routeId)));
++        if (route == null) {
++            return null;
++        }
++        try {
++            List<Map<String, Object>> rawStops = objectMapper.readValue(route.getStops(), new TypeReference<>() { });
++            List<double[]> path = route.getPath() != null && !route.getPath().isBlank()
++                    ? objectMapper.readValue(route.getPath(), new TypeReference<List<double[]>>() { })
++                    : new ArrayList<>();
++            if (path.size() < 2) {
++                path = new ArrayList<>();
++                for (Map<String, Object> stop : rawStops) {
++                    path.add(new double[] {((Number) stop.get("latitude")).doubleValue(),
++                            ((Number) stop.get("longitude")).doubleValue()});
++                }
++                if (route.getCircular() && !path.isEmpty()) {
++                    path.add(path.get(0));
++                }
++            }
++            TransitGeometry geometry = new TransitGeometry(path, route.getCircular());
++            double speed = route.getDouble("speedKmh") > 0 ? route.getDouble("speedKmh") : 20;
++            List<Stop> stops = new ArrayList<>();
++            Double previous = null;
++            for (Map<String, Object> stop : rawStops) {
++                double latitude = ((Number) stop.get("latitude")).doubleValue();
++                double longitude = ((Number) stop.get("longitude")).doubleValue();
++                double along = geometry.project(latitude, longitude, previous).along();
++                previous = along;
++                double radius = stop.get("radius") instanceof Number value && value.doubleValue() > 0
++                        ? value.doubleValue() : 60;
++                double minutes = stop.get("minutes") instanceof Number value && value.doubleValue() >= 0
++                        && !(stops.size() > 0 && value.doubleValue() == 0)
++                        ? value.doubleValue() : along / (speed / 3.6) / 60;
++                stops.add(new Stop(String.valueOf(stop.getOrDefault("name", "Paradero " + (stops.size() + 1))),
++                        latitude, longitude, radius, minutes, along));
++            }
++            Map<String, Object> schedule = route.getSchedule() != null && !route.getSchedule().isBlank()
++                    ? objectMapper.readValue(route.getSchedule(), new TypeReference<>() { }) : Map.of();
++            List<Band> bands = new ArrayList<>();
++            for (Map<String, Object> band : (List<Map<String, Object>>) schedule.getOrDefault("bands", List.of())) {
++                LocalTime from = time(band.get("from"));
++                LocalTime to = time(band.get("to"));
++                if (from != null && to != null && band.get("minutes") instanceof Number minutes) {
++                    bands.add(new Band(from, to, minutes.doubleValue()));
++                }
++            }
++            List<LocalTime> departures = new ArrayList<>();
++            for (Object departure : (List<Object>) schedule.getOrDefault("departures", List.of())) {
++                LocalTime value = time(departure);
++                if (value != null) {
++                    departures.add(value);
++                }
++            }
++            departures.sort(Comparator.naturalOrder());
++            String zone = route.getString("timezone");
++            if (zone == null) {
++                Server server = cacheManager.getServer();
++                zone = server != null ? server.getString("timezone") : null;
++            }
++            ZoneId zoneId;
++            try {
++                zoneId = zone != null ? ZoneId.of(zone) : ZoneId.systemDefault();
++            } catch (RuntimeException e) {
++                zoneId = ZoneId.systemDefault();
++            }
++            Line line = new Line(route, geometry, stops, bands, departures, speed,
++                    route.getDouble("bunchingKm") > 0 ? route.getDouble("bunchingKm") * 1000 : 300,
++                    route.getDouble("gapKm") > 0 ? route.getDouble("gapKm") * 1000 : 0,
++                    route.getDouble("offRouteMeters") > 0 ? route.getDouble("offRouteMeters") : 150,
++                    route.getDouble("delayMinutes") > 0 ? route.getDouble("delayMinutes") : 10, zoneId);
++            lines.put(routeId, line);
++            return line;
++        } catch (Exception e) {
++            LOGGER.warn("Invalid transit line {}", routeId, e);
++            return null;
++        }
++    }
++
++    /**
++     * Planned minutes between buses at a moment (frequency band), or from the departure times.
++     */
++    public Double plannedHeadway(Line line, Date moment) {
++        LocalTime now = ZonedDateTime.ofInstant(moment.toInstant(), line.zone()).toLocalTime();
++        for (Band band : line.bands()) {
++            if (!now.isBefore(band.from()) && now.isBefore(band.to())) {
++                return band.minutes();
++            }
++        }
++        List<LocalTime> departures = line.departures();
++        for (int i = 1; i < departures.size(); i++) {
++            if (now.isBefore(departures.get(i))) {
++                return (double) java.time.Duration.between(departures.get(i - 1), departures.get(i)).toMinutes();
++            }
++        }
++        return null;
++    }
++
++    private Date scheduledStart(Line line, Date start) {
++        if (line.departures().isEmpty()) {
++            return start;
++        }
++        ZonedDateTime moment = ZonedDateTime.ofInstant(start.toInstant(), line.zone());
++        ZonedDateTime best = null;
++        for (LocalTime departure : line.departures()) {
++            ZonedDateTime candidate = moment.with(departure);
++            if (best == null || Math.abs(candidate.toEpochSecond() - moment.toEpochSecond())
++                    < Math.abs(best.toEpochSecond() - moment.toEpochSecond())) {
++                best = candidate;
++            }
++        }
++        return Math.abs(best.toEpochSecond() - moment.toEpochSecond()) <= 1800 ? Date.from(best.toInstant()) : start;
++    }
++
++    private Event event(String type, Position position, Line line, String severity) {
++        Event event = new Event(type, position);
++        event.set("routeId", line.route().getId());
++        event.set("routeName", line.route().getName());
++        event.set("severity", severity);
++        return event;
++    }
++
++    private boolean throttled(State state, String type, long now) {
++        Long last = state.alerts.get(type);
++        if (last != null && now - last < ALERT_INTERVAL) {
++            return true;
++        }
++        state.alerts.put(type, now);
++        return false;
++    }
++
++    private void visit(Line line, State state, Position position, int index, List<Event> events) {
++        Stop stop = line.stops().get(index);
++        Date time = position.getFixTime();
++        if (index == 0) {
++            state.lap++;
++            state.tripStart = time;
++            state.delayAlerted = false;
++        }
++        Integer delay = null;
++        if (state.tripStart != null) {
++            Date start = scheduledStart(line, state.tripStart);
++            delay = (int) ((time.getTime() - start.getTime()) / 1000 - stop.minutes() * 60);
++        }
++        state.lastStop = index;
++        state.lastDelay = delay;
++        TransitVisit visit = new TransitVisit();
++        visit.setDeviceId(position.getDeviceId());
++        visit.setRouteId(line.route().getId());
++        visit.setStopIndex(index);
++        visit.setTime(time);
++        visit.setLap(state.lap);
++        visit.setDelay(delay != null ? delay : 0);
++        try {
++            storage.addObject(visit, new Request(new Columns.Exclude("id")));
++        } catch (StorageException e) {
++            LOGGER.warn("Transit visit not saved", e);
++        }
++        if (delay != null && delay > line.delayMinutes() * 60 && !state.delayAlerted) {
++            state.delayAlerted = true;
++            Event event = event(Event.TYPE_TRANSIT_DELAY, position, line, "medium");
++            event.set("stopName", stop.name());
++            event.set("delayMinutes", Math.round(delay / 60.0));
++            events.add(event);
++        }
++    }
++
++    public List<Event> onPosition(Position position) throws StorageException {
++        List<Event> events = new ArrayList<>();
++        Device device = cacheManager.getObject(Device.class, position.getDeviceId());
++        long routeId = routeOf(device);
++        if (routeId == 0) {
++            states.remove(position.getDeviceId());
++            return events;
++        }
++        Line line = line(routeId);
++        if (line == null) {
++            return events;
++        }
++        State state = states.computeIfAbsent(position.getDeviceId(), key -> new State());
++        if (state.routeId != routeId) {
++            state.along = null;
++            state.lap = 0;
++            state.tripStart = null;
++        }
++        state.routeId = routeId;
++        state.name = device.getName();
++        long now = position.getFixTime().getTime();
++        TransitGeometry geometry = line.geometry();
++        TransitGeometry.Projection projection = geometry.project(
++                position.getLatitude(), position.getLongitude(), state.along);
++        state.offset = projection.offset();
++        state.speed = UnitsConverter.kphFromKnots(position.getSpeed());
++        if (projection.offset() > line.offRouteMeters()) {
++            state.offRouteCount++;
++            if (state.offRouteCount >= 2 && !state.offRoute) {
++                state.offRoute = true;
++                Event event = event(Event.TYPE_TRANSIT_OFF_ROUTE, position, line, "high");
++                event.set("offsetMeters", Math.round(projection.offset()));
++                events.add(event);
++            }
++            state.time = now;
++            return events;
++        }
++        state.offRoute = false;
++        state.offRouteCount = 0;
++        double along = projection.along();
++        if (state.along == null || now - state.time > STALE * 3) {
++            state.lastStop = -1;
++            for (int i = 0; i < line.stops().size(); i++) {
++                Stop stop = line.stops().get(i);
++                if (geometry.forward(stop.along(), along) < 1e9 && stop.along() <= along) {
++                    state.lastStop = i;
++                }
++            }
++        } else {
++            double moved = geometry.forward(state.along, along);
++            if (moved <= geometry.length() / 2) {
++                // stops passed since the last position, in order
++                List<int[]> passed = new ArrayList<>();
++                for (int i = 0; i < line.stops().size(); i++) {
++                    double distance = geometry.forward(state.along, line.stops().get(i).along());
++                    if (distance > 0 && distance <= moved + line.stops().get(i).radius()) {
++                        passed.add(new int[] {i, (int) distance});
++                    }
++                }
++                passed.sort(Comparator.comparingInt(item -> item[1]));
++                for (int[] item : passed) {
++                    if (item[0] != state.lastStop) {
++                        visit(line, state, position, item[0], events);
++                    }
++                }
++            } else if (!geometry.circular() && along < line.stops().get(0).along() + 300) {
++                state.lastStop = -1;
++                state.tripStart = null;
++            }
++        }
++        state.along = along;
++        state.time = now;
++        headwayAlerts(line, position, state, events);
++        return events;
++    }
++
++    private void headwayAlerts(Line line, Position position, State state, List<Event> events) {
++        long now = state.time;
++        Double ahead = null;
++        long aheadId = 0;
++        for (Map.Entry<Long, State> entry : states.entrySet()) {
++            State other = entry.getValue();
++            if (entry.getKey() == position.getDeviceId() || other.along == null || other.offRoute
++                    || Math.abs(now - other.time) > STALE || other.routeId != line.route().getId()) {
++                continue;
++            }
++            double gap = line.geometry().gap(state.along, other.along);
++            if (gap >= 0 && (ahead == null || gap < ahead)) {
++                ahead = gap;
++                aheadId = entry.getKey();
++            }
++        }
++        if (ahead == null) {
++            return;
++        }
++        State aheadState = states.get(aheadId);
++        double gapLimit = line.gapMeters();
++        Double planned = plannedHeadway(line, position.getFixTime());
++        if (gapLimit <= 0 && planned != null) {
++            gapLimit = planned * 2 * line.speedKmh() / 60 * 1000;
++        }
++        String type = null;
++        if (ahead < line.bunchingMeters()) {
++            type = Event.TYPE_TRANSIT_BUNCHING;
++        } else if (gapLimit > 0 && ahead > gapLimit) {
++            type = Event.TYPE_TRANSIT_GAP;
++        }
++        if (type != null && !throttled(state, type, now)) {
++            Event event = event(type, position, line, "medium");
++            event.set("gapMeters", Math.round(ahead));
++            event.set("aheadName", aheadState != null ? aheadState.name : null);
++            events.add(event);
++        }
++    }
++
++    /**
++     * Live picture of a line for the given units: progress, stops, distance and minutes to the unit ahead and behind.
++     */
++    public Map<String, Object> live(long routeId, List<Device> devices) throws StorageException {
++        Line line = line(routeId);
++        Map<String, Object> result = new LinkedHashMap<>();
++        if (line == null) {
++            return result;
++        }
++        TransitGeometry geometry = line.geometry();
++        long now = System.currentTimeMillis();
++        List<Map<String, Object>> units = new ArrayList<>();
++        for (Device device : devices) {
++            State state = states.get(device.getId());
++            Position position = cacheManager.getPosition(device.getId());
++            if (position == null && device.getPositionId() > 0) {
++                position = storage.getObject(Position.class, new Request(
++                        new Columns.All(), new Condition.Equals("id", device.getPositionId())));
++            }
++            Map<String, Object> unit = new LinkedHashMap<>();
++            unit.put("deviceId", device.getId());
++            unit.put("name", device.getName());
++            if (position != null) {
++                unit.put("latitude", position.getLatitude());
++                unit.put("longitude", position.getLongitude());
++                unit.put("course", position.getCourse());
++                unit.put("fixTime", position.getFixTime());
++                unit.put("speed", Math.round(UnitsConverter.kphFromKnots(position.getSpeed())));
++            }
++            Double along = state != null ? state.along : null;
++            boolean offRoute = state != null && state.offRoute;
++            if (along == null && position != null) {
++                TransitGeometry.Projection projection = geometry.project(
++                        position.getLatitude(), position.getLongitude(), null);
++                offRoute = projection.offset() > line.offRouteMeters();
++                along = offRoute ? null : projection.along();
++            }
++            boolean active = position != null && now - position.getFixTime().getTime() < STALE;
++            unit.put("active", active);
++            unit.put("offRoute", offRoute);
++            if (state != null) {
++                unit.put("offset", Math.round(state.offset));
++                unit.put("lap", state.lap);
++                unit.put("delayMinutes", state.lastDelay != null ? Math.round(state.lastDelay / 60.0) : null);
++                unit.put("lastStop", state.lastStop);
++            }
++            if (along != null) {
++                unit.put("along", Math.round(along));
++                unit.put("progress", Math.round(along / geometry.length() * 1000) / 10.0);
++                int next = -1;
++                double toNext = Double.MAX_VALUE;
++                for (int i = 0; i < line.stops().size(); i++) {
++                    double distance = geometry.forward(along, line.stops().get(i).along());
++                    if (distance > 15 && distance < toNext) {
++                        toNext = distance;
++                        next = i;
++                    }
++                }
++                if (next >= 0) {
++                    double speed = Math.max(line.speedKmh(), 5);
++                    unit.put("nextStop", next);
++                    unit.put("nextStopName", line.stops().get(next).name());
++                    unit.put("nextStopMeters", Math.round(toNext));
++                    unit.put("nextStopMinutes", Math.round(toNext / (speed / 3.6) / 60));
++                }
++            }
++            units.add(unit);
++        }
++        // distance along the line to the closest unit ahead and behind (active units on the line only)
++        List<Map<String, Object>> running = units.stream()
++                .filter(unit -> unit.get("along") != null && Boolean.TRUE.equals(unit.get("active"))
++                        && !Boolean.TRUE.equals(unit.get("offRoute")))
++                .sorted(Comparator.comparingLong(unit -> (Long) unit.get("along"))).toList();
++        List<Double> gaps = new ArrayList<>();
++        for (int i = 0; i < running.size(); i++) {
++            Map<String, Object> unit = running.get(i);
++            Map<String, Object> ahead = i + 1 < running.size() ? running.get(i + 1)
++                    : geometry.circular() && running.size() > 1 ? running.get(0) : null;
++            Map<String, Object> behind = i > 0 ? running.get(i - 1)
++                    : geometry.circular() && running.size() > 1 ? running.get(running.size() - 1) : null;
++            if (ahead != null) {
++                double gap = geometry.gap((Long) unit.get("along"), (Long) ahead.get("along"));
++                unit.put("aheadId", ahead.get("deviceId"));
++                unit.put("aheadName", ahead.get("name"));
++                unit.put("aheadMeters", Math.round(gap));
++                unit.put("aheadMinutes", Math.round(gap / (line.speedKmh() / 3.6) / 60));
++                gaps.add(gap);
++            }
++            if (behind != null) {
++                double gap = geometry.gap((Long) behind.get("along"), (Long) unit.get("along"));
++                unit.put("behindId", behind.get("deviceId"));
++                unit.put("behindName", behind.get("name"));
++                unit.put("behindMeters", Math.round(gap));
++                unit.put("behindMinutes", Math.round(gap / (line.speedKmh() / 3.6) / 60));
++            }
++        }
++        Double planned = plannedHeadway(line, new Date());
++        double plannedMeters = planned != null ? planned * line.speedKmh() / 60 * 1000 : 0;
++        double gapLimit = line.gapMeters() > 0 ? line.gapMeters() : plannedMeters * 2;
++        Map<String, Object> summary = new LinkedHashMap<>();
++        summary.put("units", devices.size());
++        summary.put("running", running.size());
++        summary.put("offRoute", units.stream().filter(unit -> Boolean.TRUE.equals(unit.get("offRoute"))).count());
++        summary.put("lengthKm", Math.round(geometry.length() / 100) / 10.0);
++        summary.put("plannedHeadwayMinutes", planned);
++        summary.put("plannedGapKm", plannedMeters > 0 ? Math.round(plannedMeters / 100) / 10.0 : null);
++        summary.put("averageGapKm", gaps.isEmpty() ? null
++                : Math.round(gaps.stream().mapToDouble(Double::doubleValue).average().orElse(0) / 100) / 10.0);
++        summary.put("minGapKm", gaps.isEmpty() ? null : Math.round(java.util.Collections.min(gaps) / 100) / 10.0);
++        summary.put("maxGapKm", gaps.isEmpty() ? null : Math.round(java.util.Collections.max(gaps) / 100) / 10.0);
++        summary.put("bunching", gaps.stream().filter(gap -> gap < line.bunchingMeters()).count());
++        summary.put("gaps", gapLimit > 0 ? gaps.stream().filter(gap -> gap > gapLimit).count() : 0);
++        summary.put("bunchingKm", line.bunchingMeters() / 1000);
++        summary.put("gapKm", gapLimit > 0 ? Math.round(gapLimit / 100) / 10.0 : null);
++        List<Map<String, Object>> stops = new ArrayList<>();
++        for (Stop stop : line.stops()) {
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("name", stop.name());
++            item.put("latitude", stop.latitude());
++            item.put("longitude", stop.longitude());
++            item.put("along", Math.round(stop.along()));
++            item.put("minutes", Math.round(stop.minutes() * 10) / 10.0);
++            stops.add(item);
++        }
++        result.put("summary", summary);
++        result.put("stops", stops);
++        result.put("units", units);
++        return result;
++    }
++
++}
+diff --git a/src/test/java/org/traccar/transit/TransitGeometryTest.java b/src/test/java/org/traccar/transit/TransitGeometryTest.java
+new file mode 100644
+index 0000000..4a228bd
+--- /dev/null
++++ b/src/test/java/org/traccar/transit/TransitGeometryTest.java
+@@ -0,0 +1,48 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.transit;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++public class TransitGeometryTest {
++
++    @Test
++    public void testProjectionAndGap() {
++        // 0.01 degrees of latitude is about 1112 m
++        var line = new TransitGeometry(List.of(new double[] {-12.00, -77.0}, new double[] {-12.02, -77.0}), false);
++        assertEquals(2224, line.length(), 5);
++        var projection = line.project(-12.01, -77.0005, null);
++        assertEquals(1112, projection.along(), 5);
++        assertEquals(54, projection.offset(), 3);
++        assertEquals(556, line.gap(556, 1112), 1);
++    }
++
++    @Test
++    public void testCircularWrapAndDirection() {
++        // out on one street and back on the same street: the previous position decides the direction
++        var loop = new TransitGeometry(List.of(
++                new double[] {-12.00, -77.0}, new double[] {-12.02, -77.0}, new double[] {-12.00, -77.0}), true);
++        assertEquals(4448, loop.length(), 10);
++        assertEquals(1112, loop.project(-12.01, -77.0, 900.0).along(), 5);
++        assertEquals(3336, loop.project(-12.01, -77.0, 3000.0).along(), 5);
++        assertEquals(448, loop.gap(4200, 200), 10);
++        assertTrue(loop.forward(4400, 50) < 100);
++    }
++
++}
+diff --git a/templates/notifications/de/transitBunching.vm b/templates/notifications/de/transitBunching.vm
+new file mode 100644
+index 0000000..ed6e5f5
+--- /dev/null
++++ b/templates/notifications/de/transitBunching.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: Fahrzeuge gebündelt (Linie $event.getString('routeName'))")
++#set($digest = "$device.name ist $event.getString('gapMeters') m hinter $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Fahrzeuge gebündelt: $device.name ist $event.getString('gapMeters') m hinter $event.getString('aheadName')<br>
++Linie: $event.getString('routeName')<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/transitDelay.vm b/templates/notifications/de/transitDelay.vm
+new file mode 100644
+index 0000000..0b3db26
+--- /dev/null
++++ b/templates/notifications/de/transitDelay.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: Verspätung auf der Linie (Linie $event.getString('routeName'))")
++#set($digest = "$device.name kommt $event.getString('delayMinutes') min zu spät an $event.getString('stopName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Verspätung auf der Linie: $device.name kommt $event.getString('delayMinutes') min zu spät an $event.getString('stopName')<br>
++Linie: $event.getString('routeName')<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/transitGap.vm b/templates/notifications/de/transitGap.vm
+new file mode 100644
+index 0000000..bd535d3
+--- /dev/null
++++ b/templates/notifications/de/transitGap.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: Lücke auf der Linie (Linie $event.getString('routeName'))")
++#set($digest = "$device.name ist $event.getString('gapMeters') m hinter $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Lücke auf der Linie: $device.name ist $event.getString('gapMeters') m hinter $event.getString('aheadName')<br>
++Linie: $event.getString('routeName')<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/de/transitOffRoute.vm b/templates/notifications/de/transitOffRoute.vm
+new file mode 100644
+index 0000000..ad1fd49
+--- /dev/null
++++ b/templates/notifications/de/transitOffRoute.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: Außerhalb der Route (Linie $event.getString('routeName'))")
++#set($digest = "$device.name hat die Route um $event.getString('offsetMeters') m verlassen ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Gerät: $device.name<br>
++Außerhalb der Route: $device.name hat die Route um $event.getString('offsetMeters') m verlassen<br>
++Linie: $event.getString('routeName')<br>
++Zeit: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punkt: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Abbestellen</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/transitBunching.vm b/templates/notifications/en/transitBunching.vm
+new file mode 100644
+index 0000000..f591790
+--- /dev/null
++++ b/templates/notifications/en/transitBunching.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: bunched units (Line $event.getString('routeName'))")
++#set($digest = "$device.name is $event.getString('gapMeters') m behind $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Bunched units: $device.name is $event.getString('gapMeters') m behind $event.getString('aheadName')<br>
++Line: $event.getString('routeName')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/transitDelay.vm b/templates/notifications/en/transitDelay.vm
+new file mode 100644
+index 0000000..11d2a89
+--- /dev/null
++++ b/templates/notifications/en/transitDelay.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: line delay (Line $event.getString('routeName'))")
++#set($digest = "$device.name is $event.getString('delayMinutes') min late at $event.getString('stopName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Line delay: $device.name is $event.getString('delayMinutes') min late at $event.getString('stopName')<br>
++Line: $event.getString('routeName')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/transitGap.vm b/templates/notifications/en/transitGap.vm
+new file mode 100644
+index 0000000..55b30d6
+--- /dev/null
++++ b/templates/notifications/en/transitGap.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: gap on the line (Line $event.getString('routeName'))")
++#set($digest = "$device.name is $event.getString('gapMeters') m behind $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Gap on the line: $device.name is $event.getString('gapMeters') m behind $event.getString('aheadName')<br>
++Line: $event.getString('routeName')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/en/transitOffRoute.vm b/templates/notifications/en/transitOffRoute.vm
+new file mode 100644
+index 0000000..4f2ad15
+--- /dev/null
++++ b/templates/notifications/en/transitOffRoute.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: off route (Line $event.getString('routeName'))")
++#set($digest = "$device.name left the route by $event.getString('offsetMeters') m ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Device: $device.name<br>
++Off route: $device.name left the route by $event.getString('offsetMeters') m<br>
++Line: $event.getString('routeName')<br>
++Time: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Point: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Unsubscribe</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/transitBunching.vm b/templates/notifications/es/transitBunching.vm
+new file mode 100644
+index 0000000..d74ebb6
+--- /dev/null
++++ b/templates/notifications/es/transitBunching.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: unidades agrupadas (Línea $event.getString('routeName'))")
++#set($digest = "$device.name va a $event.getString('gapMeters') m de $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Unidades agrupadas: $device.name va a $event.getString('gapMeters') m de $event.getString('aheadName')<br>
++Línea: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/transitDelay.vm b/templates/notifications/es/transitDelay.vm
+new file mode 100644
+index 0000000..47eb8e2
+--- /dev/null
++++ b/templates/notifications/es/transitDelay.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: retraso en la línea (Línea $event.getString('routeName'))")
++#set($digest = "$device.name llega $event.getString('delayMinutes') min tarde a $event.getString('stopName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Retraso en la línea: $device.name llega $event.getString('delayMinutes') min tarde a $event.getString('stopName')<br>
++Línea: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/transitGap.vm b/templates/notifications/es/transitGap.vm
+new file mode 100644
+index 0000000..ece04a4
+--- /dev/null
++++ b/templates/notifications/es/transitGap.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: hueco en la línea (Línea $event.getString('routeName'))")
++#set($digest = "$device.name va a $event.getString('gapMeters') m de $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Hueco en la línea: $device.name va a $event.getString('gapMeters') m de $event.getString('aheadName')<br>
++Línea: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/es/transitOffRoute.vm b/templates/notifications/es/transitOffRoute.vm
+new file mode 100644
+index 0000000..def1e6a
+--- /dev/null
++++ b/templates/notifications/es/transitOffRoute.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: fuera de la ruta (Línea $event.getString('routeName'))")
++#set($digest = "$device.name se alejó $event.getString('offsetMeters') m del recorrido ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Fuera de la ruta: $device.name se alejó $event.getString('offsetMeters') m del recorrido<br>
++Línea: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Punto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar suscripción</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/transitBunching.vm b/templates/notifications/pt_BR/transitBunching.vm
+new file mode 100644
+index 0000000..5c1a586
+--- /dev/null
++++ b/templates/notifications/pt_BR/transitBunching.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: veículos agrupados (Linha $event.getString('routeName'))")
++#set($digest = "$device.name está a $event.getString('gapMeters') m de $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Veículos agrupados: $device.name está a $event.getString('gapMeters') m de $event.getString('aheadName')<br>
++Linha: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/transitDelay.vm b/templates/notifications/pt_BR/transitDelay.vm
+new file mode 100644
+index 0000000..9b5e03e
+--- /dev/null
++++ b/templates/notifications/pt_BR/transitDelay.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: atraso na linha (Linha $event.getString('routeName'))")
++#set($digest = "$device.name chega $event.getString('delayMinutes') min atrasado a $event.getString('stopName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Atraso na linha: $device.name chega $event.getString('delayMinutes') min atrasado a $event.getString('stopName')<br>
++Linha: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/transitGap.vm b/templates/notifications/pt_BR/transitGap.vm
+new file mode 100644
+index 0000000..9d522e8
+--- /dev/null
++++ b/templates/notifications/pt_BR/transitGap.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: intervalo na linha (Linha $event.getString('routeName'))")
++#set($digest = "$device.name está a $event.getString('gapMeters') m de $event.getString('aheadName') ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Intervalo na linha: $device.name está a $event.getString('gapMeters') m de $event.getString('aheadName')<br>
++Linha: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>
+diff --git a/templates/notifications/pt_BR/transitOffRoute.vm b/templates/notifications/pt_BR/transitOffRoute.vm
+new file mode 100644
+index 0000000..c2361e4
+--- /dev/null
++++ b/templates/notifications/pt_BR/transitOffRoute.vm
+@@ -0,0 +1,14 @@
++#set($subject = "$device.name: fora da rota (Linha $event.getString('routeName'))")
++#set($digest = "$device.name saiu $event.getString('offsetMeters') m do trajeto ($event.getString('routeName'))")
++<!DOCTYPE html>
++<html>
++<body>
++Dispositivo: $device.name<br>
++Fora da rota: $device.name saiu $event.getString('offsetMeters') m do trajeto<br>
++Linha: $event.getString('routeName')<br>
++Hora: $dateTool.format('yyyy-MM-dd HH:mm:ss', $event.eventTime, $locale, $timezone)<br>
++#if($position)Ponto: <a href="$webUrl?eventId=$event.id">#if($position.address)$position.address#{else}$position.latitude&deg;, $position.longitude&deg;#end</a><br>#end
++<br>
++<a href="$webUrl/settings/notifications?token=$token">Cancelar inscrição</a>
++</body>
++</html>

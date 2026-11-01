@@ -41,6 +41,8 @@ import OrdersPage from './dispatch/OrdersPage';
 import PlannerPage from './dispatch/PlannerPage';
 import DispatchDriverPage from './dispatch/DriverPage';
 import DeliveryTrackPage from './dispatch/DeliveryTrackPage';
+import TransitPage from './transit/TransitPage';
+import TransitReportPage from './transit/TransitReportPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -155,6 +157,7 @@ const Navigation = () => {
         <Route path="dispatch" element={<DispatchPage />} />
         <Route path="dispatch/orders" element={<OrdersPage />} />
         <Route path="dispatch/planner" element={<PlannerPage />} />
+        <Route path="transit" element={<TransitPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
         <Route path="admin" element={<ResellerDashboardPage />} />
         <Route path="dashcam" element={<DashcamPage />} />
@@ -216,6 +219,7 @@ const Navigation = () => {
           <Route path="custom-alerts" element={<CustomAlertsReportPage />} />
           <Route path="geofence-speed" element={<GeofenceSpeedReportPage />} />
           <Route path="dispatch" element={<DispatchReportPage />} />
+          <Route path="transit" element={<TransitReportPage />} />
           <Route path="builder" element={<ReportBuilderPage />} />
           <Route path="events" element={<EventReportPage />} />
           <Route path="route" element={<PositionsReportPage />} />
