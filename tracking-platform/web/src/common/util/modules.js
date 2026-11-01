@@ -19,6 +19,7 @@ export const MODULE_LABELS = {
   agro: 'moduleAgro',
   deviceConfig: 'moduleDeviceConfig',
   machinery: 'moduleMachinery',
+  premiumMaps: 'modulePremiumMaps',
   whitelabel: 'moduleWhitelabel',
 };
 

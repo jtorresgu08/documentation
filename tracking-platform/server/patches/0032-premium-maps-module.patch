@@ -1,0 +1,22 @@
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+index 8818f89..31186e4 100644
+--- a/src/main/java/org/traccar/plans/PlanService.java
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -54,7 +54,7 @@ public class PlanService {
+     public static final List<String> MODULES = List.of(
+             "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
+             "driving", "expenses", "maintenance", "reports", "dispatch", "transit", "tpms", "assets", "agro",
+-            "deviceConfig", "machinery", "whitelabel");
++            "deviceConfig", "machinery", "premiumMaps", "whitelabel");
+ 
+     /** modules that existed before the catalog recorded which modules it knew */
+     private static final List<String> LEGACY_MODULES = List.of(
+@@ -71,7 +71,7 @@ public class PlanService {
+             new Plan("video", "Video", "Profesional más dashcams, video y chat con conductores", "#8e44ad", 0,
+                     List.of("video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+                     "whatsapp", "chat", "driving", "expenses", "maintenance", "reports", "dispatch", "tpms",
+-                    "assets", "agro", "deviceConfig", "machinery")),
++                    "assets", "agro", "deviceConfig", "machinery", "premiumMaps")),
+             new Plan("reseller", "Distribuidor", "Todos los módulos y marca blanca para revender", "#1a9aa3", 0,
+                     MODULES));
+ 

@@ -659,9 +659,10 @@ Para que «Continuar con Google» funcione hay que configurar OpenID en `traccar
 
 Capturas: `docs/capturas/v33-login-escritorio.png`, `v33-login-error.png`, `v33-login-movil.png`.
 
-**Bing Maps**: no se puede agregar gratis. Microsoft cerró las cuentas gratuitas de Bing Maps en 2025 y su
-reemplazo es Azure Maps (de pago, con una cuota gratuita mensual). Los estilos Bing que trae Traccar solo
-funcionan con una clave antigua de Bing que ya no se emite.
+**Bing Maps**: no se puede agregar gratis (Microsoft cerró las cuentas gratuitas en 2025). En su lugar están los
+**mapas premium** (parche `0032`, módulo `premiumMaps`): Esri satélite/híbrido y Azure Maps calles/oscuro/satélite/
+híbrido, visibles solo con su clave (`esriKey`, `azureMapsKey`) y en planes con ese módulo. Configuración en
+`infra/DEPLOY.md` §25; captura `docs/capturas/v34-mapas-premium.png`.
 
 ## Correspondencia con las capturas
 

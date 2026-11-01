@@ -10,7 +10,7 @@ import { SwitcherControl } from '../switcher/switcher';
 import { useAttributePreference, usePreference } from '../../common/util/preferences';
 import usePersistedState, { savePersistedState } from '../../common/util/usePersistedState';
 import { mapImages } from './preloadImages';
-import useMapStyles from './useMapStyles';
+import useMapStyles, { DEFAULT_MAP_STYLES } from './useMapStyles';
 import { useEffectAsync } from '../../reactHelper';
 
 const element = document.createElement('div');
@@ -61,7 +61,7 @@ const MapView = ({ children }) => {
   const [mapReady, setMapReady] = useState(false);
 
   const mapStyles = useMapStyles();
-  const activeMapStyles = useAttributePreference('activeMapStyles', 'safeStreets,safeDark,safeGray,openFreeMap');
+  const activeMapStyles = useAttributePreference('activeMapStyles', DEFAULT_MAP_STYLES);
   const [defaultMapStyle] = usePersistedState('selectedMapStyle', usePreference('map', 'safeStreets'));
   const mapboxAccessToken = useAttributePreference('mapboxAccessToken');
   const maxZoom = useAttributePreference('web.maxZoom');
@@ -117,7 +117,8 @@ const MapView = ({ children }) => {
     if (mapStyles.some((s) => s.pending)) {
       return; // wait until it is known whether the own maps are installed
     }
-    const filteredStyles = mapStyles.filter((s) => s.available && activeMapStyles.includes(s.id));
+    const active = activeMapStyles.split(',');
+    const filteredStyles = mapStyles.filter((s) => s.available && active.includes(s.id));
     // own maps first; without them OpenFreeMap (free, no key) takes over
     const styles = filteredStyles.length ? filteredStyles : mapStyles.filter((s) => s.id === 'openFreeMap');
     switcher.updateStyles(styles, defaultMapStyle);

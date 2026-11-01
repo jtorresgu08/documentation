@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux';
 import { useTranslation } from '../../common/components/LocalizationProvider';
 import { useAttributePreference } from '../../common/util/preferences';
 import { checkOwnMaps, ownMapStyle } from './ownMaps';
+import { useModule } from '../../common/util/permissions';
 
 const styleCustom = ({ tiles, minZoom, maxZoom, attribution }) => {
   const source = {
@@ -28,6 +29,34 @@ const styleCustom = ({ tiles, minZoom, maxZoom, attribution }) => {
   };
 };
 
+// Several raster layers stacked (imagery + labels) in one style
+const styleLayers = (layers) => ({
+  version: 8,
+  sources: Object.fromEntries(layers.map((layer, index) => [`layer${index}`, {
+    type: 'raster',
+    tileSize: 256,
+    ...layer,
+  }])),
+  glyphs: 'https://cdn.traccar.com/map/fonts/{fontstack}/{range}.pbf',
+  layers: layers.map((layer, index) => ({ id: `layer${index}`, type: 'raster', source: `layer${index}` })),
+});
+
+const esriTiles = (service, key) => [
+  `https://ibasemaps-api.arcgis.com/arcgis/rest/services/${service}/MapServer/tile/{z}/{y}/{x}?token=${key}`,
+];
+
+const azureTiles = (tileset, key) => [
+  `https://atlas.microsoft.com/map/tile?api-version=2024-04-01&tilesetId=${tileset}&zoom={z}&x={x}&y={y}`
+  + `&tileSize=256&language=es-419&subscription-key=${key}`,
+];
+
+const ESRI_ATTRIBUTION = 'Powered by Esri | Esri, Maxar, Earthstar Geographics';
+const AZURE_ATTRIBUTION = '© Microsoft Azure Maps, © TomTom';
+
+// default selection when the user never picked; keyed styles only show once their key is set
+export const DEFAULT_MAP_STYLES = 'safeStreets,safeDark,safeGray,openFreeMap,esriImagery,esriHybrid,'
+  + 'azureRoad,azureSatellite,azureHybrid';
+
 export default () => {
   const t = useTranslation();
 
@@ -35,6 +64,10 @@ export default () => {
   const mapTilerKey = useAttributePreference('mapTilerKey');
   const locationIqKey = useAttributePreference('locationIqKey') || 'pk.0f147952a41c555a5b70614039fd148b';
   const bingMapsKey = useAttributePreference('bingMapsKey');
+  const esriKey = useAttributePreference('esriKey');
+  const azureMapsKey = useAttributePreference('azureMapsKey');
+  // paid providers are reserved to plans with the premium maps module
+  const premiumMaps = useModule('premiumMaps');
   const tomTomKey = useAttributePreference('tomTomKey');
   const hereKey = useAttributePreference('hereKey');
   const mapboxAccessToken = useAttributePreference('mapboxAccessToken');
@@ -152,6 +185,54 @@ export default () => {
       style: `https://api.maptiler.com/maps/hybrid/style.json?key=${mapTilerKey}`,
       available: Boolean(mapTilerKey),
       attribute: 'mapTilerKey',
+    },
+    {
+      id: 'esriImagery',
+      title: t('mapEsriImagery'),
+      style: styleLayers([{ tiles: esriTiles('World_Imagery', esriKey), maxzoom: 19, attribution: ESRI_ATTRIBUTION }]),
+      available: Boolean(esriKey) && premiumMaps,
+      attribute: 'esriKey',
+    },
+    {
+      id: 'esriHybrid',
+      title: t('mapEsriHybrid'),
+      style: styleLayers([
+        { tiles: esriTiles('World_Imagery', esriKey), maxzoom: 19, attribution: ESRI_ATTRIBUTION },
+        { tiles: esriTiles('Reference/World_Boundaries_and_Places', esriKey), maxzoom: 19 },
+      ]),
+      available: Boolean(esriKey) && premiumMaps,
+      attribute: 'esriKey',
+    },
+    {
+      id: 'azureRoad',
+      title: t('mapAzureRoad'),
+      style: styleLayers([{ tiles: azureTiles('microsoft.base.road', azureMapsKey), maxzoom: 22, attribution: AZURE_ATTRIBUTION }]),
+      available: Boolean(azureMapsKey) && premiumMaps,
+      attribute: 'azureMapsKey',
+    },
+    {
+      id: 'azureDark',
+      title: t('mapAzureDark'),
+      style: styleLayers([{ tiles: azureTiles('microsoft.base.darkgrey', azureMapsKey), maxzoom: 22, attribution: AZURE_ATTRIBUTION }]),
+      available: Boolean(azureMapsKey) && premiumMaps,
+      attribute: 'azureMapsKey',
+    },
+    {
+      id: 'azureSatellite',
+      title: t('mapAzureSatellite'),
+      style: styleLayers([{ tiles: azureTiles('microsoft.imagery', azureMapsKey), maxzoom: 19, attribution: AZURE_ATTRIBUTION }]),
+      available: Boolean(azureMapsKey) && premiumMaps,
+      attribute: 'azureMapsKey',
+    },
+    {
+      id: 'azureHybrid',
+      title: t('mapAzureHybrid'),
+      style: styleLayers([
+        { tiles: azureTiles('microsoft.imagery', azureMapsKey), maxzoom: 19, attribution: AZURE_ATTRIBUTION },
+        { tiles: azureTiles('microsoft.base.hybrid.road', azureMapsKey), maxzoom: 22 },
+      ]),
+      available: Boolean(azureMapsKey) && premiumMaps,
+      attribute: 'azureMapsKey',
     },
     {
       id: 'bingRoad',
@@ -284,5 +365,5 @@ export default () => {
       }),
       available: Boolean(customMapUrl),
     },
-  ], [t, ownMaps, mapTilerKey, locationIqKey, bingMapsKey, tomTomKey, hereKey, mapboxAccessToken, customMapUrl]);
+  ], [t, ownMaps, mapTilerKey, locationIqKey, bingMapsKey, esriKey, azureMapsKey, premiumMaps, tomTomKey, hereKey, mapboxAccessToken, customMapUrl]);
 };

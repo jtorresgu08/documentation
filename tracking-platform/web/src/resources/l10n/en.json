@@ -2523,5 +2523,14 @@
     "loginFeatureCoverage": "Regional coverage",
     "loginFeatureAvailability": "High availability",
     "loginFeatureSecurity": "Advanced security",
-    "loginFeatureSupport": "24/7 support"
+    "loginFeatureSupport": "24/7 support",
+    "modulePremiumMaps": "Premium maps (Esri / Azure)",
+    "mapEsriImagery": "Esri · Satellite",
+    "mapEsriHybrid": "Esri · Hybrid",
+    "mapAzureRoad": "Azure Maps · Road",
+    "mapAzureDark": "Azure Maps · Dark",
+    "mapAzureSatellite": "Azure Maps · Satellite",
+    "mapAzureHybrid": "Azure Maps · Hybrid",
+    "mapEsriKey": "Esri API key (ArcGIS)",
+    "mapAzureMapsKey": "Azure Maps key"
 }

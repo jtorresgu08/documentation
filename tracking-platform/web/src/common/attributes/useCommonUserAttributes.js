@@ -73,6 +73,14 @@ export default (t) => useMemo(() => ({
     name: t('mapBingKey'),
     type: 'string',
   },
+  esriKey: {
+    name: t('mapEsriKey'),
+    type: 'string',
+  },
+  azureMapsKey: {
+    name: t('mapAzureMapsKey'),
+    type: 'string',
+  },
   openWeatherKey: {
     name: t('mapOpenWeatherKey'),
     type: 'string',

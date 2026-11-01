@@ -549,3 +549,32 @@ del orden de 1–3 MB por sesión de mapa, según cuánto se mueva.
 **Requisitos de red del servidor**: salida HTTPS a `api.github.com`, `github.com` y `build.protomaps.com` solo
 mientras corre el script.
 
+
+## 25. Mapas premium: satélite Esri y Azure Maps (reemplazo de Bing)
+
+Las cuentas gratuitas de Bing Maps ya no existen, así que la vista satelital y los mapas «tipo Bing» se ofrecen
+con Esri (ArcGIS) y Azure Maps. Cada opción **solo aparece si su clave está configurada** y el plan del cliente
+incluye el módulo **Mapas premium** (incluido en los planes *Video* y *Distribuidor*; se puede activar en
+cualquier plan desde «Planes»). El mapa por defecto sigue siendo el propio (sin costo).
+
+| Proveedor | Estilos | Clave (atributo del servidor o del usuario) |
+|---|---|---|
+| Esri | Satélite, Híbrido (satélite + nombres y límites) | `esriKey` |
+| Azure Maps | Calles, Oscuro, Satélite, Híbrido | `azureMapsKey` |
+
+**Esri** (cuota gratuita mensual de teselas con cuenta de ArcGIS Location Platform):
+1. Crear una cuenta en https://location.arcgis.com y una *API key* con el permiso «Basemaps».
+2. En la clave, restringir los *referrers* a `https://tu-dominio/*` (la clave viaja al navegador).
+3. Pegarla en Configuración → Servidor → Atributos → `esriKey`.
+
+**Azure Maps** (cuota gratuita mensual, luego pago por uso):
+1. Crear un recurso «Azure Maps Account» en el portal de Azure y copiar la *Primary key*.
+2. En «CORS» del recurso, permitir solo tu dominio, y poner una alerta de presupuesto en la suscripción.
+3. Pegarla en `azureMapsKey`.
+
+Consejos para no pasar la cuota gratuita: dejar el mapa propio como predeterminado, dar Mapas premium solo a los
+planes que lo pagan y revisar el consumo en los portales de Esri/Azure el primer mes. Las cuotas y precios los
+fija cada proveedor y cambian; confírmalos al crear la cuenta.
+
+Las opciones «Bing Maps» que trae Traccar se mantienen ocultas salvo que se configure `bingMapsKey`; solo deben
+usarse con una cuenta empresarial de Bing vigente.

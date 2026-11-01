@@ -2523,5 +2523,14 @@
     "loginFeatureCoverage": "Cobertura regional",
     "loginFeatureAvailability": "Alta disponibilidad",
     "loginFeatureSecurity": "Seguridad avanzada",
-    "loginFeatureSupport": "Soporte 24/7"
+    "loginFeatureSupport": "Soporte 24/7",
+    "modulePremiumMaps": "Mapas premium (Esri / Azure)",
+    "mapEsriImagery": "Esri · Satélite",
+    "mapEsriHybrid": "Esri · Híbrido",
+    "mapAzureRoad": "Azure Maps · Calles",
+    "mapAzureDark": "Azure Maps · Oscuro",
+    "mapAzureSatellite": "Azure Maps · Satélite",
+    "mapAzureHybrid": "Azure Maps · Híbrido",
+    "mapEsriKey": "Clave de API de Esri (ArcGIS)",
+    "mapAzureMapsKey": "Clave de Azure Maps"
 }
