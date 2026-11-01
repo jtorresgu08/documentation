@@ -483,6 +483,10 @@ de personal o colectivos:
 
 - **Líneas** con código y color, circulares o de ida, paraderos (a mano o por CSV), recorrido trazado por calles con
   OSRM y minutos de cada paradero desde la salida (si no se indican se calculan con la velocidad comercial).
+- **Tiempos entre paraderos**: cada paradero tiene sus minutos desde el primero (minuto 0). Si no se indican, se
+  calculan con la distancia por el recorrido y la velocidad comercial. En el editor se ven al momento la distancia,
+  los minutos y la hora programada de cada paradero para una salida de referencia, y la duración de la vuelta; se
+  recalculan al cambiar la velocidad o al fijar minutos a mano en un paradero (`docs/capturas/v28-transporte-*.png`).
 - **Horario** por frecuencia (franjas «de 06:00 a 09:00 cada 5 min») o por horas de salida; con horas de salida se
   calcula el retraso en cada paradero.
 - **Distancia entre unidades de una misma línea**: cada bus se proyecta sobre el recorrido y se muestra la distancia

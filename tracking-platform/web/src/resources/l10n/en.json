@@ -2179,7 +2179,7 @@
     "transitStops": "Stops",
     "transitStopsLower": "stops",
     "transitUnitsLower": "units",
-    "transitStopsHelp": "Minutes are the time from the first stop; when empty they are calculated with the commercial speed. The CSV accepts columns name, latitude, longitude, radius and minutes.",
+    "transitStopsHelp": "Each stop has its minutes from the first one (minute 0). When empty they are calculated from the distance along the path and the commercial speed; the right column shows the planned time for the reference departure. The CSV accepts columns name, latitude, longitude, radius and minutes.",
     "transitTracePath": "Trace along roads",
     "transitVisits": "Stop visits",
     "transitVisitsLower": "stop visits",
@@ -2188,5 +2188,9 @@
     "eventTransitOffRoute": "Bus off route",
     "eventTransitDelay": "Bus delayed",
     "transitFrequencyShort": "Frequency",
-    "transitRealSpacing": "Real spacing"
+    "transitRealSpacing": "Real spacing",
+    "transitManual": "manual",
+    "transitReferenceDeparture": "Reference departure",
+    "transitLapTime": "Full lap: {0} km · {1} min · back at {2}",
+    "transitTripTime": "Trip: {0} km · {1} min"
 }

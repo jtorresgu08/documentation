@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import {
   Alert, Autocomplete, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, InputAdornment, Stack, Switch,
@@ -13,6 +13,7 @@ import { useTranslation } from '../common/components/LocalizationProvider';
 import { useModule } from '../common/util/permissions';
 import { parseCsv } from '../other/geofenceFormats';
 import { parseCoordinates } from '../dispatch/dispatchUtils';
+import { addMinutes, plannedMinutes, stopDistances } from './transitTimes';
 
 const COLORS = ['#2563c9', '#e67e22', '#2f9e5b', '#8e44ad', '#d9534f', '#1a9aa3', '#c0a000'];
 const emptyStop = () => ({
@@ -44,6 +45,7 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
   });
   const [deviceIds, setDeviceIds] = useState([]);
   const [error, setError] = useState(null);
+  const [reference, setReference] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -65,6 +67,18 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
     setSettings((current) => ({ ...current, ...route.attributes }));
     setDeviceIds(route.deviceIds || []);
   }, [route]);
+
+  const firstDeparture = mode === 'departures'
+    ? departures.split(/[,;\s]+/).find((value) => /^\d{1,2}:\d{2}$/.test(value))
+    : bands.find((band) => band.from)?.from;
+  const referenceTime = reference || firstDeparture || '06:00';
+  const timing = useMemo(() => {
+    const measured = stopDistances(stops.map((stop) => parseCoordinates(stop.coordinates)), path, circular);
+    if (!measured) return null;
+    const planned = plannedMinutes(measured.distances, stops.map((stop) => stop.minutes), settings.speedKmh);
+    const lap = plannedMinutes([measured.length], [''], settings.speedKmh)[0].minutes;
+    return { distances: measured.distances, planned, length: measured.length, lap };
+  }, [stops, path, circular, settings.speedKmh]);
 
   const update = (index, changes) => setStops(stops.map((stop, i) => (i === index ? { ...stop, ...changes } : stop)));
   const points = () => stops.map((stop) => parseCoordinates(stop.coordinates));
@@ -141,7 +155,7 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
   );
 
   return (
-    <Dialog open fullWidth maxWidth="md" onClose={onClose}>
+    <Dialog open fullWidth maxWidth="lg" onClose={onClose}>
       <DialogTitle>{route ? t('transitEditLine') : t('transitNewLine')}</DialogTitle>
       <DialogContent dividers>
         {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -163,15 +177,48 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
         </Tabs>
         {tab === 'stops' && (
           <Stack spacing={1}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }} sx={{ mb: 1 }}>
+              {setting('speedKmh', t('transitSpeed'), 'km/h')}
+              <TextField size="small" type="time" label={t('transitReferenceDeparture')} value={referenceTime} onChange={(event) => setReference(event.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
+              {timing && (
+                <Chip
+                  color="primary"
+                  variant="outlined"
+                  label={circular
+                    ? t('transitLapTime').replace('{0}', (timing.length / 1000).toFixed(1)).replace('{1}', Math.round(timing.lap)).replace('{2}', addMinutes(referenceTime, timing.lap))
+                    : t('transitTripTime').replace('{0}', (timing.distances[timing.distances.length - 1] / 1000).toFixed(1)).replace('{1}', Math.round(timing.planned[timing.planned.length - 1].minutes))}
+                />
+              )}
+            </Stack>
             {stops.map((stop, index) => (
-              <Box key={stop.key} sx={{ display: 'grid', gap: 1, alignItems: 'center', gridTemplateColumns: { xs: '1fr', sm: '26px 1.6fr 1.6fr 90px 100px 64px' } }}>
+              <Box key={stop.key} sx={{ display: 'grid', gap: 1, alignItems: 'center', gridTemplateColumns: { xs: '1fr', sm: '26px 1.5fr 1.5fr 90px 110px 150px 64px' } }}>
                 <Box sx={{
  width: 22, height: 22, borderRadius: '50%', border: `4px solid ${color}`, display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 700 
 }}>{index + 1}</Box>
                 <TextField size="small" label={t('transitStopName')} value={stop.name} onChange={(event) => update(index, { name: event.target.value })} />
                 <TextField size="small" label={t('dispatchCoordinates')} placeholder="-12.0464, -77.0428" value={stop.coordinates} error={!!stop.coordinates && !parseCoordinates(stop.coordinates)} onChange={(event) => update(index, { coordinates: event.target.value })} />
                 <TextField size="small" type="number" label={t('transitRadius')} value={stop.radius} onChange={(event) => update(index, { radius: event.target.value })} slotProps={{ input: { endAdornment: <InputAdornment position="end">m</InputAdornment> } }} />
-                <TextField size="small" type="number" label={t('transitMinutes')} value={stop.minutes} placeholder={t('transitAuto')} onChange={(event) => update(index, { minutes: event.target.value })} />
+                <TextField
+                  size="small"
+                  type="number"
+                  label={t('transitMinutes')}
+                  value={stop.minutes}
+                  placeholder={timing ? timing.planned[index].minutes.toFixed(1) : t('transitAuto')}
+                  onChange={(event) => update(index, { minutes: event.target.value })}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+                <Box sx={{ lineHeight: 1.2 }}>
+                  {timing ? (
+                    <>
+                      <Typography variant="body2" fontWeight={700} component="div">
+                        {`${addMinutes(referenceTime, timing.planned[index].minutes)} · +${timing.planned[index].minutes.toFixed(1)} min`}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {`${(timing.distances[index] / 1000).toFixed(2)} km · ${timing.planned[index].auto ? t('transitAuto') : t('transitManual')}`}
+                      </Typography>
+                    </>
+                  ) : <Typography variant="caption" color="text.secondary">—</Typography>}
+                </Box>
                 <Stack direction="row">
                   {index > 0 && <IconButton size="small" onClick={() => { const list = [...stops]; [list[index - 1], list[index]] = [list[index], list[index - 1]]; setStops(list); }}><ArrowUpwardIcon fontSize="small" /></IconButton>}
                   <IconButton size="small" onClick={() => setStops(stops.filter((_, i) => i !== index))}><DeleteIcon fontSize="small" /></IconButton>
@@ -216,7 +263,6 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
         )}
         {tab === 'alerts' && (
           <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
-            {setting('speedKmh', t('transitSpeed'), 'km/h')}
             {setting('bunchingKm', t('transitBunchingLimit'), 'km')}
             {setting('gapKm', t('transitGapLimit'), 'km')}
             {setting('offRouteMeters', t('transitOffRouteLimit'), 'm')}

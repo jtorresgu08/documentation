@@ -2179,7 +2179,7 @@
     "transitStops": "Paraderos",
     "transitStopsLower": "paraderos",
     "transitUnitsLower": "unidades",
-    "transitStopsHelp": "Los minutos son el tiempo desde el primer paradero; si se dejan vacíos se calculan con la velocidad comercial. El CSV acepta columnas nombre, latitud, longitud, radio y minutos.",
+    "transitStopsHelp": "Cada paradero tiene sus minutos desde el primero (minuto 0). Si se dejan vacíos se calculan con la distancia por el recorrido y la velocidad comercial; la columna de la derecha muestra la hora programada para la salida de referencia. El CSV acepta columnas nombre, latitud, longitud, radio y minutos.",
     "transitTracePath": "Trazar por calles",
     "transitVisits": "Paso por paraderos",
     "transitVisitsLower": "pasos por paraderos",
@@ -2188,5 +2188,9 @@
     "eventTransitOffRoute": "Bus fuera de ruta",
     "eventTransitDelay": "Bus con retraso",
     "transitFrequencyShort": "Frecuencia",
-    "transitRealSpacing": "Separación real"
+    "transitRealSpacing": "Separación real",
+    "transitManual": "manual",
+    "transitReferenceDeparture": "Salida de referencia",
+    "transitLapTime": "Vuelta completa: {0} km · {1} min · vuelve a las {2}",
+    "transitTripTime": "Recorrido: {0} km · {1} min"
 }
