@@ -2508,5 +2508,20 @@
     "machineTypeOther": "Other",
     "mapSafeStreets": "Safe Connection · Streets",
     "mapSafeDark": "Safe Connection · Dark",
-    "mapSafeGray": "Safe Connection · Gray"
+    "mapSafeGray": "Safe Connection · Gray",
+    "loginSubtitle": "Sign in to manage your fleet and connectivity",
+    "loginRemember": "Remember me",
+    "loginForgot": "Forgot your password?",
+    "loginOr": "or",
+    "loginOpenIdGoogle": "Continue with Google",
+    "loginNoAccount": "No account yet?",
+    "loginProtected": "Your information is protected with encryption and secure authentication",
+    "loginHeadlineDefault": "Your connectivity, our priority",
+    "loginTextDefault": "GPS tracking, video, fuel and connectivity for your fleet in one platform, across Latin America.",
+    "loginTaglineDefault": "Connecting your world",
+    "loginStatsDefault": "GPS:Live tracking;SIM:Connectivity;2FA:Secure access;24/7:Monitoring",
+    "loginFeatureCoverage": "Regional coverage",
+    "loginFeatureAvailability": "High availability",
+    "loginFeatureSecurity": "Advanced security",
+    "loginFeatureSupport": "24/7 support"
 }

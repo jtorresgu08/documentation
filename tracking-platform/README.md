@@ -630,6 +630,39 @@ Basado en tus capturas de referencia:
   y pantalla completa.
 - Español por defecto, con los 61 idiomas de Traccar disponibles.
 
+## Login interactivo SAFE CONNECTION
+
+Pantalla de acceso de dos paneles (también la usan «Registrarse» y «Reiniciar contraseña»):
+
+- **Panel izquierdo** (se oculta en pantallas pequeñas): logo blanco, globo animado en `canvas` centrado en
+  Latinoamérica con arcos de red y pulsos entre las principales ciudades (reacciona al mouse y respeta
+  «reducir movimiento»), titular, texto, 4 iconos de características, tarjeta de cifras y lema manuscrito.
+- **Panel derecho**: logo, «Iniciar sesión», email y contraseña con iconos y ojo para mostrarla, «Recordarme»
+  (si se desmarca no se guarda el email), «¿Olvidaste tu contraseña?» (solo si el servidor tiene correo
+  configurado), botón degradado, separador «o» + botón de OpenID (solo si OpenID está activo), código 2FA
+  cuando el usuario lo tiene, aviso de seguridad y pie «Powered by SAFE CONNECTION».
+- En móvil queda una tarjeta blanca sobre una franja azul marino.
+
+Los textos del panel izquierdo son configurables por atributos del servidor o de la marca blanca de cada
+revendedor (si no existen se usan los textos por defecto, sin cifras inventadas):
+
+| Atributo | Ejemplo |
+|---|---|
+| `loginHeadline` | `Tu conectividad, nuestra prioridad` (la última palabra sale en celeste) |
+| `loginText` | Párrafo bajo el titular |
+| `loginTagline` | `Conectamos tu mundo` |
+| `loginStats` | `12,485:SIMs activas;99.8%:Disponibilidad;186:Clientes activos;24/7:Soporte` |
+| `loginOpenIdLabel` | `Continuar con Google` (texto del botón OpenID) |
+
+Para que «Continuar con Google» funcione hay que configurar OpenID en `traccar.xml` con Google como proveedor
+(`openid.clientId`, `openid.clientSecret`, `openid.issuerUrl=https://accounts.google.com`).
+
+Capturas: `docs/capturas/v33-login-escritorio.png`, `v33-login-error.png`, `v33-login-movil.png`.
+
+**Bing Maps**: no se puede agregar gratis. Microsoft cerró las cuentas gratuitas de Bing Maps en 2025 y su
+reemplazo es Azure Maps (de pago, con una cuota gratuita mensual). Los estilos Bing que trae Traccar solo
+funcionan con una clave antigua de Bing que ya no se emite.
+
 ## Correspondencia con las capturas
 
 | Función de la captura | Estado |

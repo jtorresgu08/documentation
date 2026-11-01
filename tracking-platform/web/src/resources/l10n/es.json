@@ -2508,5 +2508,20 @@
     "machineTypeOther": "Otra",
     "mapSafeStreets": "Safe Connection · Calles",
     "mapSafeDark": "Safe Connection · Oscuro",
-    "mapSafeGray": "Safe Connection · Gris"
+    "mapSafeGray": "Safe Connection · Gris",
+    "loginSubtitle": "Accede a tu cuenta para gestionar tu flota y tu conectividad",
+    "loginRemember": "Recordarme",
+    "loginForgot": "¿Olvidaste tu contraseña?",
+    "loginOr": "o",
+    "loginOpenIdGoogle": "Continuar con Google",
+    "loginNoAccount": "¿No tienes cuenta?",
+    "loginProtected": "Tu información está protegida con cifrado y autenticación segura",
+    "loginHeadlineDefault": "Tu conectividad, nuestra prioridad",
+    "loginTextDefault": "Rastreo GPS, video, combustible y conectividad de tu flota en una sola plataforma, con cobertura en toda Latinoamérica.",
+    "loginTaglineDefault": "Conectamos tu mundo",
+    "loginStatsDefault": "GPS:Rastreo en vivo;SIM:Conectividad;2FA:Acceso seguro;24/7:Monitoreo",
+    "loginFeatureCoverage": "Cobertura regional",
+    "loginFeatureAvailability": "Alta disponibilidad",
+    "loginFeatureSecurity": "Seguridad avanzada",
+    "loginFeatureSupport": "Soporte 24/7"
 }
