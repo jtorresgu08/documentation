@@ -47,13 +47,17 @@ export const stopDistances = (points, path, circular) => {
   return { distances, length: starts[starts.length - 1] };
 };
 
-// minutes from the first stop: manual value when given (0 only for the first stop), otherwise distance / speed
-export const plannedMinutes = (distances, manual, speedKmh) => {
+// minutes from the first stop of each direction: manual value when given (0 only for the first stop of a direction),
+// otherwise distance / speed; on a line with outbound and return the return counts from its terminal (returnIndex)
+export const plannedMinutes = (distances, manual, speedKmh, returnIndex = -1) => {
   const speed = Number(speedKmh) > 0 ? Number(speedKmh) : 20;
   return distances.map((distance, index) => {
+    const back = returnIndex > 0 && index >= returnIndex;
+    const first = index === 0 || index === returnIndex;
+    const base = back ? distances[returnIndex] : 0;
     const value = manual[index] === '' || manual[index] === null || manual[index] === undefined ? null : Number(manual[index]);
-    if (value !== null && value >= 0 && !(index > 0 && value === 0)) return { minutes: value, auto: false };
-    return { minutes: distance / (speed / 3.6) / 60, auto: true };
+    if (value !== null && value >= 0 && !(!first && value === 0)) return { minutes: value, auto: false, back };
+    return { minutes: (distance - base) / (speed / 3.6) / 60, auto: true, back };
   });
 };
 

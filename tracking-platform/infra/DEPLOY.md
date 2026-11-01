@@ -455,3 +455,12 @@ la configuración de las cámaras.
 - «Trazar por calles» usa el mismo OSRM de la sección 16; sin él la línea se dibuja recta entre paraderos y la
   distancia entre buses se mide sobre esa línea.
 - Para que la distancia entre buses sea precisa, configura los equipos para reportar cada 10–30 s en movimiento.
+- Los enlaces de la pantalla del conductor (`/bus/…`) no requieren cuenta y no se pueden adivinar (18 bytes
+  aleatorios por unidad). Para que funcionen desde los celulares, la plataforma debe estar publicada con su dominio
+  (sección de Caddy); se comparten desde *Transporte público → Enlaces de conductores*. Reemplazar un enlace desactiva el
+  anterior al instante.
+- La pantalla del conductor intenta mantener la pantalla encendida (Wake Lock) y vibrar al cambiar el estado; en
+  iPhone la vibración no está disponible en el navegador.
+- El parche `0028` corrige un bloqueo de la cola de posiciones de Traccar que podía dejar a un equipo sin actualizarse
+  hasta reiniciar; aplícalo aunque no uses transporte público.
+

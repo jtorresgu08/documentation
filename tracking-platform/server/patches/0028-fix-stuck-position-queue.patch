@@ -1,0 +1,137 @@
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index dca0967..b146523 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -66,18 +66,25 @@ import org.traccar.helper.PositionLogger;
+ import org.traccar.model.Position;
+ import org.traccar.session.cache.CacheManager;
+ 
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
+ import java.util.HashMap;
++import java.util.Iterator;
+ import java.util.LinkedList;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Objects;
+ import java.util.Queue;
++import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.stream.Stream;
+ 
+ @Singleton
+ @ChannelHandler.Sharable
+ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements BufferingManager.Callback {
+ 
++    private static final Logger LOGGER = LoggerFactory.getLogger(ProcessingHandler.class);
++
+     private final CacheManager cacheManager;
+     private final NotificationManager notificationManager;
+     private final PositionLogger positionLogger;
+@@ -165,38 +172,50 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+         synchronized (queue) {
+             queued = !queue.isEmpty();
+             queue.offer(position);
++            if (!queued) {
++                // under the queue lock, so that the release of the previous position cannot remove it afterwards
++                try {
++                    cacheManager.addDevice(position.getDeviceId(), position.getDeviceId());
++                } catch (Exception e) {
++                    queue.poll();
++                    throw new RuntimeException(e);
++                }
++            }
+         }
+         if (!queued) {
+-            try {
+-                cacheManager.addDevice(position.getDeviceId(), position.getDeviceId());
+-            } catch (Exception e) {
+-                throw new RuntimeException(e);
+-            }
+             processPositionHandlers(context, position);
+         }
+     }
+ 
+     private void processPositionHandlers(ChannelHandlerContext ctx, Position position) {
+-        var iterator = positionHandlers.iterator();
+-        iterator.next().handlePosition(position, new BasePositionHandler.Callback() {
+-            @Override
+-            public void processed(boolean filtered) {
+-                Runnable continuation = () -> {
+-                    if (!filtered) {
+-                        if (iterator.hasNext()) {
+-                            iterator.next().handlePosition(position, this);
+-                        } else {
+-                            processEventHandlers(ctx, position);
+-                        }
++        processPositionHandler(ctx, position, positionHandlers.iterator());
++    }
++
++    // Each handler continues the chain once: an exception thrown further down the chain (handlers run inline) comes
++    // back to the handler that called back and would continue it a second time, processing the position twice and
++    // releasing the device's queue and cache entry while the first run is still using them
++    private void processPositionHandler(
++            ChannelHandlerContext ctx, Position position, Iterator<BasePositionHandler> iterator) {
++        AtomicBoolean called = new AtomicBoolean();
++        iterator.next().handlePosition(position, filtered -> {
++            if (called.getAndSet(true)) {
++                return;
++            }
++            Runnable continuation = () -> {
++                if (!filtered) {
++                    if (iterator.hasNext()) {
++                        processPositionHandler(ctx, position, iterator);
+                     } else {
+-                        finishedProcessing(ctx, position, true);
++                        processEventHandlers(ctx, position);
+                     }
+-                };
+-                if (ctx.executor().inEventLoop()) {
+-                    continuation.run();
+                 } else {
+-                    ctx.executor().execute(continuation);
++                    finishedProcessing(ctx, position, true);
+                 }
++            };
++            if (ctx.executor().inEventLoop()) {
++                continuation.run();
++            } else {
++                ctx.executor().execute(continuation);
+             }
+         });
+     }
+@@ -209,8 +228,18 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+ 
+     private void finishedProcessing(ChannelHandlerContext ctx, Position position, boolean filtered) {
+         if (!filtered) {
++            AtomicBoolean done = new AtomicBoolean();
+             postProcessHandler.handlePosition(position, ignore -> {
+-                positionLogger.log(ctx, position);
++                // a failing handler calls back again: finish only once, and always move to the next position,
++                // otherwise every later position of the device would wait in its queue forever
++                if (done.getAndSet(true)) {
++                    return;
++                }
++                try {
++                    positionLogger.log(ctx, position);
++                } catch (RuntimeException e) {
++                    LOGGER.warn("Position log failed", e);
++                }
+                 ctx.writeAndFlush(new AcknowledgementHandler.EventHandled(position));
+                 processNextPosition(ctx, position.getDeviceId());
+             });
+@@ -226,11 +255,12 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+         synchronized (queue) {
+             queue.poll(); // remove current position
+             nextPosition = queue.peek();
++            if (nextPosition == null) {
++                cacheManager.removeDevice(deviceId, deviceId);
++            }
+         }
+         if (nextPosition != null) {
+             processPositionHandlers(ctx, nextPosition);
+-        } else {
+-            cacheManager.removeDevice(deviceId, deviceId);
+         }
+     }
+ 

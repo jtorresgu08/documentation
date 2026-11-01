@@ -4,10 +4,12 @@ import {
   Box, Button, Card, Chip, IconButton, LinearProgress, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import dayjs from 'dayjs';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import EditIcon from '@mui/icons-material/Edit';
+import LinkIcon from '@mui/icons-material/Link';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DirectionsBusIcon from '@mui/icons-material/DirectionsBus';
 import MapView from '../map/core/MapView';
@@ -17,6 +19,8 @@ import { useRestriction } from '../common/util/permissions';
 import LineDiagram from './LineDiagram';
 import TransitMap from './TransitMap';
 import RouteDialog from './RouteDialog';
+import DriverLinksDialog from './DriverLinksDialog';
+import { delayTone, formatDelay } from './transitStatus';
 
 const km = (meters) => (meters === undefined || meters === null ? '—' : meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${meters} m`);
 
@@ -31,6 +35,7 @@ const TransitPage = () => {
   const [live, setLive] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [links, setLinks] = useState(false);
 
   const loadRoutes = async () => {
     const response = await fetch('/api/transit/routes');
@@ -125,6 +130,7 @@ const TransitPage = () => {
             <Stack direction="row" alignItems="center" spacing={1}>
               <DirectionsBusIcon sx={{ color: route.color }} />
               <Typography variant="h5" fontWeight={700} sx={{ flexGrow: 1 }}>{`${route.code ? `${route.code} · ` : ''}${route.name}`}</Typography>
+              {!readonly && <Button startIcon={<LinkIcon />} variant="outlined" onClick={() => setLinks(true)}>{t('transitDriverLinks')}</Button>}
               {!readonly && <Button startIcon={<EditIcon />} variant="outlined" onClick={() => setEditing(route)}>{t('sharedEdit')}</Button>}
               {!readonly && <IconButton onClick={remove}><DeleteIcon /></IconButton>}
             </Stack>
@@ -165,9 +171,7 @@ const TransitPage = () => {
                       <TableCell>{t('transitNextStop')}</TableCell>
                       <TableCell>{t('transitAhead')}</TableCell>
                       <TableCell>{t('transitBehind')}</TableCell>
-                      <TableCell align="right">{t('transitDelay')}</TableCell>
-                      <TableCell align="right">{t('transitLap')}</TableCell>
-                      <TableCell align="right">km/h</TableCell>
+                      <TableCell>{t('transitArrival')}</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -185,15 +189,26 @@ const TransitPage = () => {
                         <TableRow key={unit.deviceId} hover selected={unit.deviceId === selectedId} onClick={() => setSelectedId(unit.deviceId)} sx={{ cursor: 'pointer' }}>
                           <TableCell sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
                             <div>{unit.name}</div>
+                            <Typography variant="caption" color="text.secondary" component="div">
+                              {[unit.speed != null ? `${unit.speed} km/h` : null, unit.lap ? `${t('transitLap')} ${unit.lap}` : null].filter(Boolean).join(' · ')}
+                            </Typography>
+                            {unit.direction && <Chip size="small" variant="outlined" label={unit.direction === 'return' ? `← ${t('transitReturn')}` : `→ ${t('transitOutbound')}`} sx={{ mr: 0.5, height: 20, fontSize: 11 }} />}
                             {status}
                           </TableCell>
                           <TableCell align="right">{unit.progress != null ? `${unit.progress}%` : '—'}</TableCell>
                           {cell(unit.nextStopName, unit.nextStopMeters, unit.nextStopMinutes)}
                           {cell(unit.aheadName, unit.aheadMeters, unit.aheadMinutes, gapColor(unit.aheadMeters))}
                           {cell(unit.behindName, unit.behindMeters, unit.behindMinutes, gapColor(unit.behindMeters))}
-                          <TableCell align="right" sx={{ color: unit.delayMinutes > 3 ? '#d9534f' : undefined }}>{unit.delayMinutes != null ? `${unit.delayMinutes > 0 ? '+' : ''}${unit.delayMinutes} min` : '—'}</TableCell>
-                          <TableCell align="right">{unit.lap || '—'}</TableCell>
-                          <TableCell align="right">{unit.speed ?? '—'}</TableCell>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                            {unit.nextStopScheduled ? (
+                              <>
+                                <Typography variant="body2" fontWeight={700} sx={{ color: delayTone(unit.nextStopDelayMinutes) }}>{formatDelay(t, unit.nextStopDelayMinutes)}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {`${dayjs(unit.nextStopEta).format('HH:mm')} / ${dayjs(unit.nextStopScheduled).format('HH:mm')} ${t('transitScheduledShort')}`}
+                                </Typography>
+                              </>
+                            ) : '—'}
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -204,6 +219,7 @@ const TransitPage = () => {
           </Stack>
         )}
       </Box>
+      {links && route && <DriverLinksDialog route={route} onClose={() => setLinks(false)} />}
       {editing && (
         <RouteDialog
           route={editing.id ? editing : null}

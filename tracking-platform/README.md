@@ -503,7 +503,36 @@ de personal o colectivos:
 - API: `GET/POST /api/transit/routes`, `PUT/DELETE /api/transit/routes/{id}`, `GET /api/transit/routes/{id}/live` y
   `GET /api/transit/report?routeId=&from=&to=`. La unidad se asigna a la línea con el atributo `transitRouteId`.
 
-Capturas: `docs/capturas/v27-transporte-*.png`.
+- **Ida y vuelta con terminal** (parche `0027`): además de circular o solo ida, una línea puede tener ida y vuelta.
+  Se elige el paradero donde empieza la vuelta (el terminal); cada sentido tiene sus paraderos, sus minutos desde su
+  propia salida y sus horas de salida. El panel muestra una franja por sentido con los buses y la distancia entre
+  ellos, y la tabla indica el sentido de cada unidad. Internamente la línea es un ciclo cerrado (ida → terminal →
+  vuelta), así la distancia al bus de adelante sigue funcionando al pasar de un sentido al otro.
+- **Llegada estimada frente a la programada** al próximo paradero, por unidad: «A tiempo / Atrasado / Adelantado»
+  con la hora estimada y la programada (puntual de −1 a +5 min, igual que el reporte).
+- **Pantalla del conductor** (`/bus/<enlace>`, sin cuenta): estado frente al horario en grande, próximo paradero con
+  distancia, hora estimada y programada, bus de adelante y de atrás con distancia y minutos, próximos paraderos con su
+  hora y consejos para mantener la separación («muy cerca del bus de adelante: reduzca o espere», «hueco grande:
+  mantenga el ritmo», «va adelantado: espere en el paradero»), priorizando siempre la separación. Se actualiza cada
+  10 s, mantiene la pantalla encendida y vibra cuando cambia el estado. Los enlaces se generan en *Enlaces de
+  conductores* (copiar, abrir, enviar por WhatsApp o reemplazar, lo que desactiva el anterior).
+- **Reporte comparativo por día y hora**: mapa de calor del retraso promedio por paradero y hora del día, y por día de
+  la semana y hora con el intervalo real entre buses; indica el paradero y la hora con más retraso, y se exporta a CSV.
+- Cuando un bus vuelve tras horas sin reportar (noche, cambio de turno) su viaje anterior se da por terminado, para que
+  el retraso no se calcule contra la salida de otro turno.
+
+Capturas: `docs/capturas/v27-transporte-*.png` y `docs/capturas/v29-transporte-*.png`.
+
+### Corrección: posiciones que dejaban de procesarse (parche `0028`)
+
+En el procesamiento de posiciones de Traccar, si un paso fallaba después de que el anterior había continuado la cadena,
+la posición se procesaba dos veces y la cola del equipo podía quedar bloqueada: el equipo dejaba de actualizarse hasta
+reiniciar el servidor. Se veía con equipos HTTP (p. ej. la app Traccar Client u OsmAnd) al enviar muchas posiciones
+seguidas. Ahora cada paso continúa la cadena una sola vez, el registro en el log no puede cortar la cola y la reserva
+del equipo en la caché se hace bajo el mismo bloqueo que la cola. Se reprodujo con la carga de demo de transporte
+(12 600 posiciones en pocos minutos): antes, 124 fallos y 3 equipos bloqueados; después, ninguno.
+`server/tests/test_processing_queue.py` es una prueba de carga que verifica que todos los equipos terminen con su
+última posición y sigan aceptando nuevas (no reproduce por sí sola el caso original, que depende del momento exacto).
 
 ## Panel web
 
@@ -590,6 +619,7 @@ python3 server/tests/test_logistics.py
 python3 server/tests/test_custom_fields.py
 python3 server/tests/test_fuel_units.py
 python3 server/tests/test_transit.py
+python3 server/tests/test_processing_queue.py
 python3 server/tests/test_chat.py   # con la configuración de WhatsApp de prueba indicada en el archivo
 python3 server/tests/test_retention.py foto.jpg   # con la configuración retention.* indicada en el archivo
 ```

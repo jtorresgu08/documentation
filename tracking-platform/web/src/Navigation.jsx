@@ -43,6 +43,7 @@ import DispatchDriverPage from './dispatch/DriverPage';
 import DeliveryTrackPage from './dispatch/DeliveryTrackPage';
 import TransitPage from './transit/TransitPage';
 import TransitReportPage from './transit/TransitReportPage';
+import DriverTransitPage from './transit/DriverTransitPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -143,6 +144,7 @@ const Navigation = () => {
       <Route path="/track" element={<TrackPage />} />
       <Route path="/conductor/:token" element={<DispatchDriverPage />} />
       <Route path="/entrega/:token" element={<DeliveryTrackPage />} />
+      <Route path="/bus/:token" element={<DriverTransitPage />} />
       <Route path="/" element={<App />}>
         <Route index element={<MainPage />} />
 

@@ -1,0 +1,491 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index 7c40577..37af87f 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -429,4 +429,8 @@
+ 
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-transit-return">
++    <modifyDataType tableName="tc_transit_routes" columnName="schedule" newDataType="VARCHAR(8000)" />
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/api/resource/TransitResource.java b/src/main/java/org/traccar/api/resource/TransitResource.java
+index e1b50ee..b923960 100644
+--- a/src/main/java/org/traccar/api/resource/TransitResource.java
++++ b/src/main/java/org/traccar/api/resource/TransitResource.java
+@@ -16,6 +16,7 @@ package org.traccar.api.resource;
+ import com.fasterxml.jackson.core.type.TypeReference;
+ import com.fasterxml.jackson.databind.DeserializationFeature;
+ import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.annotation.security.PermitAll;
+ import jakarta.inject.Inject;
+ import jakarta.ws.rs.Consumes;
+ import jakarta.ws.rs.DELETE;
+@@ -31,6 +32,7 @@ import jakarta.ws.rs.core.MediaType;
+ import jakarta.ws.rs.core.Response;
+ import org.traccar.api.BaseResource;
+ import org.traccar.api.security.HierarchyService;
++import org.traccar.dispatch.DispatchService;
+ import org.traccar.model.Device;
+ import org.traccar.model.ObjectOperation;
+ import org.traccar.model.TransitRoute;
+@@ -45,6 +47,10 @@ import org.traccar.storage.query.Request;
+ import org.traccar.transit.TransitGeometry;
+ import org.traccar.transit.TransitService;
+ 
++import java.security.MessageDigest;
++import java.nio.charset.StandardCharsets;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
+ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.Date;
+@@ -67,7 +73,7 @@ public class TransitResource extends BaseResource {
+ 
+     private static final int MAX_JSON = 7900;
+     private static final Set<String> SETTINGS = Set.of(
+-            "speedKmh", "bunchingKm", "gapKm", "offRouteMeters", "delayMinutes", "timezone");
++            "speedKmh", "bunchingKm", "gapKm", "offRouteMeters", "delayMinutes", "timezone", "returnStop");
+ 
+     @Inject
+     private TransitService transitService;
+@@ -203,7 +209,7 @@ public class TransitResource extends BaseResource {
+         route.setPath(pathJson);
+         Object schedule = body.get("schedule");
+         String scheduleJson = schedule != null ? objectMapper.writeValueAsString(schedule) : null;
+-        if (scheduleJson != null && scheduleJson.length() > 2000) {
++        if (scheduleJson != null && scheduleJson.length() > MAX_JSON) {
+             throw new IllegalArgumentException("Schedule too long");
+         }
+         route.setSchedule(scheduleJson);
+@@ -300,6 +306,202 @@ public class TransitResource extends BaseResource {
+         return transitService.live(id, unitsOf(id));
+     }
+ 
++    // ---------- driver screen ----------
++
++    private static String linkOf(Device device) {
++        Object token = device.getAttributes().get(TransitService.DRIVER_TOKEN);
++        // id first (digits) and a hyphen; no dot, the web serves dotted paths as files
++        return token != null ? device.getId() + "-" + token : null;
++    }
++
++    /**
++     * Links for the drivers of the line (one per unit, without an account); missing ones are created and the one of
++     * the unit given in reset is replaced, which invalidates the old link.
++     */
++    @POST
++    @Path("routes/{id}/driver-links")
++    public List<Map<String, Object>> driverLinks(
++            @PathParam("id") long id, @QueryParam("reset") long reset) throws Exception {
++        checkWritable();
++        checkRoute(id);
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Device device : unitsOf(id)) {
++            if (linkOf(device) == null || device.getId() == reset) {
++                permissionsService.checkPermission(Device.class, getUserId(), device.getId());
++                device.set(TransitService.DRIVER_TOKEN, DispatchService.token());
++                storage.updateObject(device, new Request(
++                        new Columns.Include("attributes"), new Condition.Equals("id", device.getId())));
++                cacheManager.invalidateObject(true, Device.class, device.getId(), ObjectOperation.UPDATE);
++            }
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("deviceId", device.getId());
++            item.put("name", device.getName());
++            item.put("token", linkOf(device));
++            result.add(item);
++        }
++        return result;
++    }
++
++    private Device deviceByToken(String token) throws StorageException {
++        int dot = token != null ? token.indexOf('-') : -1;
++        Device device = null;
++        if (dot > 0) {
++            try {
++                device = storage.getObject(Device.class, new Request(
++                        new Columns.All(), new Condition.Equals("id", Long.parseLong(token.substring(0, dot)))));
++            } catch (NumberFormatException e) {
++                device = null;
++            }
++        }
++        String expected = device != null ? linkOf(device) : null;
++        if (expected == null || !MessageDigest.isEqual(
++                expected.getBytes(StandardCharsets.UTF_8), token.getBytes(StandardCharsets.UTF_8))) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return device;
++    }
++
++    /**
++     * Driver screen: the line, the next stop with the estimated and the scheduled arrival, the bus ahead and behind
++     * with distance and minutes, and advice to keep the spacing (public, by the unit's link).
++     */
++    @GET
++    @PermitAll
++    @Path("driver/{token}")
++    public Map<String, Object> driver(@PathParam("token") String token) throws Exception {
++        Device device = deviceByToken(token);
++        long routeId = TransitService.routeOf(device);
++        TransitRoute route = routeId > 0 ? storage.getObject(TransitRoute.class, new Request(
++                new Columns.All(), new Condition.Equals("id", routeId))) : null;
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("name", device.getName());
++        if (route == null) {
++            return result;
++        }
++        User owner = storage.getObject(User.class, new Request(
++                new Columns.All(), new Condition.Equals("id", route.getUserId())));
++        Collection<Device> fleet = owner == null || owner.getAdministrator()
++                ? storage.getObjects(Device.class, new Request(new Columns.All()))
++                : storage.getObjects(Device.class, new Request(
++                        new Columns.All(), new Condition.Permission(User.class, owner.getId(), Device.class)));
++        List<Device> units = fleet.stream().filter(item -> TransitService.routeOf(item) == routeId).toList();
++        Map<String, Object> live = transitService.live(routeId, units);
++        @SuppressWarnings("unchecked")
++        List<Map<String, Object>> list = (List<Map<String, Object>>) live.getOrDefault("units", List.of());
++        @SuppressWarnings("unchecked")
++        Map<String, Object> summary = (Map<String, Object>) live.getOrDefault("summary", Map.of());
++        Map<String, Object> me = list.stream().filter(unit -> Long.valueOf(device.getId()).equals(unit.get("deviceId")))
++                .findFirst().orElse(Map.of());
++        Map<String, Object> line = new LinkedHashMap<>();
++        line.put("name", route.getName());
++        line.put("code", route.getCode());
++        line.put("color", route.getColor());
++        line.put("circular", route.getCircular());
++        result.put("line", line);
++        result.put("summary", summary);
++        result.put("stops", live.get("stops"));
++        result.put("unit", me);
++        result.put("units", list.stream().map(unit -> {
++            Map<String, Object> item = new LinkedHashMap<>();
++            for (String key : List.of("deviceId", "name", "along", "active", "offRoute", "direction")) {
++                item.put(key, unit.get(key));
++            }
++            return item;
++        }).toList());
++        List<String> advice = new ArrayList<>();
++        Number ahead = (Number) me.get("aheadMeters");
++        Number bunching = (Number) summary.get("bunchingKm");
++        Number gap = (Number) summary.get("gapKm");
++        if (Boolean.TRUE.equals(me.get("offRoute"))) {
++            advice.add("offRoute");
++        }
++        if (ahead != null && bunching != null && ahead.doubleValue() < bunching.doubleValue() * 1000) {
++            advice.add("bunching");
++        } else if (ahead != null && gap != null && ahead.doubleValue() > gap.doubleValue() * 1000) {
++            advice.add("gap");
++        }
++        // the spacing comes first: no "wait" with a gap ahead, no "you are late" when too close to the bus ahead
++        Number delay = (Number) me.get("nextStopDelayMinutes");
++        if (delay != null && delay.intValue() > 5 && !advice.contains("bunching")) {
++            advice.add("late");
++        } else if (delay != null && delay.intValue() < -1 && !advice.contains("gap")) {
++            advice.add("early");
++        }
++        result.put("advice", advice);
++        return result;
++    }
++
++    private static Map<String, Object> cell(List<Double> values, List<Double> intervals) {
++        Map<String, Object> cell = new LinkedHashMap<>();
++        cell.put("count", values.size());
++        cell.put("delay", Math.round(values.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 10) / 10.0);
++        cell.put("interval", intervals == null || intervals.isEmpty() ? null
++                : Math.round(intervals.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 10) / 10.0);
++        return cell;
++    }
++
++    /**
++     * Average delay (minutes) by stop and hour of the day, and by day of the week and hour, with the real interval
++     * between buses, in the line's time zone: shows where and when the schedule does not hold.
++     */
++    private Map<String, Object> heatmap(
++            TransitService.Line line, List<TransitVisit> visits, Map<Integer, List<TransitVisit>> byStop) {
++        ZoneId zone = line != null ? line.zone() : ZoneId.systemDefault();
++        Map<Integer, Map<Integer, List<Double>>> stopHour = new TreeMap<>();
++        Map<Integer, Map<Integer, List<Double>>> dayHour = new TreeMap<>();
++        Map<Integer, Map<Integer, List<Double>>> dayHourIntervals = new TreeMap<>();
++        Set<Integer> hours = new java.util.TreeSet<>();
++        for (TransitVisit visit : visits) {
++            ZonedDateTime moment = ZonedDateTime.ofInstant(visit.getTime().toInstant(), zone);
++            int hour = moment.getHour();
++            hours.add(hour);
++            stopHour.computeIfAbsent(visit.getStopIndex(), key -> new TreeMap<>())
++                    .computeIfAbsent(hour, key -> new ArrayList<>()).add(visit.getDelay() / 60.0);
++            dayHour.computeIfAbsent(moment.getDayOfWeek().getValue(), key -> new TreeMap<>())
++                    .computeIfAbsent(hour, key -> new ArrayList<>()).add(visit.getDelay() / 60.0);
++        }
++        for (List<TransitVisit> list : byStop.values()) {
++            for (int i = 1; i < list.size(); i++) {
++                if (list.get(i - 1).getDeviceId() != list.get(i).getDeviceId()) {
++                    double minutes = (list.get(i).getTime().getTime() - list.get(i - 1).getTime().getTime()) / 60000.0;
++                    if (minutes < 120) {
++                        ZonedDateTime moment = ZonedDateTime.ofInstant(list.get(i).getTime().toInstant(), zone);
++                        dayHourIntervals.computeIfAbsent(moment.getDayOfWeek().getValue(), key -> new TreeMap<>())
++                                .computeIfAbsent(moment.getHour(), key -> new ArrayList<>()).add(minutes);
++                    }
++                }
++            }
++        }
++        List<Map<String, Object>> byStopRows = new ArrayList<>();
++        stopHour.forEach((index, cells) -> {
++            Map<String, Object> row = new LinkedHashMap<>();
++            row.put("index", index);
++            row.put("name", line != null && index < line.stops().size() ? line.stops().get(index).name()
++                    : "#" + (index + 1));
++            row.put("direction", line != null && line.returnIndex() > 0
++                    ? TransitService.isReturn(line, index) ? "return" : "outbound" : null);
++            Map<Integer, Object> values = new TreeMap<>();
++            cells.forEach((hour, list) -> values.put(hour, cell(list, null)));
++            row.put("cells", values);
++            byStopRows.add(row);
++        });
++        List<Map<String, Object>> byDayRows = new ArrayList<>();
++        dayHour.forEach((day, cells) -> {
++            Map<String, Object> row = new LinkedHashMap<>();
++            row.put("day", day);
++            Map<Integer, Object> values = new TreeMap<>();
++            cells.forEach((hour, list) -> values.put(hour,
++                    cell(list, dayHourIntervals.getOrDefault(day, Map.of()).get(hour))));
++            row.put("cells", values);
++            byDayRows.add(row);
++        });
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("hours", new ArrayList<>(hours));
++        result.put("byStop", byStopRows);
++        result.put("byDay", byDayRows);
++        return result;
++    }
++
+     /**
+      * Laps and average delay per unit, punctuality per stop (on time between 1 minute early and 5 late) and the
+      * real interval between consecutive buses at each stop against the planned one.
+@@ -417,6 +619,7 @@ public class TransitResource extends BaseResource {
+         result.put("summary", summary);
+         result.put("units", units);
+         result.put("stops", stops);
++        result.put("heatmap", heatmap(line, visits, byStop));
+         return result;
+     }
+ 
+diff --git a/src/main/java/org/traccar/transit/TransitService.java b/src/main/java/org/traccar/transit/TransitService.java
+index 9012a0d..24a533a 100644
+--- a/src/main/java/org/traccar/transit/TransitService.java
++++ b/src/main/java/org/traccar/transit/TransitService.java
+@@ -56,6 +56,7 @@ public class TransitService {
+     private static final Logger LOGGER = LoggerFactory.getLogger(TransitService.class);
+ 
+     public static final String ATTRIBUTE = "transitRouteId";
++    public static final String DRIVER_TOKEN = "transitDriverToken";
+     private static final long STALE = 10 * 60_000L;
+     private static final long ALERT_INTERVAL = 10 * 60_000L;
+ 
+@@ -71,7 +72,7 @@ public class TransitService {
+ 
+     public record Line(
+             TransitRoute route, TransitGeometry geometry, List<Stop> stops, List<Band> bands,
+-            List<LocalTime> departures,
++            List<LocalTime> departures, int returnIndex, List<LocalTime> returnDepartures,
+             double speedKmh, double bunchingMeters, double gapMeters, double offRouteMeters, double delayMinutes,
+             ZoneId zone) {
+     }
+@@ -140,6 +141,8 @@ public class TransitService {
+         }
+         try {
+             List<Map<String, Object>> rawStops = objectMapper.readValue(route.getStops(), new TypeReference<>() { });
++            int requested = route.getInteger("returnStop");
++            int returnIndex = !route.getCircular() && requested > 0 && requested < rawStops.size() ? requested : -1;
+             List<double[]> path = route.getPath() != null && !route.getPath().isBlank()
+                     ? objectMapper.readValue(route.getPath(), new TypeReference<List<double[]>>() { })
+                     : new ArrayList<>();
+@@ -149,24 +152,38 @@ public class TransitService {
+                     path.add(new double[] {((Number) stop.get("latitude")).doubleValue(),
+                             ((Number) stop.get("longitude")).doubleValue()});
+                 }
+-                if (route.getCircular() && !path.isEmpty()) {
++                if (route.getCircular() || returnIndex > 0) {
+                     path.add(path.get(0));
+                 }
+             }
+-            TransitGeometry geometry = new TransitGeometry(path, route.getCircular());
++            // a line with outbound and return is a closed cycle: outbound stops, the terminal, return stops
++            if ((route.getCircular() || returnIndex > 0) && path.size() > 1) {
++                double[] first = path.get(0);
++                double[] last = path.get(path.size() - 1);
++                if (Math.abs(first[0] - last[0]) > 1e-5 || Math.abs(first[1] - last[1]) > 1e-5) {
++                    path = new ArrayList<>(path);
++                    path.add(first);
++                }
++            }
++            TransitGeometry geometry = new TransitGeometry(path, route.getCircular() || returnIndex > 0);
+             double speed = route.getDouble("speedKmh") > 0 ? route.getDouble("speedKmh") : 20;
+             List<Stop> stops = new ArrayList<>();
+             Double previous = null;
++            double base = 0;
+             for (Map<String, Object> stop : rawStops) {
+                 double latitude = ((Number) stop.get("latitude")).doubleValue();
+                 double longitude = ((Number) stop.get("longitude")).doubleValue();
+                 double along = geometry.project(latitude, longitude, previous).along();
+                 previous = along;
++                boolean first = stops.isEmpty() || stops.size() == returnIndex;
++                if (stops.size() == returnIndex) {
++                    base = along;
++                }
+                 double radius = stop.get("radius") instanceof Number value && value.doubleValue() > 0
+                         ? value.doubleValue() : 60;
+                 double minutes = stop.get("minutes") instanceof Number value && value.doubleValue() >= 0
+-                        && !(stops.size() > 0 && value.doubleValue() == 0)
+-                        ? value.doubleValue() : along / (speed / 3.6) / 60;
++                        && !(!first && value.doubleValue() == 0)
++                        ? value.doubleValue() : (along - base) / (speed / 3.6) / 60;
+                 stops.add(new Stop(String.valueOf(stop.getOrDefault("name", "Paradero " + (stops.size() + 1))),
+                         latitude, longitude, radius, minutes, along));
+             }
+@@ -188,6 +205,14 @@ public class TransitService {
+                 }
+             }
+             departures.sort(Comparator.naturalOrder());
++            List<LocalTime> returnDepartures = new ArrayList<>();
++            for (Object departure : (List<Object>) schedule.getOrDefault("returnDepartures", List.of())) {
++                LocalTime value = time(departure);
++                if (value != null) {
++                    returnDepartures.add(value);
++                }
++            }
++            returnDepartures.sort(Comparator.naturalOrder());
+             String zone = route.getString("timezone");
+             if (zone == null) {
+                 Server server = cacheManager.getServer();
+@@ -199,7 +224,7 @@ public class TransitService {
+             } catch (RuntimeException e) {
+                 zoneId = ZoneId.systemDefault();
+             }
+-            Line line = new Line(route, geometry, stops, bands, departures, speed,
++            Line line = new Line(route, geometry, stops, bands, departures, returnIndex, returnDepartures, speed,
+                     route.getDouble("bunchingKm") > 0 ? route.getDouble("bunchingKm") * 1000 : 300,
+                     route.getDouble("gapKm") > 0 ? route.getDouble("gapKm") * 1000 : 0,
+                     route.getDouble("offRouteMeters") > 0 ? route.getDouble("offRouteMeters") : 150,
+@@ -231,13 +256,21 @@ public class TransitService {
+         return null;
+     }
+ 
+-    private Date scheduledStart(Line line, Date start) {
+-        if (line.departures().isEmpty()) {
++    /**
++     * Whether a stop belongs to the return direction of a line with outbound and return.
++     */
++    public static boolean isReturn(Line line, int index) {
++        return line.returnIndex() > 0 && index >= line.returnIndex();
++    }
++
++    private Date scheduledStart(Line line, Date start, boolean back) {
++        List<LocalTime> list = back ? line.returnDepartures() : line.departures();
++        if (list.isEmpty()) {
+             return start;
+         }
+         ZonedDateTime moment = ZonedDateTime.ofInstant(start.toInstant(), line.zone());
+         ZonedDateTime best = null;
+-        for (LocalTime departure : line.departures()) {
++        for (LocalTime departure : list) {
+             ZonedDateTime candidate = moment.with(departure);
+             if (best == null || Math.abs(candidate.toEpochSecond() - moment.toEpochSecond())
+                     < Math.abs(best.toEpochSecond() - moment.toEpochSecond())) {
+@@ -271,10 +304,14 @@ public class TransitService {
+             state.lap++;
+             state.tripStart = time;
+             state.delayAlerted = false;
++        } else if (index == line.returnIndex()) {
++            // the return trip starts at the terminal, with its own departure times
++            state.tripStart = time;
++            state.delayAlerted = false;
+         }
+         Integer delay = null;
+         if (state.tripStart != null) {
+-            Date start = scheduledStart(line, state.tripStart);
++            Date start = scheduledStart(line, state.tripStart, isReturn(line, index));
+             delay = (int) ((time.getTime() - start.getTime()) / 1000 - stop.minutes() * 60);
+         }
+         state.lastStop = index;
+@@ -341,7 +378,10 @@ public class TransitService {
+         state.offRouteCount = 0;
+         double along = projection.along();
+         if (state.along == null || now - state.time > STALE * 3) {
++            // first position or back after a long break (night, shift change): the previous trip is over
+             state.lastStop = -1;
++            state.tripStart = null;
++            state.lastDelay = null;
+             for (int i = 0; i < line.stops().size(); i++) {
+                 Stop stop = line.stops().get(i);
+                 if (geometry.forward(stop.along(), along) < 1e9 && stop.along() <= along) {
+@@ -415,6 +455,23 @@ public class TransitService {
+         }
+     }
+ 
++    /**
++     * Scheduled arrival at a stop for the trip the unit is on. A terminal (first stop of a direction) uses the
++     * departure closest to the estimated arrival; any other stop the departure of the current trip plus its minutes.
++     */
++    private Date scheduledArrival(Line line, State state, int index, long eta) {
++        if (state == null || state.tripStart == null) {
++            return null;
++        }
++        boolean back = isReturn(line, index);
++        if (index == 0 || index == line.returnIndex()) {
++            List<LocalTime> list = back ? line.returnDepartures() : line.departures();
++            return list.isEmpty() ? null : scheduledStart(line, new Date(eta), back);
++        }
++        Date start = scheduledStart(line, state.tripStart, back);
++        return new Date(start.getTime() + Math.round(line.stops().get(index).minutes() * 60_000));
++    }
++
+     /**
+      * Live picture of a line for the given units: progress, stops, distance and minutes to the unit ahead and behind.
+      */
+@@ -473,12 +530,23 @@ public class TransitService {
+                         next = i;
+                     }
+                 }
++                if (line.returnIndex() > 0) {
++                    unit.put("direction", along >= line.stops().get(line.returnIndex()).along() - 15
++                            ? "return" : "outbound");
++                }
+                 if (next >= 0) {
+                     double speed = Math.max(line.speedKmh(), 5);
++                    long eta = now + Math.round(toNext / (speed / 3.6) * 1000);
+                     unit.put("nextStop", next);
+                     unit.put("nextStopName", line.stops().get(next).name());
+                     unit.put("nextStopMeters", Math.round(toNext));
+                     unit.put("nextStopMinutes", Math.round(toNext / (speed / 3.6) / 60));
++                    unit.put("nextStopEta", new Date(eta));
++                    Date scheduled = scheduledArrival(line, state, next, eta);
++                    if (scheduled != null && active) {
++                        unit.put("nextStopScheduled", scheduled);
++                        unit.put("nextStopDelayMinutes", Math.round((eta - scheduled.getTime()) / 60000.0));
++                    }
+                 }
+             }
+             units.add(unit);
+@@ -515,6 +583,7 @@ public class TransitService {
+         double plannedMeters = planned != null ? planned * line.speedKmh() / 60 * 1000 : 0;
+         double gapLimit = line.gapMeters() > 0 ? line.gapMeters() : plannedMeters * 2;
+         Map<String, Object> summary = new LinkedHashMap<>();
++        summary.put("returnStop", line.returnIndex() > 0 ? line.returnIndex() : null);
+         summary.put("units", devices.size());
+         summary.put("running", running.size());
+         summary.put("offRoute", units.stream().filter(unit -> Boolean.TRUE.equals(unit.get("offRoute"))).count());
+@@ -530,9 +599,11 @@ public class TransitService {
+         summary.put("bunchingKm", line.bunchingMeters() / 1000);
+         summary.put("gapKm", gapLimit > 0 ? Math.round(gapLimit / 100) / 10.0 : null);
+         List<Map<String, Object>> stops = new ArrayList<>();
+-        for (Stop stop : line.stops()) {
++        for (int i = 0; i < line.stops().size(); i++) {
++            Stop stop = line.stops().get(i);
+             Map<String, Object> item = new LinkedHashMap<>();
+             item.put("name", stop.name());
++            item.put("direction", line.returnIndex() > 0 ? isReturn(line, i) ? "return" : "outbound" : null);
+             item.put("latitude", stop.latitude());
+             item.put("longitude", stop.longitude());
+             item.put("along", Math.round(stop.along()));

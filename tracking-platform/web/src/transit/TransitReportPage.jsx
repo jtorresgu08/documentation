@@ -13,8 +13,11 @@ import dayjs from 'dayjs';
 import { useTranslation } from '../common/components/LocalizationProvider';
 import fetchOrThrow from '../common/util/fetchOrThrow';
 import { PERIODS, downloadCsv, periodRange } from '../reports/reportPeriods';
+import HeatmapTable, { heatColor } from './HeatmapTable';
 
 const capitalize = (value) => value.charAt(0).toUpperCase() + value.slice(1);
+const DAYS = ['', 'transitMonday', 'transitTuesday', 'transitWednesday', 'transitThursday', 'transitFriday', 'transitSaturday', 'transitSunday'];
+const signed = (value) => `${value > 0 ? '+' : ''}${value}`;
 const percent = (value) => (value === null || value === undefined ? '—' : `${value}%`);
 
 // Public transport compliance for a line: laps, stop visits, punctuality, real against planned interval and regularity,
@@ -48,11 +51,18 @@ const TransitReportPage = () => {
   }, [period, routeId]);
 
   const summary = report?.summary;
+  const heat = report?.heatmap;
+  const worst = heat?.byStop?.flatMap((row) => Object.entries(row.cells).filter(([, cell]) => cell.count >= 3)
+    .map(([hour, cell]) => ({ name: row.name, hour, delay: cell.delay }))).sort((a, b) => b.delay - a.delay)[0];
   const exportCsv = () => {
     downloadCsv('transporte-unidades', [t('sharedDevice'), t('transitLaps'), t('transitVisits'), t('transitAverageDelay'), t('transitOnTime')],
       report.units.map((unit) => [unit.name, unit.laps, unit.visits, unit.averageDelayMinutes, unit.onTimeRate]));
     downloadCsv('transporte-paraderos', ['#', t('transitStop'), t('transitVisits'), t('transitAverageDelay'), t('transitOnTime'), t('transitAverageInterval')],
       report.stops.map((stop) => [stop.index + 1, stop.name, stop.visits, stop.averageDelayMinutes, stop.onTimeRate, stop.averageIntervalMinutes ?? '']));
+    if (heat?.hours?.length) {
+      downloadCsv('transporte-retraso-por-hora', [t('transitStop'), ...heat.hours.map((hour) => `${hour}h`)],
+        heat.byStop.map((row) => [`${row.index + 1}. ${row.name}`, ...heat.hours.map((hour) => row.cells[hour]?.delay ?? '')]));
+    }
   };
 
   const kpi = (label, value, detail, color) => (
@@ -113,6 +123,46 @@ const TransitReportPage = () => {
               </ResponsiveContainer>
             </Box>
           </Card>
+          {heat?.hours?.length > 0 && (
+            <Card variant="outlined" sx={{ borderRadius: 4, p: 2 }}>
+              <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1} sx={{ mb: 1 }}>
+                <Box>
+                  <Typography variant="subtitle1" fontWeight={700}>{t('transitHeatStops')}</Typography>
+                  <Typography variant="caption" color="text.secondary">{t('transitHeatHelp')}</Typography>
+                </Box>
+                <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
+                  {[[-2, '< −1'], [0, '±1'], [2, '1–3'], [4, '3–5'], [6, '5–8'], [10, '> 8']].map(([value, text]) => (
+                    <Box key={text} sx={{ px: 1, py: 0.25, borderRadius: 1, bgcolor: heatColor(value), fontSize: 11, fontWeight: 600 }}>{`${text} min`}</Box>
+                  ))}
+                </Stack>
+              </Stack>
+              <HeatmapTable
+                hours={heat.hours}
+                rows={heat.byStop.map((row) => ({ ...row, key: row.index }))}
+                label={(row) => `${row.direction ? (row.direction === 'return' ? '← ' : '→ ') : ''}${row.index + 1}. ${row.name}`}
+                cellText={(cell) => signed(cell.delay)}
+                tooltip={(row, hour, cell) => `${row.name} · ${hour}:00–${hour}:59 · ${t('transitAverageDelay')} ${signed(cell.delay)} min · ${cell.count} ${t('transitVisitsLower')}`}
+              />
+              {worst && (
+                <Typography variant="body2" sx={{ mt: 1.5 }}>
+                  {t('transitHeatWorst').replace('{0}', worst.name).replace('{1}', `${worst.hour}:00`).replace('{2}', signed(worst.delay))}
+                </Typography>
+              )}
+            </Card>
+          )}
+          {heat?.byDay?.length > 0 && (
+            <Card variant="outlined" sx={{ borderRadius: 4, p: 2 }}>
+              <Typography variant="subtitle1" fontWeight={700}>{t('transitHeatDays')}</Typography>
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 1 }}>{t('transitHeatDaysHelp')}</Typography>
+              <HeatmapTable
+                hours={heat.hours}
+                rows={heat.byDay.map((row) => ({ ...row, key: row.day }))}
+                label={(row) => t(DAYS[row.day])}
+                cellText={(cell) => (cell.interval != null ? `${signed(cell.delay)} · ${cell.interval}′` : signed(cell.delay))}
+                tooltip={(row, hour, cell) => `${t(DAYS[row.day])} · ${hour}:00 · ${t('transitAverageDelay')} ${signed(cell.delay)} min${cell.interval != null ? ` · ${t('transitAverageInterval')} ${cell.interval} min` : ''} · ${cell.count} ${t('transitVisitsLower')}`}
+              />
+            </Card>
+          )}
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, md: 6 }}>
               <Card variant="outlined" sx={{ borderRadius: 4, overflowX: 'auto' }}>

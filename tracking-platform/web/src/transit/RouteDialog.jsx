@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import {
+ Fragment, useEffect, useMemo, useState 
+} from 'react';
 import { useSelector } from 'react-redux';
 import {
-  Alert, Autocomplete, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, InputAdornment, Stack, Switch,
-  Tab, Tabs, TextField, Typography,
+  Alert, Autocomplete, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, Stack,
+  MenuItem, Tab, Tabs, TextField, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -34,7 +36,12 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [color, setColor] = useState(COLORS[0]);
-  const [circular, setCircular] = useState(true);
+  const [kind, setKind] = useState('circular');
+  const [returnStop, setReturnStop] = useState('');
+  const [returnDepartures, setReturnDepartures] = useState('');
+  const circular = kind === 'circular';
+  const twoWay = kind === 'twoWay';
+  const closed = kind !== 'oneWay';
   const [stops, setStops] = useState([emptyStop(), emptyStop()]);
   const [path, setPath] = useState([]);
   const [mode, setMode] = useState('bands');
@@ -53,7 +60,10 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
     setName(route.name);
     setCode(route.code || '');
     setColor(route.color || COLORS[0]);
-    setCircular(route.circular);
+    const back = Number(route.attributes?.returnStop) || 0;
+    setKind(route.circular ? 'circular' : back > 0 ? 'twoWay' : 'oneWay');
+    setReturnStop(back > 0 ? back : '');
+    setReturnDepartures((route.schedule?.returnDepartures || []).join(', '));
     setStops(route.stops.map((stop) => ({
       key: Math.random().toString(36).slice(2), name: stop.name, coordinates: `${stop.latitude}, ${stop.longitude}`, radius: stop.radius ?? '', minutes: stop.minutes ?? '',
     })));
@@ -64,7 +74,9 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
     } else if (route.schedule?.bands?.length) {
       setBands(route.schedule.bands);
     }
-    setSettings((current) => ({ ...current, ...route.attributes }));
+    const attributes = { ...(route.attributes || {}) };
+    delete attributes.returnStop;
+    setSettings((current) => ({ ...current, ...attributes }));
     setDeviceIds(route.deviceIds || []);
   }, [route]);
 
@@ -72,13 +84,22 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
     ? departures.split(/[,;\s]+/).find((value) => /^\d{1,2}:\d{2}$/.test(value))
     : bands.find((band) => band.from)?.from;
   const referenceTime = reference || firstDeparture || '06:00';
+  const returnIndex = twoWay && Number(returnStop) > 0 && Number(returnStop) < stops.length ? Number(returnStop) : -1;
   const timing = useMemo(() => {
-    const measured = stopDistances(stops.map((stop) => parseCoordinates(stop.coordinates)), path, circular);
+    const measured = stopDistances(stops.map((stop) => parseCoordinates(stop.coordinates)), path, closed);
     if (!measured) return null;
-    const planned = plannedMinutes(measured.distances, stops.map((stop) => stop.minutes), settings.speedKmh);
-    const lap = plannedMinutes([measured.length], [''], settings.speedKmh)[0].minutes;
-    return { distances: measured.distances, planned, length: measured.length, lap };
-  }, [stops, path, circular, settings.speedKmh]);
+    const planned = plannedMinutes(measured.distances, stops.map((stop) => stop.minutes), settings.speedKmh, returnIndex);
+    const toMinutes = (meters) => plannedMinutes([meters], [''], settings.speedKmh)[0].minutes;
+    const lap = toMinutes(measured.length);
+    const outbound = returnIndex > 0 ? toMinutes(measured.distances[returnIndex]) : null;
+    return {
+      distances: measured.distances, planned, length: measured.length, lap, outbound,
+    };
+  }, [stops, path, closed, settings.speedKmh, returnIndex]);
+  // the return leaves the terminal at its first departure, or when the outbound arrives
+  const returnReference = returnDepartures.split(/[,;\s]+/).find((value) => /^\d{1,2}:\d{2}$/.test(value))
+    || (timing?.outbound != null ? addMinutes(referenceTime, timing.outbound) : referenceTime);
+  const plannedTime = (index) => addMinutes(timing.planned[index].back ? returnReference : referenceTime, timing.planned[index].minutes);
 
   const update = (index, changes) => setStops(stops.map((stop, i) => (i === index ? { ...stop, ...changes } : stop)));
   const points = () => stops.map((stop) => parseCoordinates(stop.coordinates));
@@ -102,7 +123,7 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
       setError(t('dispatchInvalidStop'));
       return;
     }
-    const sequence = circular ? [...list, list[0]] : list;
+    const sequence = closed ? [...list, list[0]] : list;
     setBusy(true);
     try {
       const result = [];
@@ -130,6 +151,13 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
       setError(t('transitInvalidLine'));
       return;
     }
+    if (twoWay && returnIndex < 0) {
+      setError(t('transitChooseTerminal'));
+      return;
+    }
+    const departureList = (text) => text.split(/[,;\s]+/).filter(Boolean);
+    const attributes = Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== '' && value !== null).map(([key, value]) => [key, key === 'timezone' ? value : Number(value)]));
+    if (twoWay) attributes.returnStop = returnIndex;
     const body = {
       name: name.trim(),
       code,
@@ -139,8 +167,10 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
         name: stop.name || `${t('transitStop')} ${index + 1}`, ...list[index], ...(stop.radius !== '' ? { radius: Number(stop.radius) } : {}), ...(stop.minutes !== '' ? { minutes: Number(stop.minutes) } : {}),
       })),
       path,
-      schedule: mode === 'bands' ? { bands: bands.map((band) => ({ ...band, minutes: Number(band.minutes) })) } : { departures: departures.split(/[,;\s]+/).filter(Boolean) },
-      attributes: Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== '' && value !== null).map(([key, value]) => [key, key === 'timezone' ? value : Number(value)])),
+      schedule: mode === 'bands'
+        ? { bands: bands.map((band) => ({ ...band, minutes: Number(band.minutes) })) }
+        : { departures: departureList(departures), ...(twoWay ? { returnDepartures: departureList(returnDepartures) } : {}) },
+      attributes,
       deviceIds,
     };
     const response = await fetch(route ? `/api/transit/routes/${route.id}` : '/api/transit/routes', {
@@ -148,6 +178,21 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
     });
     if (response.ok) onSaved(await response.json());
     else setError((await response.text()).split('\n')[0]);
+  };
+
+  // outbound and return, lap or trip duration at the commercial speed
+  const durationLabel = () => {
+    const last = timing.distances.length - 1;
+    const toMinutes = (meters) => meters / (Math.max(Number(settings.speedKmh) || 20, 1) / 3.6) / 60;
+    if (returnIndex > 0) {
+      const back = timing.planned[last].minutes + toMinutes(timing.length - timing.distances[last]);
+      return t('transitTwoWayTime').replace('{0}', (timing.distances[returnIndex] / 1000).toFixed(1)).replace('{1}', Math.round(timing.outbound))
+        .replace('{2}', ((timing.length - timing.distances[returnIndex]) / 1000).toFixed(1)).replace('{3}', Math.round(back));
+    }
+    if (circular) {
+      return t('transitLapTime').replace('{0}', (timing.length / 1000).toFixed(1)).replace('{1}', Math.round(timing.lap)).replace('{2}', addMinutes(referenceTime, timing.lap));
+    }
+    return t('transitTripTime').replace('{0}', (timing.distances[last] / 1000).toFixed(1)).replace('{1}', Math.round(timing.planned[last].minutes));
   };
 
   const setting = (key, label, unit) => (
@@ -162,7 +207,11 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
         <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', sm: '2fr 1fr 1.4fr' }, mb: 1 }}>
           <TextField size="small" label={t('transitLineName')} value={name} onChange={(event) => setName(event.target.value)} placeholder={t('transitLineExample')} />
           <TextField size="small" label={t('transitCode')} value={code} onChange={(event) => setCode(event.target.value)} />
-          <FormControlLabel control={<Switch checked={circular} onChange={(event) => setCircular(event.target.checked)} />} label={t('transitCircular')} />
+          <TextField select size="small" label={t('transitLineType')} value={kind} onChange={(event) => setKind(event.target.value)}>
+            <MenuItem value="circular">{t('transitCircular')}</MenuItem>
+            <MenuItem value="twoWay">{t('transitTwoWay')}</MenuItem>
+            <MenuItem value="oneWay">{t('transitOneWay')}</MenuItem>
+          </TextField>
         </Box>
         <Stack direction="row" spacing={0.75} sx={{ mb: 1 }}>
           {COLORS.map((item) => <Box key={item} onClick={() => setColor(item)} sx={{
@@ -184,14 +233,23 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
                 <Chip
                   color="primary"
                   variant="outlined"
-                  label={circular
-                    ? t('transitLapTime').replace('{0}', (timing.length / 1000).toFixed(1)).replace('{1}', Math.round(timing.lap)).replace('{2}', addMinutes(referenceTime, timing.lap))
-                    : t('transitTripTime').replace('{0}', (timing.distances[timing.distances.length - 1] / 1000).toFixed(1)).replace('{1}', Math.round(timing.planned[timing.planned.length - 1].minutes))}
+                  label={durationLabel()}
                 />
+              )}
+              {twoWay && (
+                <TextField select size="small" label={t('transitReturnStart')} value={returnStop} onChange={(event) => setReturnStop(event.target.value)} sx={{ minWidth: 220 }}>
+                  {stops.map((stop, index) => (index > 0 ? <MenuItem key={stop.key} value={index}>{`${index + 1}. ${stop.name || t('transitStop')}`}</MenuItem> : null))}
+                </TextField>
               )}
             </Stack>
             {stops.map((stop, index) => (
-              <Box key={stop.key} sx={{ display: 'grid', gap: 1, alignItems: 'center', gridTemplateColumns: { xs: '1fr', sm: '26px 1.5fr 1.5fr 90px 110px 150px 64px' } }}>
+              <Fragment key={stop.key}>
+              {twoWay && (index === 0 || index === returnIndex) && (
+                <Typography variant="overline" sx={{ color, fontWeight: 700, lineHeight: 1.5 }}>
+                  {index === 0 ? `→ ${t('transitOutbound')}` : `← ${t('transitReturn')}`}
+                </Typography>
+              )}
+              <Box sx={{ display: 'grid', gap: 1, alignItems: 'center', gridTemplateColumns: { xs: '1fr', sm: '26px 1.5fr 1.5fr 90px 110px 150px 64px' } }}>
                 <Box sx={{
  width: 22, height: 22, borderRadius: '50%', border: `4px solid ${color}`, display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 700 
 }}>{index + 1}</Box>
@@ -211,7 +269,9 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
                   {timing ? (
                     <>
                       <Typography variant="body2" fontWeight={700} component="div">
-                        {`${addMinutes(referenceTime, timing.planned[index].minutes)} · +${timing.planned[index].minutes.toFixed(1)} min`}
+                        {index === returnIndex && timing.outbound != null
+                          ? `${t('transitArrives')} ${addMinutes(referenceTime, timing.outbound)} · ${t('transitLeaves')} ${returnReference}`
+                          : `${plannedTime(index)} · +${timing.planned[index].minutes.toFixed(1)} min`}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {`${(timing.distances[index] / 1000).toFixed(2)} km · ${timing.planned[index].auto ? t('transitAuto') : t('transitManual')}`}
@@ -224,6 +284,7 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
                   <IconButton size="small" onClick={() => setStops(stops.filter((_, i) => i !== index))}><DeleteIcon fontSize="small" /></IconButton>
                 </Stack>
               </Box>
+              </Fragment>
             ))}
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Button size="small" startIcon={<AddIcon />} onClick={() => setStops([...stops, emptyStop()])}>{t('transitAddStop')}</Button>
@@ -256,7 +317,10 @@ const RouteDialog = ({ route, onClose, onSaved }) => {
                 <Button size="small" startIcon={<AddIcon />} sx={{ alignSelf: 'flex-start' }} onClick={() => setBands([...bands, { from: '', to: '', minutes: 10 }])}>{t('transitAddBand')}</Button>
               </>
             ) : (
-              <TextField multiline minRows={3} label={t('transitDepartureTimes')} placeholder="05:30, 05:45, 06:00, 06:12" value={departures} onChange={(event) => setDepartures(event.target.value)} />
+              <>
+                <TextField multiline minRows={3} label={twoWay ? t('transitOutboundDepartures') : t('transitDepartureTimes')} placeholder="05:30, 05:45, 06:00, 06:12" value={departures} onChange={(event) => setDepartures(event.target.value)} />
+                {twoWay && <TextField multiline minRows={3} label={t('transitReturnDepartures')} placeholder="06:10, 06:25, 06:40" value={returnDepartures} onChange={(event) => setReturnDepartures(event.target.value)} />}
+              </>
             )}
             <Typography variant="caption" color="text.secondary">{t('transitScheduleHelp')}</Typography>
           </Stack>
