@@ -678,6 +678,15 @@ híbrido, visibles solo con su clave (`esriKey`, `azureMapsKey`) y en planes con
 Configuración: `infra/DEPLOY.md` §26. Pruebas: `server/tests/test_sims.py` (20), `test_billing.py` (28, con
 Mercado Pago simulado) y `test_regulator.py` (23, con entidad simulada). Capturas `docs/capturas/v35-*.png`.
 
+## Instalaciones y soporte técnico (parche `0034`)
+
+Agenda semanal de técnicos, órdenes de trabajo (instalación, mantenimiento, desinstalación, revisión, soporte),
+inventario de equipos con reserva y trazabilidad, **panel del instalador** en el celular (enlace privado sin cuenta:
+estado, IMEI/ICCID, checklist, fotos, prueba de señal, firma del cliente), creación automática de la unidad del
+cliente al cerrar, **acta de instalación** pública imprimible y **tickets de soporte** con mensajes, notas internas y
+envío de técnico. Configuración en `infra/DEPLOY.md` §27; prueba `server/tests/test_installations.py` (42);
+capturas `docs/capturas/v36-*.png`.
+
 ## Correspondencia con las capturas
 
 | Función de la captura | Estado |

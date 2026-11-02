@@ -34,6 +34,8 @@ import ConstructionIcon from '@mui/icons-material/Construction';
 import SimCardIcon from '@mui/icons-material/SimCard';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import GavelIcon from '@mui/icons-material/Gavel';
+import EngineeringIcon from '@mui/icons-material/Engineering';
+import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import SettingsRemoteIcon from '@mui/icons-material/SettingsRemote';
 import ShieldIcon from '@mui/icons-material/Shield';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -315,6 +317,12 @@ const AppSidebar = () => {
     },
     hasModule('regulator') && {
       key: 'regulator', title: t('regulatorTitle'), icon: <GavelIcon />, href: '/regulator', match: /^\/regulator/,
+    },
+    hasModule('installations') && {
+      key: 'installations', title: t('instTitle'), icon: <EngineeringIcon />, href: '/installations', match: /^\/installations/,
+    },
+    {
+      key: 'support', title: t('supportTitle'), icon: <SupportAgentIcon />, href: '/support', match: /^\/support/,
     },
     hasModule('sims') && {
       key: 'sims', title: t('simTitle'), icon: <SimCardIcon />, href: '/sims', match: /^\/sims/,

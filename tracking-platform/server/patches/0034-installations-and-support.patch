@@ -1,0 +1,2815 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index 72ab97c..487c7f4 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -546,4 +546,141 @@
+     </createTable>
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-installations">
++    <createTable tableName="tc_technicians">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="name" type="VARCHAR(128)">
++        <constraints nullable="false" />
++      </column>
++      <column name="phone" type="VARCHAR(32)" />
++      <column name="email" type="VARCHAR(128)" />
++      <column name="token" type="VARCHAR(64)">
++        <constraints nullable="false" />
++      </column>
++      <column name="color" type="VARCHAR(16)" />
++      <column name="active" type="BOOLEAN" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++    <addUniqueConstraint tableName="tc_technicians" columnNames="token" constraintName="uk_technicians_token" />
++
++    <createTable tableName="tc_stock_items">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="type" type="VARCHAR(32)" />
++      <column name="model" type="VARCHAR(128)" />
++      <column name="serial" type="VARCHAR(64)">
++        <constraints nullable="false" />
++      </column>
++      <column name="status" type="VARCHAR(16)" />
++      <column name="technicianid" type="INT" />
++      <column name="deviceid" type="INT" />
++      <column name="workorderid" type="INT" />
++      <column name="notes" type="VARCHAR(512)" />
++      <column name="updatedat" type="TIMESTAMP" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++    <addUniqueConstraint tableName="tc_stock_items" columnNames="serial" constraintName="uk_stock_items_serial" />
++
++    <createTable tableName="tc_work_orders">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="clientid" type="INT" />
++      <column name="clientname" type="VARCHAR(128)" />
++      <column name="contactname" type="VARCHAR(128)" />
++      <column name="contactphone" type="VARCHAR(32)" />
++      <column name="address" type="VARCHAR(512)" />
++      <column name="latitude" type="DOUBLE" />
++      <column name="longitude" type="DOUBLE" />
++      <column name="type" type="VARCHAR(32)" />
++      <column name="status" type="VARCHAR(16)" />
++      <column name="technicianid" type="INT" />
++      <column name="scheduledat" type="TIMESTAMP" />
++      <column name="duration" type="INT" />
++      <column name="plate" type="VARCHAR(32)" />
++      <column name="vehicle" type="VARCHAR(128)" />
++      <column name="notes" type="VARCHAR(2000)" />
++      <column name="technotes" type="VARCHAR(2000)" />
++      <column name="deviceid" type="INT" />
++      <column name="ticketid" type="INT" />
++      <column name="token" type="VARCHAR(64)">
++        <constraints nullable="false" />
++      </column>
++      <column name="uniqueid" type="VARCHAR(64)" />
++      <column name="iccid" type="VARCHAR(32)" />
++      <column name="enrouteat" type="TIMESTAMP" />
++      <column name="startedat" type="TIMESTAMP" />
++      <column name="completedat" type="TIMESTAMP" />
++      <column name="signaturename" type="VARCHAR(128)" />
++      <column name="createdat" type="TIMESTAMP" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++    <addUniqueConstraint tableName="tc_work_orders" columnNames="token" constraintName="uk_work_orders_token" />
++    <createIndex tableName="tc_work_orders" indexName="idx_work_orders_scheduled">
++      <column name="scheduledat" />
++    </createIndex>
++
++    <createTable tableName="tc_work_order_photos">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="workorderid" type="INT">
++        <constraints nullable="false" />
++      </column>
++      <column name="kind" type="VARCHAR(16)" />
++      <column name="category" type="VARCHAR(32)" />
++      <column name="file" type="VARCHAR(256)">
++        <constraints nullable="false" />
++      </column>
++      <column name="time" type="TIMESTAMP" />
++      <column name="latitude" type="DOUBLE" />
++      <column name="longitude" type="DOUBLE" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_work_order_photos" baseColumnNames="workorderid" constraintName="fk_work_order_photos_order" referencedTableName="tc_work_orders" referencedColumnNames="id" onDelete="CASCADE" />
++
++    <createTable tableName="tc_tickets">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="subject" type="VARCHAR(256)">
++        <constraints nullable="false" />
++      </column>
++      <column name="description" type="VARCHAR(4000)" />
++      <column name="category" type="VARCHAR(32)" />
++      <column name="priority" type="VARCHAR(16)" />
++      <column name="status" type="VARCHAR(16)" />
++      <column name="deviceid" type="INT" />
++      <column name="workorderid" type="INT" />
++      <column name="createdat" type="TIMESTAMP" />
++      <column name="updatedat" type="TIMESTAMP" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++
++    <createTable tableName="tc_ticket_messages">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="ticketid" type="INT">
++        <constraints nullable="false" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="author" type="VARCHAR(128)" />
++      <column name="text" type="VARCHAR(4000)">
++        <constraints nullable="false" />
++      </column>
++      <column name="time" type="TIMESTAMP" />
++      <column name="internal" type="BOOLEAN" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++    <addForeignKeyConstraint baseTableName="tc_ticket_messages" baseColumnNames="ticketid" constraintName="fk_ticket_messages_ticket" referencedTableName="tc_tickets" referencedColumnNames="id" onDelete="CASCADE" />
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/api/resource/InstallationResource.java b/src/main/java/org/traccar/api/resource/InstallationResource.java
+new file mode 100644
+index 0000000..5c083c4
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/InstallationResource.java
+@@ -0,0 +1,568 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.installations.InstallationService;
++import org.traccar.model.StockItem;
++import org.traccar.model.Technician;
++import org.traccar.model.User;
++import org.traccar.model.WorkOrder;
++import org.traccar.model.WorkOrderPhoto;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Installations and field service for the office: technicians, equipment inventory, work orders with their
++ * schedule, and the photos and report of each visit.
++ */
++@Path("installations")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class InstallationResource extends BaseResource {
++
++    @Inject
++    private InstallationService installationService;
++
++    private Set<Long> owners() throws StorageException {
++        return installationService.owners(getUserId(), !permissionsService.notAdmin(getUserId()));
++    }
++
++    private static boolean visible(Set<Long> owners, long userId) {
++        return owners == null || owners.contains(userId);
++    }
++
++    private static WebApplicationException notFound() {
++        return new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++    }
++
++    private static String text(Object value) {
++        if (value == null) {
++            return null;
++        }
++        String result = String.valueOf(value).trim();
++        return result.isEmpty() ? null : result;
++    }
++
++    private static long id(Object value) {
++        return value instanceof Number number ? number.longValue() : 0;
++    }
++
++    private static Date date(Object value) {
++        if (value == null || String.valueOf(value).isBlank()) {
++            return null;
++        }
++        try {
++            return Date.from(java.time.OffsetDateTime.parse(String.valueOf(value)).toInstant());
++        } catch (Exception e) {
++            try {
++                return Date.from(java.time.Instant.parse(String.valueOf(value)));
++            } catch (Exception other) {
++                throw new IllegalArgumentException("Invalid date " + value);
++            }
++        }
++    }
++
++    // ---------- technicians ----------
++
++    private Map<String, Object> view(Technician technician) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", technician.getId());
++        result.put("name", technician.getName());
++        result.put("phone", technician.getPhone());
++        result.put("email", technician.getEmail());
++        result.put("color", technician.getColor());
++        result.put("active", technician.getActive());
++        result.put("token", technician.getToken());
++        return result;
++    }
++
++    private List<Technician> technicians() throws StorageException {
++        Set<Long> owners = owners();
++        List<Technician> result = new ArrayList<>();
++        for (Technician technician : storage.getObjects(Technician.class, new Request(
++                new Columns.All(), new Order("name")))) {
++            if (visible(owners, technician.getUserId())) {
++                result.add(technician);
++            }
++        }
++        return result;
++    }
++
++    private Technician checkTechnician(long id) throws StorageException {
++        Technician technician = installationService.technician(id);
++        if (technician == null || !visible(owners(), technician.getUserId())) {
++            throw notFound();
++        }
++        return technician;
++    }
++
++    @GET
++    @Path("technicians")
++    public List<Map<String, Object>> technicianList() throws StorageException {
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Technician technician : technicians()) {
++            result.add(view(technician));
++        }
++        return result;
++    }
++
++    private static void read(Technician technician, Map<String, Object> body) {
++        String name = text(body.get("name"));
++        if (name == null) {
++            throw new IllegalArgumentException("The technician needs a name");
++        }
++        technician.setName(name);
++        technician.setPhone(text(body.get("phone")));
++        technician.setEmail(text(body.get("email")));
++        technician.setColor(text(body.get("color")));
++        technician.setActive(!Boolean.FALSE.equals(body.get("active")));
++    }
++
++    @POST
++    @Path("technicians")
++    public Map<String, Object> addTechnician(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Technician technician = new Technician();
++        read(technician, body);
++        technician.setUserId(getUserId());
++        technician.setToken(InstallationService.newToken());
++        technician.setId(storage.addObject(technician, new Request(new Columns.Exclude("id"))));
++        return view(technician);
++    }
++
++    @PUT
++    @Path("technicians/{id}")
++    public Map<String, Object> updateTechnician(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Technician technician = checkTechnician(id);
++        read(technician, body);
++        if (Boolean.TRUE.equals(body.get("newToken"))) {
++            technician.setToken(InstallationService.newToken());
++        }
++        storage.updateObject(technician, new Request(
++                new Columns.Exclude("id", "userId"), new Condition.Equals("id", id)));
++        return view(technician);
++    }
++
++    @DELETE
++    @Path("technicians/{id}")
++    public Response removeTechnician(@PathParam("id") long id) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        checkTechnician(id);
++        storage.removeObject(Technician.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    // ---------- stock ----------
++
++    private Map<String, Object> view(StockItem item, Map<Long, String> technicianNames) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", item.getId());
++        result.put("type", item.getType());
++        result.put("model", item.getModel());
++        result.put("serial", item.getSerial());
++        result.put("status", item.getStatus());
++        result.put("technicianId", item.getTechnicianId());
++        result.put("technicianName", technicianNames.get(item.getTechnicianId()));
++        result.put("deviceId", item.getDeviceId());
++        result.put("workOrderId", item.getWorkOrderId());
++        result.put("notes", item.getNotes());
++        result.put("updatedAt", item.getUpdatedAt());
++        return result;
++    }
++
++    private Map<Long, String> technicianNames() throws StorageException {
++        Map<Long, String> result = new LinkedHashMap<>();
++        for (Technician technician : technicians()) {
++            result.put(technician.getId(), technician.getName());
++        }
++        return result;
++    }
++
++    @GET
++    @Path("stock")
++    public List<Map<String, Object>> stock() throws StorageException {
++        Set<Long> owners = owners();
++        Map<Long, String> names = technicianNames();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (StockItem item : storage.getObjects(StockItem.class, new Request(
++                new Columns.All(), new Order("serial")))) {
++            if (visible(owners, item.getUserId())) {
++                result.add(view(item, names));
++            }
++        }
++        return result;
++    }
++
++    private StockItem checkItem(long id) throws StorageException {
++        StockItem item = storage.getObject(StockItem.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (item == null || !visible(owners(), item.getUserId())) {
++            throw notFound();
++        }
++        return item;
++    }
++
++    private void read(StockItem item, Map<String, Object> body) throws StorageException {
++        String serial = text(body.get("serial"));
++        if (serial == null) {
++            throw new IllegalArgumentException("The equipment needs a serial number or IMEI");
++        }
++        serial = serial.replaceAll("\\s", "");
++        StockItem existing = storage.getObject(StockItem.class, new Request(
++                new Columns.All(), new Condition.Equals("serial", serial)));
++        if (existing != null && existing.getId() != item.getId()) {
++            throw new IllegalArgumentException("Serial already registered: " + serial);
++        }
++        item.setSerial(serial);
++        String type = text(body.get("type"));
++        item.setType(type != null ? type.toLowerCase(Locale.ROOT) : "gps");
++        item.setModel(text(body.get("model")));
++        item.setNotes(text(body.get("notes")));
++        long technicianId = id(body.get("technicianId"));
++        if (technicianId > 0) {
++            checkTechnician(technicianId);
++        }
++        item.setTechnicianId(technicianId);
++        String status = text(body.get("status"));
++        if (status == null || !InstallationService.STOCK_STATUSES.contains(status)) {
++            status = technicianId > 0 ? InstallationService.TECHNICIAN : InstallationService.STOCK;
++        }
++        if (InstallationService.STOCK.equals(status) && technicianId > 0) {
++            status = InstallationService.TECHNICIAN;
++        }
++        if (InstallationService.TECHNICIAN.equals(status) && technicianId == 0) {
++            status = InstallationService.STOCK;
++        }
++        item.setStatus(status);
++        item.setUpdatedAt(new Date());
++    }
++
++    @POST
++    @Path("stock")
++    public Map<String, Object> addItem(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        StockItem item = new StockItem();
++        read(item, body);
++        item.setUserId(getUserId());
++        item.setId(storage.addObject(item, new Request(new Columns.Exclude("id"))));
++        return view(item, technicianNames());
++    }
++
++    @PUT
++    @Path("stock/{id}")
++    public Map<String, Object> updateItem(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        StockItem item = checkItem(id);
++        boolean locked = InstallationService.RESERVED.equals(item.getStatus())
++                || InstallationService.INSTALLED.equals(item.getStatus());
++        String previousStatus = item.getStatus();
++        long previousOrder = item.getWorkOrderId();
++        read(item, body);
++        if (locked && !body.containsKey("status")) {
++            item.setStatus(previousStatus);
++        }
++        item.setWorkOrderId(InstallationService.RESERVED.equals(item.getStatus()) ? previousOrder : 0);
++        storage.updateObject(item, new Request(new Columns.Exclude("id", "userId"), new Condition.Equals("id", id)));
++        return view(item, technicianNames());
++    }
++
++    @DELETE
++    @Path("stock/{id}")
++    public Response removeItem(@PathParam("id") long id) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        checkItem(id);
++        storage.removeObject(StockItem.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    /** CSV with header: type, model, serial (or imei), notes; existing serials are skipped */
++    @POST
++    @Path("stock/import")
++    public Map<String, Object> importStock(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        String csv = text(body.get("csv"));
++        if (csv == null) {
++            throw new IllegalArgumentException("Empty CSV");
++        }
++        String[] lines = csv.replace("\r", "").split("\n");
++        String separator = lines[0].contains(";") ? ";" : ",";
++        String[] header = lines[0].toLowerCase(Locale.ROOT).split(separator, -1);
++        int created = 0;
++        List<String> errors = new ArrayList<>();
++        for (int i = 1; i < lines.length; i++) {
++            if (lines[i].isBlank()) {
++                continue;
++            }
++            String[] values = lines[i].split(separator, -1);
++            Map<String, Object> row = new LinkedHashMap<>();
++            for (int j = 0; j < header.length && j < values.length; j++) {
++                String key = header[j].trim().replaceAll("[^a-z]", "");
++                String value = values[j].trim();
++                switch (key) {
++                    case "tipo", "type" -> row.put("type", value);
++                    case "modelo", "model" -> row.put("model", value);
++                    case "serie", "serial", "imei", "numero" -> row.put("serial", value);
++                    case "notas", "notes" -> row.put("notes", value);
++                    default -> {
++                    }
++                }
++            }
++            try {
++                StockItem item = new StockItem();
++                read(item, row);
++                item.setUserId(getUserId());
++                item.setId(storage.addObject(item, new Request(new Columns.Exclude("id"))));
++                created += 1;
++            } catch (RuntimeException e) {
++                errors.add("Line " + (i + 1) + ": " + e.getMessage());
++            }
++        }
++        return Map.of("created", created, "errors", errors);
++    }
++
++    // ---------- work orders ----------
++
++    private WorkOrder checkOrder(long id) throws StorageException {
++        WorkOrder order = installationService.order(id);
++        if (order == null || !visible(owners(), order.getUserId())) {
++            throw notFound();
++        }
++        return order;
++    }
++
++    @GET
++    @Path("orders")
++    public List<Map<String, Object>> orders(
++            @QueryParam("from") String from, @QueryParam("to") String to,
++            @QueryParam("status") String status, @QueryParam("technicianId") long technicianId)
++            throws StorageException {
++        Set<Long> owners = owners();
++        Date start = from != null ? date(from) : null;
++        Date end = to != null ? date(to) : null;
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (WorkOrder order : storage.getObjects(WorkOrder.class, new Request(
++                new Columns.All(), new Order("scheduledAt")))) {
++            if (!visible(owners, order.getUserId())
++                    || status != null && !status.isEmpty() && !status.equals(order.getStatus())
++                    || technicianId > 0 && order.getTechnicianId() != technicianId) {
++                continue;
++            }
++            Date scheduled = order.getScheduledAt();
++            if (start != null && (scheduled == null || scheduled.before(start))
++                    || end != null && (scheduled == null || scheduled.after(end))) {
++                continue;
++            }
++            result.add(installationService.view(order, false));
++        }
++        return result;
++    }
++
++    @GET
++    @Path("orders/{id}")
++    public Map<String, Object> order(@PathParam("id") long id) throws StorageException {
++        return installationService.view(checkOrder(id), true);
++    }
++
++    private List<Long> ids(Object value) {
++        List<Long> result = new ArrayList<>();
++        if (value instanceof List<?> list) {
++            list.forEach(item -> {
++                if (item instanceof Number number) {
++                    result.add(number.longValue());
++                }
++            });
++        }
++        return result;
++    }
++
++    private void read(WorkOrder order, Map<String, Object> body) throws StorageException {
++        String type = text(body.get("type"));
++        order.setType(type != null && InstallationService.TYPES.contains(type) ? type : "installation");
++        long clientId = id(body.get("clientId"));
++        if (clientId > 0) {
++            if (!visible(owners(), clientId)) {
++                throw new WebApplicationException(Response.Status.FORBIDDEN);
++            }
++            User client = storage.getObject(User.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", clientId)));
++            if (client == null) {
++                throw new IllegalArgumentException("Unknown client");
++            }
++            if (text(body.get("clientName")) == null) {
++                body.put("clientName", client.getName());
++            }
++        }
++        order.setClientId(clientId);
++        String clientName = text(body.get("clientName"));
++        if (clientName == null) {
++            throw new IllegalArgumentException("The order needs a client");
++        }
++        order.setClientName(clientName);
++        order.setContactName(text(body.get("contactName")));
++        order.setContactPhone(text(body.get("contactPhone")));
++        order.setAddress(text(body.get("address")));
++        order.setLatitude(body.get("latitude") instanceof Number number ? number.doubleValue() : 0);
++        order.setLongitude(body.get("longitude") instanceof Number number ? number.doubleValue() : 0);
++        long technicianId = id(body.get("technicianId"));
++        if (technicianId > 0) {
++            checkTechnician(technicianId);
++        }
++        order.setTechnicianId(technicianId);
++        order.setScheduledAt(date(body.get("scheduledAt")));
++        int duration = (int) id(body.get("duration"));
++        order.setDuration(duration > 0 ? Math.min(duration, 24 * 60) : 60);
++        String plate = text(body.get("plate"));
++        order.setPlate(plate != null ? plate.toUpperCase(Locale.ROOT) : null);
++        order.setVehicle(text(body.get("vehicle")));
++        order.setNotes(text(body.get("notes")));
++        if (body.containsKey("uniqueId")) {
++            String uniqueId = text(body.get("uniqueId"));
++            order.setUniqueId(uniqueId != null ? uniqueId.replaceAll("\\s", "") : null);
++        }
++        order.setTicketId(id(body.get("ticketId")));
++    }
++
++    @POST
++    @Path("orders")
++    public Map<String, Object> addOrder(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        WorkOrder order = new WorkOrder();
++        read(order, body);
++        order.setUserId(getUserId());
++        order.setStatus(InstallationService.SCHEDULED);
++        order.setToken(InstallationService.newToken());
++        order.setCreatedAt(new Date());
++        order.setId(storage.addObject(order, new Request(new Columns.Exclude("id"))));
++        try {
++            installationService.reserve(order, ids(body.get("itemIds")), owners());
++        } catch (RuntimeException e) {
++            installationService.release(order);
++            storage.removeObject(WorkOrder.class, new Request(new Condition.Equals("id", order.getId())));
++            throw e;
++        }
++        return installationService.view(order, true);
++    }
++
++    @PUT
++    @Path("orders/{id}")
++    public Map<String, Object> updateOrder(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        WorkOrder order = checkOrder(id);
++        if (InstallationService.COMPLETED.equals(order.getStatus())) {
++            throw new IllegalArgumentException("A completed order cannot be changed");
++        }
++        read(order, body);
++        String status = text(body.get("status"));
++        if (InstallationService.CANCELLED.equals(status) || InstallationService.SCHEDULED.equals(status)) {
++            order.setStatus(status);
++        }
++        storage.updateObject(order, new Request(new Columns.Exclude("id", "userId", "token", "createdAt"),
++                new Condition.Equals("id", id)));
++        if (InstallationService.CANCELLED.equals(order.getStatus())) {
++            installationService.release(order);
++        } else if (body.containsKey("itemIds")) {
++            installationService.reserve(order, ids(body.get("itemIds")), owners());
++        }
++        return installationService.view(order, true);
++    }
++
++    @DELETE
++    @Path("orders/{id}")
++    public Response removeOrder(@PathParam("id") long id) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        WorkOrder order = checkOrder(id);
++        if (InstallationService.COMPLETED.equals(order.getStatus()) && permissionsService.notAdmin(getUserId())) {
++            throw new IllegalArgumentException("A completed order is part of the history");
++        }
++        if (!InstallationService.COMPLETED.equals(order.getStatus())) {
++            installationService.release(order);
++        }
++        installationService.removePhotos(order);
++        storage.removeObject(WorkOrder.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    @GET
++    @Path("orders/{id}/photos/{photoId}")
++    @Produces({"image/jpeg", "image/png", "image/webp"})
++    public Response photo(@PathParam("id") long id, @PathParam("photoId") long photoId) throws Exception {
++        WorkOrder order = checkOrder(id);
++        WorkOrderPhoto photo = installationService.photo(order, photoId);
++        if (photo == null) {
++            throw notFound();
++        }
++        return Response.ok(installationService.read(photo), InstallationService.mime(photo)).build();
++    }
++
++    /** counts for the dashboard: orders by status today and this week, equipment by status */
++    @GET
++    @Path("summary")
++    public Map<String, Object> summary() throws StorageException {
++        Set<Long> owners = owners();
++        Map<String, Integer> orders = new LinkedHashMap<>();
++        InstallationService.STATUSES.forEach(status -> orders.put(status, 0));
++        int today = 0;
++        java.time.LocalDate now = java.time.LocalDate.now();
++        for (WorkOrder order : storage.getObjects(WorkOrder.class, new Request(new Columns.All()))) {
++            if (!visible(owners, order.getUserId())) {
++                continue;
++            }
++            orders.merge(order.getStatus(), 1, Integer::sum);
++            if (order.getScheduledAt() != null && order.getScheduledAt().toInstant()
++                    .atZone(java.time.ZoneId.systemDefault()).toLocalDate().equals(now)) {
++                today += 1;
++            }
++        }
++        Map<String, Integer> stock = new LinkedHashMap<>();
++        InstallationService.STOCK_STATUSES.forEach(status -> stock.put(status, 0));
++        for (StockItem item : storage.getObjects(StockItem.class, new Request(new Columns.All()))) {
++            if (visible(owners, item.getUserId())) {
++                stock.merge(item.getStatus(), 1, Integer::sum);
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("orders", orders);
++        result.put("today", today);
++        result.put("stock", stock);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/InstallerResource.java b/src/main/java/org/traccar/api/resource/InstallerResource.java
+new file mode 100644
+index 0000000..663dfbd
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/InstallerResource.java
+@@ -0,0 +1,264 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.annotation.security.PermitAll;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.installations.InstallationService;
++import org.traccar.model.Server;
++import org.traccar.model.StockItem;
++import org.traccar.model.Technician;
++import org.traccar.model.WorkOrder;
++import org.traccar.model.WorkOrderPhoto;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Panel of the installer, opened with his private link (no account needed): his agenda, the details of each
++ * visit, status, equipment and IMEI, checklist, photos, signal test and the client signature. Also the public
++ * installation report of a completed order.
++ */
++@Path("installer")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class InstallerResource extends BaseResource {
++
++    private static final long PAST_MILLIS = 3 * 86_400_000L;
++
++    @Inject
++    private InstallationService installationService;
++
++    private static WebApplicationException notFound() {
++        return new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++    }
++
++    private Technician technician(String token) throws StorageException {
++        Technician technician = installationService.technicianByToken(token);
++        if (technician == null) {
++            throw notFound();
++        }
++        return technician;
++    }
++
++    private WorkOrder order(String token, long id) throws StorageException {
++        Technician technician = technician(token);
++        WorkOrder order = installationService.order(id);
++        if (order == null || order.getTechnicianId() != technician.getId()) {
++            throw notFound();
++        }
++        return order;
++    }
++
++    private static Double number(Object value) {
++        return value instanceof Number number ? number.doubleValue() : null;
++    }
++
++    /** open orders of the technician and the ones he closed in the last days */
++    @GET
++    @PermitAll
++    @Path("{token}")
++    public Map<String, Object> agenda(@PathParam("token") String token) throws StorageException {
++        Technician technician = technician(token);
++        long since = System.currentTimeMillis() - PAST_MILLIS;
++        List<Map<String, Object>> orders = new ArrayList<>();
++        for (WorkOrder order : storage.getObjects(WorkOrder.class, new Request(
++                new Columns.All(), new Condition.Equals("technicianId", technician.getId()),
++                new Order("scheduledAt")))) {
++            boolean closed = InstallationService.COMPLETED.equals(order.getStatus())
++                    || InstallationService.CANCELLED.equals(order.getStatus());
++            Long closedAt = order.getCompletedAt() != null ? order.getCompletedAt().getTime()
++                    : order.getScheduledAt() != null ? order.getScheduledAt().getTime() : null;
++            if (!closed || closedAt != null && closedAt > since) {
++                Map<String, Object> view = installationService.view(order, false);
++                view.put("photoCount", installationService.photos(order.getId()).size());
++                orders.add(view);
++            }
++        }
++        List<Map<String, Object>> stock = new ArrayList<>();
++        for (StockItem item : storage.getObjects(StockItem.class, new Request(
++                new Columns.All(), new Condition.Equals("technicianId", technician.getId())))) {
++            if (InstallationService.TECHNICIAN.equals(item.getStatus())
++                    || InstallationService.RESERVED.equals(item.getStatus())) {
++                Map<String, Object> view = new LinkedHashMap<>();
++                view.put("id", item.getId());
++                view.put("type", item.getType());
++                view.put("model", item.getModel());
++                view.put("serial", item.getSerial());
++                view.put("status", item.getStatus());
++                stock.add(view);
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("name", technician.getName());
++        result.put("orders", orders);
++        result.put("stock", stock);
++        result.put("checklist", InstallationService.CHECKLIST);
++        return result;
++    }
++
++    private Map<String, Object> detail(WorkOrder order) throws StorageException {
++        Map<String, Object> view = installationService.view(order, true);
++        view.remove("userId");
++        return view;
++    }
++
++    @GET
++    @PermitAll
++    @Path("{token}/orders/{id}")
++    public Map<String, Object> get(@PathParam("token") String token, @PathParam("id") long id)
++            throws StorageException {
++        return detail(order(token, id));
++    }
++
++    @POST
++    @PermitAll
++    @Path("{token}/orders/{id}/status")
++    public Map<String, Object> status(
++            @PathParam("token") String token, @PathParam("id") long id, Map<String, Object> body) throws Exception {
++        WorkOrder order = order(token, id);
++        installationService.advance(order, String.valueOf(body.get("status")),
++                number(body.get("latitude")), number(body.get("longitude")));
++        return detail(order);
++    }
++
++    @PUT
++    @PermitAll
++    @Path("{token}/orders/{id}")
++    public Map<String, Object> fill(
++            @PathParam("token") String token, @PathParam("id") long id, Map<String, Object> body) throws Exception {
++        WorkOrder order = order(token, id);
++        installationService.fill(order, body);
++        return detail(order);
++    }
++
++    @POST
++    @PermitAll
++    @Path("{token}/orders/{id}/photos")
++    public Map<String, Object> addPhoto(
++            @PathParam("token") String token, @PathParam("id") long id, Map<String, Object> body) throws Exception {
++        WorkOrder order = order(token, id);
++        if (InstallationService.COMPLETED.equals(order.getStatus())
++                || InstallationService.CANCELLED.equals(order.getStatus())) {
++            throw new IllegalArgumentException("The order is closed");
++        }
++        Object category = body.get("category");
++        installationService.addPhoto(order, "photo", category != null ? String.valueOf(category) : null,
++                body.get("data"), number(body.get("latitude")), number(body.get("longitude")));
++        return detail(order);
++    }
++
++    @DELETE
++    @PermitAll
++    @Path("{token}/orders/{id}/photos/{photoId}")
++    public Map<String, Object> removePhoto(
++            @PathParam("token") String token, @PathParam("id") long id, @PathParam("photoId") long photoId)
++            throws Exception {
++        WorkOrder order = order(token, id);
++        WorkOrderPhoto photo = installationService.photo(order, photoId);
++        if (photo == null || !"photo".equals(photo.getKind())) {
++            throw notFound();
++        }
++        installationService.removePhoto(order, photo);
++        return detail(order);
++    }
++
++    @GET
++    @PermitAll
++    @Path("{token}/orders/{id}/photos/{photoId}")
++    @Produces({"image/jpeg", "image/png", "image/webp"})
++    public Response photo(
++            @PathParam("token") String token, @PathParam("id") long id, @PathParam("photoId") long photoId)
++            throws Exception {
++        WorkOrderPhoto photo = installationService.photo(order(token, id), photoId);
++        if (photo == null) {
++            throw notFound();
++        }
++        return Response.ok(installationService.read(photo), InstallationService.mime(photo)).build();
++    }
++
++    @GET
++    @PermitAll
++    @Path("{token}/orders/{id}/signal")
++    public Map<String, Object> signal(@PathParam("token") String token, @PathParam("id") long id)
++            throws StorageException {
++        return installationService.signal(order(token, id));
++    }
++
++    @POST
++    @PermitAll
++    @Path("{token}/orders/{id}/complete")
++    public Map<String, Object> complete(
++            @PathParam("token") String token, @PathParam("id") long id, Map<String, Object> body) throws Exception {
++        WorkOrder order = order(token, id);
++        installationService.fill(order, body);
++        installationService.complete(order, body);
++        return detail(order);
++    }
++
++    // ---------- installation report ----------
++
++    private WorkOrder completed(String token) throws StorageException {
++        WorkOrder order = installationService.orderByToken(token);
++        if (order == null || !InstallationService.COMPLETED.equals(order.getStatus())) {
++            throw notFound();
++        }
++        return order;
++    }
++
++    @GET
++    @PermitAll
++    @Path("acta/{token}")
++    public Map<String, Object> report(@PathParam("token") String token) throws StorageException {
++        Map<String, Object> view = detail(completed(token));
++        view.remove("token");
++        view.remove("technicianPhone");
++        Server server = storage.getObject(Server.class, new Request(new Columns.All()));
++        view.put("company", server.getString("title"));
++        return view;
++    }
++
++    @GET
++    @PermitAll
++    @Path("acta/{token}/photos/{photoId}")
++    @Produces({"image/jpeg", "image/png", "image/webp"})
++    public Response reportPhoto(@PathParam("token") String token, @PathParam("photoId") long photoId)
++            throws Exception {
++        WorkOrderPhoto photo = installationService.photo(completed(token), photoId);
++        if (photo == null) {
++            throw notFound();
++        }
++        return Response.ok(installationService.read(photo), InstallationService.mime(photo)).build();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/SupportResource.java b/src/main/java/org/traccar/api/resource/SupportResource.java
+new file mode 100644
+index 0000000..8e28b65
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/SupportResource.java
+@@ -0,0 +1,373 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.installations.InstallationService;
++import org.traccar.model.Device;
++import org.traccar.model.Technician;
++import org.traccar.model.Ticket;
++import org.traccar.model.TicketMessage;
++import org.traccar.model.User;
++import org.traccar.model.WorkOrder;
++import org.traccar.plans.PlanService;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Support tickets: any user opens and follows its tickets; the support team (administrators and managers with the
++ * installations module) answers, adds internal notes, changes status and priority and sends a technician.
++ */
++@Path("support")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class SupportResource extends BaseResource {
++
++    public static final List<String> STATUSES = List.of("open", "inProgress", "waiting", "resolved", "closed");
++    public static final List<String> CATEGORIES = List.of(
++            "noSignal", "damage", "installation", "app", "billing", "other");
++    public static final List<String> PRIORITIES = List.of("low", "normal", "high", "urgent");
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    @Inject
++    private PlanService planService;
++
++    @Inject
++    private InstallationService installationService;
++
++    private boolean admin() throws StorageException {
++        return !permissionsService.notAdmin(getUserId());
++    }
++
++    /** administrators, and managers whose plan includes installations, handle the tickets of their accounts */
++    private boolean handler() throws StorageException {
++        if (admin()) {
++            return true;
++        }
++        User user = permissionsService.getUser(getUserId());
++        return user.getUserLimit() != 0 && planService.getModules(getUserId()).contains("installations");
++    }
++
++    private Set<Long> handled() throws StorageException {
++        if (admin()) {
++            return null;
++        }
++        Set<Long> result = new HashSet<>(hierarchyService.getDescendants(getUserId()));
++        result.add(getUserId());
++        return result;
++    }
++
++    private Ticket check(long id) throws StorageException {
++        Ticket ticket = storage.getObject(Ticket.class, new Request(new Columns.All(), new Condition.Equals("id", id)));
++        if (ticket == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        if (ticket.getUserId() != getUserId()) {
++            Set<Long> handled = handled();
++            if (!handler() || handled != null && !handled.contains(ticket.getUserId())) {
++                throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++            }
++        }
++        return ticket;
++    }
++
++    private void checkHandler(Ticket ticket) throws StorageException {
++        Set<Long> handled = handled();
++        if (!handler() || handled != null && !handled.contains(ticket.getUserId())) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++    }
++
++    private static String text(Object value) {
++        if (value == null) {
++            return null;
++        }
++        String result = String.valueOf(value).trim();
++        return result.isEmpty() ? null : result;
++    }
++
++    private Map<String, Object> view(Ticket ticket, Map<Long, User> users) throws StorageException {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", ticket.getId());
++        result.put("userId", ticket.getUserId());
++        User user = users.computeIfAbsent(ticket.getUserId(), id -> {
++            try {
++                return storage.getObject(User.class, new Request(new Columns.All(), new Condition.Equals("id", id)));
++            } catch (StorageException e) {
++                return null;
++            }
++        });
++        result.put("userName", user != null ? user.getName() : null);
++        result.put("userPhone", user != null ? user.getPhone() : null);
++        result.put("subject", ticket.getSubject());
++        result.put("description", ticket.getDescription());
++        result.put("category", ticket.getCategory());
++        result.put("priority", ticket.getPriority());
++        result.put("status", ticket.getStatus());
++        result.put("deviceId", ticket.getDeviceId());
++        result.put("workOrderId", ticket.getWorkOrderId());
++        result.put("createdAt", ticket.getCreatedAt());
++        result.put("updatedAt", ticket.getUpdatedAt());
++        return result;
++    }
++
++    @GET
++    @Path("tickets")
++    public List<Map<String, Object>> tickets(@QueryParam("status") String status) throws StorageException {
++        boolean handler = handler();
++        Set<Long> handled = handler ? handled() : Set.of(getUserId());
++        Map<Long, User> users = new HashMap<>();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Ticket ticket : storage.getObjects(Ticket.class, new Request(new Columns.All()))) {
++            boolean visible = ticket.getUserId() == getUserId()
++                    || handled == null || handled.contains(ticket.getUserId());
++            if (visible && (status == null || status.isEmpty() || status.equals(ticket.getStatus()))) {
++                result.add(view(ticket, users));
++            }
++        }
++        result.sort(Comparator.comparing((Map<String, Object> item) -> (Date) item.get("updatedAt"),
++                Comparator.nullsLast(Comparator.naturalOrder())).reversed());
++        return result;
++    }
++
++    @POST
++    @Path("tickets")
++    public Map<String, Object> add(Map<String, Object> body) throws Exception {
++        String subject = text(body.get("subject"));
++        if (subject == null) {
++            throw new IllegalArgumentException("The ticket needs a subject");
++        }
++        Ticket ticket = new Ticket();
++        ticket.setUserId(getUserId());
++        ticket.setSubject(subject.length() > 250 ? subject.substring(0, 250) : subject);
++        String description = text(body.get("description"));
++        ticket.setDescription(description != null && description.length() > 3900
++                ? description.substring(0, 3900) : description);
++        String category = text(body.get("category"));
++        ticket.setCategory((category != null && CATEGORIES.contains(category)) ? category : "other");
++        String priority = text(body.get("priority"));
++        ticket.setPriority((priority != null && PRIORITIES.contains(priority)) ? priority : "normal");
++        long deviceId = body.get("deviceId") instanceof Number number ? number.longValue() : 0;
++        if (deviceId > 0 && FleetUtil.devices(storage, permissionsService, getUserId()).stream()
++                .noneMatch(device -> device.getId() == deviceId)) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++        ticket.setDeviceId(deviceId);
++        ticket.setStatus("open");
++        Date now = new Date();
++        ticket.setCreatedAt(now);
++        ticket.setUpdatedAt(now);
++        ticket.setId(storage.addObject(ticket, new Request(new Columns.Exclude("id"))));
++        return view(ticket, new HashMap<>());
++    }
++
++    @GET
++    @Path("tickets/{id}")
++    public Map<String, Object> get(@PathParam("id") long id) throws StorageException {
++        Ticket ticket = check(id);
++        boolean team = ticket.getUserId() != getUserId() || handler();
++        Map<String, Object> result = view(ticket, new HashMap<>());
++        List<Map<String, Object>> messages = new ArrayList<>();
++        for (TicketMessage message : storage.getObjects(TicketMessage.class, new Request(
++                new Columns.All(), new Condition.Equals("ticketId", id), new Order("time")))) {
++            if (message.getInternal() && !team) {
++                continue;
++            }
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("id", message.getId());
++            item.put("author", message.getAuthor());
++            item.put("mine", message.getUserId() == getUserId());
++            item.put("fromClient", message.getUserId() == ticket.getUserId());
++            item.put("text", message.getText());
++            item.put("time", message.getTime());
++            item.put("internal", message.getInternal());
++            messages.add(item);
++        }
++        result.put("messages", messages);
++        if (ticket.getDeviceId() > 0) {
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", ticket.getDeviceId())));
++            result.put("deviceName", device != null ? device.getName() : null);
++            result.put("deviceLastUpdate", device != null ? device.getLastUpdate() : null);
++        }
++        if (ticket.getWorkOrderId() > 0) {
++            WorkOrder order = installationService.order(ticket.getWorkOrderId());
++            if (order != null) {
++                result.put("workOrderStatus", order.getStatus());
++                result.put("workOrderScheduledAt", order.getScheduledAt());
++            }
++        }
++        result.put("canHandle", ticket.getUserId() != getUserId() ? true : handler() && admin());
++        return result;
++    }
++
++    private void touch(Ticket ticket, String status) throws StorageException {
++        if (status != null) {
++            ticket.setStatus(status);
++        }
++        ticket.setUpdatedAt(new Date());
++        storage.updateObject(ticket, new Request(new Columns.Include("status", "priority", "updatedAt", "workOrderId"),
++                new Condition.Equals("id", ticket.getId())));
++    }
++
++    @POST
++    @Path("tickets/{id}/messages")
++    public Map<String, Object> message(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        Ticket ticket = check(id);
++        String text = text(body.get("text"));
++        if (text == null) {
++            throw new IllegalArgumentException("Empty message");
++        }
++        boolean fromClient = ticket.getUserId() == getUserId();
++        boolean internal = !fromClient && Boolean.TRUE.equals(body.get("internal"));
++        User user = permissionsService.getUser(getUserId());
++        TicketMessage message = new TicketMessage();
++        message.setTicketId(id);
++        message.setUserId(getUserId());
++        message.setAuthor(user.getName());
++        message.setText(text.length() > 3900 ? text.substring(0, 3900) : text);
++        message.setTime(new Date());
++        message.setInternal(internal);
++        message.setId(storage.addObject(message, new Request(new Columns.Exclude("id"))));
++        String status = null;
++        if (fromClient && "waiting".equals(ticket.getStatus()) || "resolved".equals(ticket.getStatus())) {
++            status = "open";
++        } else if (!fromClient && !internal && "open".equals(ticket.getStatus())) {
++            status = "inProgress";
++        }
++        touch(ticket, status);
++        return get(id);
++    }
++
++    @PUT
++    @Path("tickets/{id}")
++    public Map<String, Object> update(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        Ticket ticket = check(id);
++        String status = text(body.get("status"));
++        if (ticket.getUserId() == getUserId() && !handler()) {
++            if (!"closed".equals(status)) {
++                throw new WebApplicationException(Response.Status.FORBIDDEN);
++            }
++        } else {
++            checkHandler(ticket);
++            String priority = text(body.get("priority"));
++            if (priority != null && PRIORITIES.contains(priority)) {
++                ticket.setPriority(priority);
++            }
++        }
++        touch(ticket, (status != null && STATUSES.contains(status)) ? status : null);
++        return get(id);
++    }
++
++    /** only administrators delete tickets */
++    @jakarta.ws.rs.DELETE
++    @Path("tickets/{id}")
++    public Response remove(@PathParam("id") long id) throws Exception {
++        if (!admin()) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++        check(id);
++        storage.removeObject(Ticket.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    /** sends a technician: creates a support work order for the client of the ticket */
++    @POST
++    @Path("tickets/{id}/order")
++    public Map<String, Object> order(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        Ticket ticket = check(id);
++        checkHandler(ticket);
++        if (ticket.getWorkOrderId() > 0) {
++            throw new IllegalArgumentException("The ticket already has a work order");
++        }
++        User client = storage.getObject(User.class, new Request(
++                new Columns.All(), new Condition.Equals("id", ticket.getUserId())));
++        WorkOrder order = new WorkOrder();
++        order.setUserId(getUserId());
++        order.setClientId(ticket.getUserId());
++        order.setClientName(client != null ? client.getName() : "Cliente");
++        order.setContactName(client != null ? client.getName() : null);
++        order.setContactPhone(client != null ? client.getPhone() : null);
++        Object type = body.get("type");
++        order.setType(type != null && InstallationService.TYPES.contains(type) ? String.valueOf(type) : "support");
++        order.setStatus(InstallationService.SCHEDULED);
++        long technicianId = body.get("technicianId") instanceof Number number ? number.longValue() : 0;
++        if (technicianId > 0) {
++            Technician technician = installationService.technician(technicianId);
++            Set<Long> owners = installationService.owners(getUserId(), admin());
++            if (technician == null || owners != null && !owners.contains(technician.getUserId())) {
++                throw new IllegalArgumentException("Unknown technician");
++            }
++        }
++        order.setTechnicianId(technicianId);
++        Object scheduled = body.get("scheduledAt");
++        if (scheduled != null) {
++            order.setScheduledAt(Date.from(java.time.Instant.parse(String.valueOf(scheduled))));
++        }
++        order.setDuration(60);
++        order.setAddress(text(body.get("address")));
++        if (ticket.getDeviceId() > 0) {
++            Device device = storage.getObject(Device.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", ticket.getDeviceId())));
++            if (device != null) {
++                order.setDeviceId(device.getId());
++                order.setUniqueId(device.getUniqueId());
++                String plate = device.getString("plate");
++                order.setPlate(plate != null ? plate : device.getName());
++            }
++        }
++        order.setNotes("Ticket #" + ticket.getId() + ": " + ticket.getSubject()
++                + (ticket.getDescription() != null ? "\n" + ticket.getDescription() : ""));
++        if (order.getNotes().length() > 1990) {
++            order.setNotes(order.getNotes().substring(0, 1990));
++        }
++        order.setTicketId(ticket.getId());
++        order.setToken(InstallationService.newToken());
++        order.setCreatedAt(new Date());
++        order.setId(storage.addObject(order, new Request(new Columns.Exclude("id"))));
++        ticket.setWorkOrderId(order.getId());
++        touch(ticket, "inProgress");
++        return get(id);
++    }
++
++}
+diff --git a/src/main/java/org/traccar/installations/InstallationService.java b/src/main/java/org/traccar/installations/InstallationService.java
+new file mode 100644
+index 0000000..6d65b7e
+--- /dev/null
++++ b/src/main/java/org/traccar/installations/InstallationService.java
+@@ -0,0 +1,555 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.installations;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Device;
++import org.traccar.model.Permission;
++import org.traccar.model.Position;
++import org.traccar.model.Sim;
++import org.traccar.model.StockItem;
++import org.traccar.model.Technician;
++import org.traccar.model.Ticket;
++import org.traccar.model.TicketMessage;
++import org.traccar.model.User;
++import org.traccar.model.WorkOrder;
++import org.traccar.model.WorkOrderPhoto;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.Paths;
++import java.security.SecureRandom;
++import java.util.ArrayList;
++import java.util.Base64;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Installation and support work: work orders and their life cycle (scheduled, on the way, in progress, completed),
++ * photos and signature of the installation report, equipment reserved and installed, the device created when a
++ * tracker is installed and the signal test the technician runs before leaving.
++ */
++@Singleton
++public class InstallationService {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(InstallationService.class);
++
++    public static final String SCHEDULED = "scheduled";
++    public static final String EN_ROUTE = "enRoute";
++    public static final String IN_PROGRESS = "inProgress";
++    public static final String COMPLETED = "completed";
++    public static final String CANCELLED = "cancelled";
++    public static final List<String> STATUSES = List.of(SCHEDULED, EN_ROUTE, IN_PROGRESS, COMPLETED, CANCELLED);
++    public static final List<String> TYPES = List.of("installation", "maintenance", "removal", "inspection", "support");
++
++    public static final String STOCK = "stock";
++    public static final String TECHNICIAN = "technician";
++    public static final String RESERVED = "reserved";
++    public static final String INSTALLED = "installed";
++    public static final String FAULTY = "faulty";
++    public static final String RETIRED = "retired";
++    public static final List<String> STOCK_STATUSES = List.of(STOCK, TECHNICIAN, RESERVED, INSTALLED, FAULTY, RETIRED);
++
++    public static final List<String> CHECKLIST = List.of(
++            "power", "gpsFix", "gsmSignal", "ignition", "engineStop", "panicButton", "wiring", "clientTrained");
++
++    private static final int MAX_IMAGE = 5 * 1024 * 1024;
++    private static final long SIGNAL_MILLIS = 15 * 60_000L;
++    private static final SecureRandom RANDOM = new SecureRandom();
++
++    private final Config config;
++    private final Storage storage;
++    private final CacheManager cacheManager;
++    private final HierarchyService hierarchyService;
++
++    @Inject
++    public InstallationService(
++            Config config, Storage storage, CacheManager cacheManager, HierarchyService hierarchyService) {
++        this.config = config;
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++        this.hierarchyService = hierarchyService;
++    }
++
++    public static String newToken() {
++        byte[] bytes = new byte[18];
++        RANDOM.nextBytes(bytes);
++        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
++    }
++
++    /** accounts whose installation data the user sees: its own and those below it, or {@code null} for all */
++    public Set<Long> owners(long userId, boolean admin) throws StorageException {
++        if (admin) {
++            return null;
++        }
++        Set<Long> owners = new HashSet<>(hierarchyService.getDescendants(userId));
++        owners.add(userId);
++        return owners;
++    }
++
++    public Technician technicianByToken(String token) throws StorageException {
++        if (token == null || token.length() < 16) {
++            return null;
++        }
++        Technician technician = storage.getObject(Technician.class, new Request(
++                new Columns.All(), new Condition.Equals("token", token)));
++        return technician != null && technician.getActive() ? technician : null;
++    }
++
++    public WorkOrder orderByToken(String token) throws StorageException {
++        if (token == null || token.length() < 16) {
++            return null;
++        }
++        return storage.getObject(WorkOrder.class, new Request(
++                new Columns.All(), new Condition.Equals("token", token)));
++    }
++
++    public WorkOrder order(long id) throws StorageException {
++        return storage.getObject(WorkOrder.class, new Request(new Columns.All(), new Condition.Equals("id", id)));
++    }
++
++    public Technician technician(long id) throws StorageException {
++        return id > 0 ? storage.getObject(Technician.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id))) : null;
++    }
++
++    public List<WorkOrderPhoto> photos(long orderId) throws StorageException {
++        return new ArrayList<>(storage.getObjects(WorkOrderPhoto.class, new Request(
++                new Columns.All(), new Condition.Equals("workOrderId", orderId), new Order("time"))));
++    }
++
++    public List<StockItem> orderItems(long orderId) throws StorageException {
++        return new ArrayList<>(storage.getObjects(StockItem.class, new Request(
++                new Columns.All(), new Condition.Equals("workOrderId", orderId))));
++    }
++
++    public Map<String, Object> view(WorkOrder order, boolean full) throws StorageException {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", order.getId());
++        result.put("type", order.getType());
++        result.put("status", order.getStatus());
++        result.put("clientId", order.getClientId());
++        result.put("clientName", order.getClientName());
++        result.put("contactName", order.getContactName());
++        result.put("contactPhone", order.getContactPhone());
++        result.put("address", order.getAddress());
++        result.put("latitude", order.getLatitude());
++        result.put("longitude", order.getLongitude());
++        result.put("scheduledAt", order.getScheduledAt());
++        result.put("duration", order.getDuration());
++        result.put("plate", order.getPlate());
++        result.put("vehicle", order.getVehicle());
++        result.put("notes", order.getNotes());
++        result.put("techNotes", order.getTechNotes());
++        result.put("uniqueId", order.getUniqueId());
++        result.put("iccid", order.getIccid());
++        result.put("deviceId", order.getDeviceId());
++        result.put("ticketId", order.getTicketId());
++        result.put("enRouteAt", order.getEnRouteAt());
++        result.put("startedAt", order.getStartedAt());
++        result.put("completedAt", order.getCompletedAt());
++        result.put("signatureName", order.getSignatureName());
++        result.put("checklist", order.getAttributes().getOrDefault("checklist", Map.of()));
++        result.put("odometer", order.getAttributes().get("odometer"));
++        result.put("technicianId", order.getTechnicianId());
++        Technician technician = technician(order.getTechnicianId());
++        result.put("technicianName", technician != null ? technician.getName() : null);
++        result.put("technicianPhone", technician != null ? technician.getPhone() : null);
++        List<Map<String, Object>> items = new ArrayList<>();
++        for (StockItem item : orderItems(order.getId())) {
++            Map<String, Object> view = new LinkedHashMap<>();
++            view.put("id", item.getId());
++            view.put("type", item.getType());
++            view.put("model", item.getModel());
++            view.put("serial", item.getSerial());
++            view.put("status", item.getStatus());
++            items.add(view);
++        }
++        result.put("items", items);
++        if (full) {
++            result.put("userId", order.getUserId());
++            result.put("token", order.getToken());
++            result.put("createdAt", order.getCreatedAt());
++            List<Map<String, Object>> photos = new ArrayList<>();
++            for (WorkOrderPhoto photo : photos(order.getId())) {
++                Map<String, Object> view = new LinkedHashMap<>();
++                view.put("id", photo.getId());
++                view.put("kind", photo.getKind());
++                view.put("category", photo.getCategory());
++                view.put("time", photo.getTime());
++                view.put("latitude", photo.getLatitude());
++                view.put("longitude", photo.getLongitude());
++                photos.add(view);
++            }
++            result.put("photos", photos);
++        }
++        return result;
++    }
++
++    // ---------- equipment ----------
++
++    /** reserves the given inventory items for the order and frees the ones no longer listed */
++    public void reserve(WorkOrder order, List<Long> itemIds, Set<Long> owners) throws StorageException {
++        Date now = new Date();
++        for (StockItem item : orderItems(order.getId())) {
++            if (!itemIds.contains(item.getId()) && RESERVED.equals(item.getStatus())) {
++                item.setStatus(item.getTechnicianId() > 0 ? TECHNICIAN : STOCK);
++                item.setWorkOrderId(0);
++                item.setUpdatedAt(now);
++                saveItem(item);
++            }
++        }
++        for (long id : itemIds) {
++            StockItem item = storage.getObject(StockItem.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", id)));
++            if (item == null || owners != null && !owners.contains(item.getUserId())) {
++                throw new IllegalArgumentException("Unknown equipment " + id);
++            }
++            if (item.getWorkOrderId() == order.getId()) {
++                continue;
++            }
++            if (!STOCK.equals(item.getStatus()) && !TECHNICIAN.equals(item.getStatus())) {
++                throw new IllegalArgumentException("Equipment " + item.getSerial() + " is not available");
++            }
++            item.setStatus(RESERVED);
++            item.setWorkOrderId(order.getId());
++            if (order.getTechnicianId() > 0) {
++                item.setTechnicianId(order.getTechnicianId());
++            }
++            item.setUpdatedAt(now);
++            saveItem(item);
++        }
++    }
++
++    private void saveItem(StockItem item) throws StorageException {
++        storage.updateObject(item, new Request(new Columns.Exclude("id", "userId"),
++                new Condition.Equals("id", item.getId())));
++    }
++
++    /** a cancelled order gives its reserved equipment back */
++    public void release(WorkOrder order) throws StorageException {
++        reserve(order, List.of(), null);
++    }
++
++    // ---------- life cycle ----------
++
++    private void save(WorkOrder order) throws StorageException {
++        storage.updateObject(order, new Request(new Columns.Exclude("id", "userId", "token", "createdAt"),
++                new Condition.Equals("id", order.getId())));
++    }
++
++    private static void checkOpen(WorkOrder order) {
++        if (COMPLETED.equals(order.getStatus()) || CANCELLED.equals(order.getStatus())) {
++            throw new IllegalArgumentException("The order is closed");
++        }
++    }
++
++    /** on the way or started by the technician, with where he was */
++    public void advance(WorkOrder order, String status, Double latitude, Double longitude) throws StorageException {
++        checkOpen(order);
++        Date now = new Date();
++        if (EN_ROUTE.equals(status)) {
++            order.setEnRouteAt(now);
++        } else if (IN_PROGRESS.equals(status)) {
++            order.setStartedAt(now);
++            if (latitude != null && longitude != null && order.getLatitude() == 0 && order.getLongitude() == 0) {
++                order.setLatitude(latitude);
++                order.setLongitude(longitude);
++            }
++        } else {
++            throw new IllegalArgumentException("Invalid status");
++        }
++        order.setStatus(status);
++        save(order);
++    }
++
++    private static String text(Object value) {
++        if (value == null) {
++            return null;
++        }
++        String result = String.valueOf(value).trim();
++        return result.isEmpty() ? null : result;
++    }
++
++    /** details the technician fills during the visit */
++    public void fill(WorkOrder order, Map<String, Object> body) throws StorageException {
++        checkOpen(order);
++        if (body.containsKey("techNotes")) {
++            order.setTechNotes(text(body.get("techNotes")));
++        }
++        if (body.containsKey("uniqueId")) {
++            String uniqueId = text(body.get("uniqueId"));
++            order.setUniqueId(uniqueId != null ? uniqueId.replaceAll("\\s", "") : null);
++        }
++        if (body.containsKey("iccid")) {
++            String iccid = text(body.get("iccid"));
++            order.setIccid(iccid != null ? iccid.replaceAll("[^0-9A-Za-z]", "") : null);
++        }
++        if (body.containsKey("plate") && text(body.get("plate")) != null) {
++            order.setPlate(text(body.get("plate")).toUpperCase());
++        }
++        if (body.containsKey("odometer")) {
++            order.set("odometer", text(body.get("odometer")));
++        }
++        if (body.get("checklist") instanceof Map<?, ?> checklist) {
++            Map<String, Object> clean = new LinkedHashMap<>();
++            for (String key : CHECKLIST) {
++                if (checklist.containsKey(key)) {
++                    clean.put(key, Boolean.TRUE.equals(checklist.get(key)));
++                }
++            }
++            order.getAttributes().put("checklist", clean);
++        }
++        save(order);
++    }
++
++    private Path mediaRoot() {
++        return Paths.get(config.getString(Keys.MEDIA_PATH));
++    }
++
++    public WorkOrderPhoto addPhoto(
++            WorkOrder order, String kind, String category, Object value, Double latitude, Double longitude)
++            throws IOException, StorageException {
++        if (!(value instanceof String data) || !data.matches("(?s)^data:image/(jpeg|jpg|png|webp);base64,.+")) {
++            throw new IllegalArgumentException("The photo must be a JPEG, PNG or WebP image");
++        }
++        int comma = data.indexOf(',');
++        String extension = data.startsWith("data:image/png") ? "png"
++                : data.startsWith("data:image/webp") ? "webp" : "jpg";
++        byte[] bytes = Base64.getMimeDecoder().decode(data.substring(comma + 1));
++        if (bytes.length > MAX_IMAGE) {
++            throw new IllegalArgumentException("Image too large (max 5 MB)");
++        }
++        String name = String.format("installations/%d/%s-%s.%s", order.getId(), kind, newToken(), extension);
++        Path file = mediaRoot().resolve(name);
++        Files.createDirectories(file.getParent());
++        Files.write(file, bytes);
++        WorkOrderPhoto photo = new WorkOrderPhoto();
++        photo.setWorkOrderId(order.getId());
++        photo.setKind(kind);
++        photo.setCategory(category != null ? category : "other");
++        photo.setFile(name);
++        photo.setTime(new Date());
++        if (latitude != null && longitude != null) {
++            photo.setLatitude(latitude);
++            photo.setLongitude(longitude);
++        }
++        photo.setId(storage.addObject(photo, new Request(new Columns.Exclude("id"))));
++        return photo;
++    }
++
++    public WorkOrderPhoto photo(WorkOrder order, long photoId) throws StorageException {
++        WorkOrderPhoto photo = storage.getObject(WorkOrderPhoto.class, new Request(
++                new Columns.All(), new Condition.Equals("id", photoId)));
++        return photo != null && photo.getWorkOrderId() == order.getId() ? photo : null;
++    }
++
++    public byte[] read(WorkOrderPhoto photo) throws IOException {
++        Path root = mediaRoot().toAbsolutePath().normalize();
++        Path file = root.resolve(photo.getFile()).normalize();
++        if (!file.startsWith(root)) {
++            throw new IOException("Invalid path");
++        }
++        return Files.readAllBytes(file);
++    }
++
++    public static String mime(WorkOrderPhoto photo) {
++        return photo.getFile().endsWith(".png") ? "image/png"
++                : photo.getFile().endsWith(".webp") ? "image/webp" : "image/jpeg";
++    }
++
++    public void removePhoto(WorkOrder order, WorkOrderPhoto photo) throws StorageException {
++        checkOpen(order);
++        storage.removeObject(WorkOrderPhoto.class, new Request(new Condition.Equals("id", photo.getId())));
++        try {
++            Files.deleteIfExists(mediaRoot().resolve(photo.getFile()));
++        } catch (IOException e) {
++            LOGGER.warn("Photo file not deleted", e);
++        }
++    }
++
++    /** deletes the photo files of an order being deleted (the rows go with the order) */
++    public void removePhotos(WorkOrder order) throws StorageException {
++        for (WorkOrderPhoto photo : photos(order.getId())) {
++            try {
++                Files.deleteIfExists(mediaRoot().resolve(photo.getFile()));
++            } catch (IOException e) {
++                LOGGER.warn("Photo file not deleted", e);
++            }
++        }
++    }
++
++    private Device deviceByUniqueId(String uniqueId) throws StorageException {
++        return storage.getObject(Device.class, new Request(
++                new Columns.All(), new Condition.Equals("uniqueId", uniqueId)));
++    }
++
++    private void link(long userId, long deviceId) throws Exception {
++        if (userId <= 0) {
++            return;
++        }
++        try {
++            storage.addPermission(new Permission(User.class, userId, Device.class, deviceId));
++            cacheManager.invalidatePermission(true, User.class, userId, Device.class, deviceId, true);
++        } catch (StorageException e) {
++            LOGGER.debug("Permission already present", e);
++        }
++    }
++
++    /**
++     * Closes the order: the client signature is stored, a tracker being installed becomes a device of the client
++     * (created when its IMEI is new), the equipment is marked installed (or back in stock for a removal), the SIM
++     * follows the device and a ticket that originated the visit is resolved.
++     */
++    public synchronized WorkOrder complete(WorkOrder order, Map<String, Object> body) throws Exception {
++        checkOpen(order);
++        String signatureName = text(body.get("signatureName"));
++        if (signatureName == null || body.get("signature") == null) {
++            throw new IllegalArgumentException("The client signature and name are required");
++        }
++        Double latitude = body.get("latitude") instanceof Number number ? number.doubleValue() : null;
++        Double longitude = body.get("longitude") instanceof Number number ? number.doubleValue() : null;
++        addPhoto(order, "signature", "signature", body.get("signature"), latitude, longitude);
++        Date now = new Date();
++        String uniqueId = order.getUniqueId();
++        boolean removal = "removal".equals(order.getType());
++        if (uniqueId != null && !removal) {
++            Device device = deviceByUniqueId(uniqueId);
++            if (device == null) {
++                device = new Device();
++                device.setName(order.getPlate() != null ? order.getPlate()
++                        : order.getVehicle() != null ? order.getVehicle() : "Unidad " + uniqueId);
++                device.setUniqueId(uniqueId);
++                if (order.getPlate() != null) {
++                    device.set("plate", order.getPlate());
++                }
++                device.setId(storage.addObject(device, new Request(new Columns.Exclude("id"))));
++                LOGGER.info("Device {} created by work order {}", uniqueId, order.getId());
++            }
++            link(order.getUserId(), device.getId());
++            link(order.getClientId(), device.getId());
++            order.setDeviceId(device.getId());
++        }
++        for (StockItem item : orderItems(order.getId())) {
++            item.setStatus(removal ? STOCK : INSTALLED);
++            item.setDeviceId(removal ? 0 : order.getDeviceId());
++            item.setUpdatedAt(now);
++            saveItem(item);
++        }
++        if (uniqueId != null) {
++            StockItem tracker = storage.getObject(StockItem.class, new Request(
++                    new Columns.All(), new Condition.Equals("serial", uniqueId)));
++            if (tracker != null && tracker.getWorkOrderId() != order.getId()) {
++                tracker.setStatus(removal ? STOCK : INSTALLED);
++                tracker.setDeviceId(removal ? 0 : order.getDeviceId());
++                tracker.setWorkOrderId(order.getId());
++                tracker.setUpdatedAt(now);
++                saveItem(tracker);
++            }
++        }
++        if (order.getIccid() != null && order.getDeviceId() > 0 && !removal) {
++            Sim sim = storage.getObject(Sim.class, new Request(
++                    new Columns.All(), new Condition.Equals("iccid", order.getIccid())));
++            if (sim != null) {
++                sim.setDeviceId(order.getDeviceId());
++                sim.setStatus("active");
++                if (sim.getActivatedAt() == null) {
++                    sim.setActivatedAt(now);
++                }
++                storage.updateObject(sim, new Request(new Columns.Include("deviceId", "status", "activatedAt"),
++                        new Condition.Equals("id", sim.getId())));
++            }
++        }
++        order.setSignatureName(signatureName);
++        order.setStatus(COMPLETED);
++        order.setCompletedAt(now);
++        if (order.getStartedAt() == null) {
++            order.setStartedAt(now);
++        }
++        save(order);
++        if (order.getTicketId() > 0) {
++            Ticket ticket = storage.getObject(Ticket.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", order.getTicketId())));
++            if (ticket != null) {
++                ticket.setStatus("resolved");
++                ticket.setUpdatedAt(now);
++                storage.updateObject(ticket, new Request(new Columns.Include("status", "updatedAt"),
++                        new Condition.Equals("id", ticket.getId())));
++                TicketMessage message = new TicketMessage();
++                message.setTicketId(ticket.getId());
++                message.setAuthor("Sistema");
++                message.setText("Visita técnica completada (orden #" + order.getId() + ").");
++                message.setTime(now);
++                message.setId(storage.addObject(message, new Request(new Columns.Exclude("id"))));
++            }
++        }
++        return order;
++    }
++
++    /** whether the tracker of the order is reporting, so the technician can check it before leaving */
++    public Map<String, Object> signal(WorkOrder order) throws StorageException {
++        Map<String, Object> result = new LinkedHashMap<>();
++        Device device = order.getDeviceId() > 0 ? storage.getObject(Device.class, new Request(
++                new Columns.All(), new Condition.Equals("id", order.getDeviceId())))
++                : order.getUniqueId() != null ? deviceByUniqueId(order.getUniqueId()) : null;
++        result.put("known", device != null);
++        if (device == null) {
++            result.put("reporting", false);
++            return result;
++        }
++        result.put("lastUpdate", device.getLastUpdate());
++        result.put("reporting", device.getLastUpdate() != null
++                && System.currentTimeMillis() - device.getLastUpdate().getTime() < SIGNAL_MILLIS);
++        Position position = cacheManager.getPosition(device.getId());
++        if (position == null && device.getPositionId() > 0) {
++            position = storage.getObject(Position.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", device.getPositionId())));
++        }
++        if (position != null) {
++            Map<String, Object> view = new HashMap<>();
++            view.put("fixTime", position.getFixTime());
++            view.put("latitude", position.getLatitude());
++            view.put("longitude", position.getLongitude());
++            view.put("valid", position.getValid());
++            view.put("speed", UnitsConverter.kphFromKnots(position.getSpeed()));
++            view.put("ignition", position.getAttributes().get(Position.KEY_IGNITION));
++            view.put("satellites", position.getAttributes().get(Position.KEY_SATELLITES));
++            view.put("power", position.getAttributes().get(Position.KEY_POWER));
++            view.put("rssi", position.getAttributes().get(Position.KEY_RSSI));
++            result.put("position", view);
++        }
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/StockItem.java b/src/main/java/org/traccar/model/StockItem.java
+new file mode 100644
+index 0000000..d45442c
+--- /dev/null
++++ b/src/main/java/org/traccar/model/StockItem.java
+@@ -0,0 +1,126 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Piece of equipment of the inventory (tracker, camera, sensor, relay...) and where it is.
++ */
++@StorageName("tc_stock_items")
++public class StockItem extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String type;
++
++    public String getType() {
++        return type;
++    }
++
++    public void setType(String type) {
++        this.type = type;
++    }
++
++    private String model;
++
++    public String getModel() {
++        return model;
++    }
++
++    public void setModel(String model) {
++        this.model = model;
++    }
++
++    private String serial;
++
++    public String getSerial() {
++        return serial;
++    }
++
++    public void setSerial(String serial) {
++        this.serial = serial;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private long technicianId;
++
++    public long getTechnicianId() {
++        return technicianId;
++    }
++
++    public void setTechnicianId(long technicianId) {
++        this.technicianId = technicianId;
++    }
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private long workOrderId;
++
++    public long getWorkOrderId() {
++        return workOrderId;
++    }
++
++    public void setWorkOrderId(long workOrderId) {
++        this.workOrderId = workOrderId;
++    }
++
++    private String notes;
++
++    public String getNotes() {
++        return notes;
++    }
++
++    public void setNotes(String notes) {
++        this.notes = notes;
++    }
++
++    private Date updatedAt;
++
++    public Date getUpdatedAt() {
++        return updatedAt;
++    }
++
++    public void setUpdatedAt(Date updatedAt) {
++        this.updatedAt = updatedAt;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Technician.java b/src/main/java/org/traccar/model/Technician.java
+new file mode 100644
+index 0000000..8d218aa
+--- /dev/null
++++ b/src/main/java/org/traccar/model/Technician.java
+@@ -0,0 +1,94 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++/**
++ * Field technician (installer) with the private link to his panel.
++ */
++@StorageName("tc_technicians")
++public class Technician extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private String phone;
++
++    public String getPhone() {
++        return phone;
++    }
++
++    public void setPhone(String phone) {
++        this.phone = phone;
++    }
++
++    private String email;
++
++    public String getEmail() {
++        return email;
++    }
++
++    public void setEmail(String email) {
++        this.email = email;
++    }
++
++    private String token;
++
++    public String getToken() {
++        return token;
++    }
++
++    public void setToken(String token) {
++        this.token = token;
++    }
++
++    private String color;
++
++    public String getColor() {
++        return color;
++    }
++
++    public void setColor(String color) {
++        this.color = color;
++    }
++
++    private boolean active;
++
++    public boolean getActive() {
++        return active;
++    }
++
++    public void setActive(boolean active) {
++        this.active = active;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Ticket.java b/src/main/java/org/traccar/model/Ticket.java
+new file mode 100644
+index 0000000..e54cd98
+--- /dev/null
++++ b/src/main/java/org/traccar/model/Ticket.java
+@@ -0,0 +1,126 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Support ticket opened by a client.
++ */
++@StorageName("tc_tickets")
++public class Ticket extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String subject;
++
++    public String getSubject() {
++        return subject;
++    }
++
++    public void setSubject(String subject) {
++        this.subject = subject;
++    }
++
++    private String description;
++
++    public String getDescription() {
++        return description;
++    }
++
++    public void setDescription(String description) {
++        this.description = description;
++    }
++
++    private String category;
++
++    public String getCategory() {
++        return category;
++    }
++
++    public void setCategory(String category) {
++        this.category = category;
++    }
++
++    private String priority;
++
++    public String getPriority() {
++        return priority;
++    }
++
++    public void setPriority(String priority) {
++        this.priority = priority;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private long workOrderId;
++
++    public long getWorkOrderId() {
++        return workOrderId;
++    }
++
++    public void setWorkOrderId(long workOrderId) {
++        this.workOrderId = workOrderId;
++    }
++
++    private Date createdAt;
++
++    public Date getCreatedAt() {
++        return createdAt;
++    }
++
++    public void setCreatedAt(Date createdAt) {
++        this.createdAt = createdAt;
++    }
++
++    private Date updatedAt;
++
++    public Date getUpdatedAt() {
++        return updatedAt;
++    }
++
++    public void setUpdatedAt(Date updatedAt) {
++        this.updatedAt = updatedAt;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/TicketMessage.java b/src/main/java/org/traccar/model/TicketMessage.java
+new file mode 100644
+index 0000000..1b37580
+--- /dev/null
++++ b/src/main/java/org/traccar/model/TicketMessage.java
+@@ -0,0 +1,86 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Message of a support ticket; internal notes are only seen by the support team.
++ */
++@StorageName("tc_ticket_messages")
++public class TicketMessage extends ExtendedModel {
++
++    private long ticketId;
++
++    public long getTicketId() {
++        return ticketId;
++    }
++
++    public void setTicketId(long ticketId) {
++        this.ticketId = ticketId;
++    }
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String author;
++
++    public String getAuthor() {
++        return author;
++    }
++
++    public void setAuthor(String author) {
++        this.author = author;
++    }
++
++    private String text;
++
++    public String getText() {
++        return text;
++    }
++
++    public void setText(String text) {
++        this.text = text;
++    }
++
++    private Date time;
++
++    public Date getTime() {
++        return time;
++    }
++
++    public void setTime(Date time) {
++        this.time = time;
++    }
++
++    private boolean internal;
++
++    public boolean getInternal() {
++        return internal;
++    }
++
++    public void setInternal(boolean internal) {
++        this.internal = internal;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/WorkOrder.java b/src/main/java/org/traccar/model/WorkOrder.java
+new file mode 100644
+index 0000000..70ec135
+--- /dev/null
++++ b/src/main/java/org/traccar/model/WorkOrder.java
+@@ -0,0 +1,296 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Installation, maintenance, removal or support visit done by a technician at a client.
++ */
++@StorageName("tc_work_orders")
++public class WorkOrder extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private long clientId;
++
++    public long getClientId() {
++        return clientId;
++    }
++
++    public void setClientId(long clientId) {
++        this.clientId = clientId;
++    }
++
++    private String clientName;
++
++    public String getClientName() {
++        return clientName;
++    }
++
++    public void setClientName(String clientName) {
++        this.clientName = clientName;
++    }
++
++    private String contactName;
++
++    public String getContactName() {
++        return contactName;
++    }
++
++    public void setContactName(String contactName) {
++        this.contactName = contactName;
++    }
++
++    private String contactPhone;
++
++    public String getContactPhone() {
++        return contactPhone;
++    }
++
++    public void setContactPhone(String contactPhone) {
++        this.contactPhone = contactPhone;
++    }
++
++    private String address;
++
++    public String getAddress() {
++        return address;
++    }
++
++    public void setAddress(String address) {
++        this.address = address;
++    }
++
++    private double latitude;
++
++    public double getLatitude() {
++        return latitude;
++    }
++
++    public void setLatitude(double latitude) {
++        this.latitude = latitude;
++    }
++
++    private double longitude;
++
++    public double getLongitude() {
++        return longitude;
++    }
++
++    public void setLongitude(double longitude) {
++        this.longitude = longitude;
++    }
++
++    private String type;
++
++    public String getType() {
++        return type;
++    }
++
++    public void setType(String type) {
++        this.type = type;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private long technicianId;
++
++    public long getTechnicianId() {
++        return technicianId;
++    }
++
++    public void setTechnicianId(long technicianId) {
++        this.technicianId = technicianId;
++    }
++
++    private Date scheduledAt;
++
++    public Date getScheduledAt() {
++        return scheduledAt;
++    }
++
++    public void setScheduledAt(Date scheduledAt) {
++        this.scheduledAt = scheduledAt;
++    }
++
++    private int duration;
++
++    public int getDuration() {
++        return duration;
++    }
++
++    public void setDuration(int duration) {
++        this.duration = duration;
++    }
++
++    private String plate;
++
++    public String getPlate() {
++        return plate;
++    }
++
++    public void setPlate(String plate) {
++        this.plate = plate;
++    }
++
++    private String vehicle;
++
++    public String getVehicle() {
++        return vehicle;
++    }
++
++    public void setVehicle(String vehicle) {
++        this.vehicle = vehicle;
++    }
++
++    private String notes;
++
++    public String getNotes() {
++        return notes;
++    }
++
++    public void setNotes(String notes) {
++        this.notes = notes;
++    }
++
++    private String techNotes;
++
++    public String getTechNotes() {
++        return techNotes;
++    }
++
++    public void setTechNotes(String techNotes) {
++        this.techNotes = techNotes;
++    }
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private long ticketId;
++
++    public long getTicketId() {
++        return ticketId;
++    }
++
++    public void setTicketId(long ticketId) {
++        this.ticketId = ticketId;
++    }
++
++    private String token;
++
++    public String getToken() {
++        return token;
++    }
++
++    public void setToken(String token) {
++        this.token = token;
++    }
++
++    private String uniqueId;
++
++    public String getUniqueId() {
++        return uniqueId;
++    }
++
++    public void setUniqueId(String uniqueId) {
++        this.uniqueId = uniqueId;
++    }
++
++    private String iccid;
++
++    public String getIccid() {
++        return iccid;
++    }
++
++    public void setIccid(String iccid) {
++        this.iccid = iccid;
++    }
++
++    private Date enRouteAt;
++
++    public Date getEnRouteAt() {
++        return enRouteAt;
++    }
++
++    public void setEnRouteAt(Date enRouteAt) {
++        this.enRouteAt = enRouteAt;
++    }
++
++    private Date startedAt;
++
++    public Date getStartedAt() {
++        return startedAt;
++    }
++
++    public void setStartedAt(Date startedAt) {
++        this.startedAt = startedAt;
++    }
++
++    private Date completedAt;
++
++    public Date getCompletedAt() {
++        return completedAt;
++    }
++
++    public void setCompletedAt(Date completedAt) {
++        this.completedAt = completedAt;
++    }
++
++    private String signatureName;
++
++    public String getSignatureName() {
++        return signatureName;
++    }
++
++    public void setSignatureName(String signatureName) {
++        this.signatureName = signatureName;
++    }
++
++    private Date createdAt;
++
++    public Date getCreatedAt() {
++        return createdAt;
++    }
++
++    public void setCreatedAt(Date createdAt) {
++        this.createdAt = createdAt;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/WorkOrderPhoto.java b/src/main/java/org/traccar/model/WorkOrderPhoto.java
+new file mode 100644
+index 0000000..1eef525
+--- /dev/null
++++ b/src/main/java/org/traccar/model/WorkOrderPhoto.java
+@@ -0,0 +1,96 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Photo (or the client signature) taken by the technician during a work order.
++ */
++@StorageName("tc_work_order_photos")
++public class WorkOrderPhoto extends ExtendedModel {
++
++    private long workOrderId;
++
++    public long getWorkOrderId() {
++        return workOrderId;
++    }
++
++    public void setWorkOrderId(long workOrderId) {
++        this.workOrderId = workOrderId;
++    }
++
++    private String kind;
++
++    public String getKind() {
++        return kind;
++    }
++
++    public void setKind(String kind) {
++        this.kind = kind;
++    }
++
++    private String category;
++
++    public String getCategory() {
++        return category;
++    }
++
++    public void setCategory(String category) {
++        this.category = category;
++    }
++
++    private String file;
++
++    public String getFile() {
++        return file;
++    }
++
++    public void setFile(String file) {
++        this.file = file;
++    }
++
++    private Date time;
++
++    public Date getTime() {
++        return time;
++    }
++
++    public void setTime(Date time) {
++        this.time = time;
++    }
++
++    private double latitude;
++
++    public double getLatitude() {
++        return latitude;
++    }
++
++    public void setLatitude(double latitude) {
++        this.latitude = latitude;
++    }
++
++    private double longitude;
++
++    public double getLongitude() {
++        return longitude;
++    }
++
++    public void setLongitude(double longitude) {
++        this.longitude = longitude;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/plans/ModuleRequestFilter.java b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+index 59251fd..ec5708f 100644
+--- a/src/main/java/org/traccar/plans/ModuleRequestFilter.java
++++ b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+@@ -53,6 +53,7 @@ public class ModuleRequestFilter implements ContainerRequestFilter {
+             Map.entry("machinery", "machinery"),
+             Map.entry("sims", "sims"),
+             Map.entry("regulator", "regulator"),
++            Map.entry("installations", "installations"),
+             Map.entry("hierarchy/domains", "whitelabel"));
+ 
+     @Inject
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+index 5bb93d6..47a8abb 100644
+--- a/src/main/java/org/traccar/plans/PlanService.java
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -54,7 +54,7 @@ public class PlanService {
+     public static final List<String> MODULES = List.of(
+             "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
+             "driving", "expenses", "maintenance", "reports", "dispatch", "transit", "tpms", "assets", "agro",
+-            "deviceConfig", "machinery", "premiumMaps", "sims", "billing", "regulator", "whitelabel");
++            "deviceConfig", "machinery", "premiumMaps", "sims", "billing", "regulator", "installations", "whitelabel");
+ 
+     /** modules that existed before the catalog recorded which modules it knew */
+     private static final List<String> LEGACY_MODULES = List.of(

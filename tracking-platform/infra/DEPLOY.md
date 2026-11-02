@@ -632,3 +632,34 @@ misma moneda. Prueba primero con credenciales de prueba y un usuario comprador d
 4. Cada posición válida se envía en segundo plano; si la entidad falla se reintenta hasta 6 veces (2 s a 64 s).
    La pantalla muestra por vehículo: transmitiendo, con retraso (>5 min), con fallas, sin señal GPS (>30 min) o
    pendiente. Las cifras se reinician si se reinicia el servidor.
+
+## 27. Instalaciones y soporte técnico (parche `0034`)
+
+Módulo de plan **Instalaciones y soporte técnico** (`installations`, incluido en el plan Distribuidor). Crea las
+tablas `tc_technicians`, `tc_stock_items`, `tc_work_orders`, `tc_work_order_photos`, `tc_tickets` y
+`tc_ticket_messages`. Las fotos y firmas se guardan en `media.path` (`media/installations/<orden>/`): inclúyelo en
+los respaldos.
+
+Flujo de trabajo:
+
+1. **Técnicos**: en *Instalaciones → Técnicos* agrega a cada técnico con su celular y envíale por WhatsApp su
+   **enlace privado** (`https://tu-dominio/instalador/<token>`). No necesita cuenta ni contraseña; si el celular se
+   pierde, genera un **nuevo enlace** y el anterior deja de funcionar.
+2. **Inventario**: registra los equipos (GPS por IMEI, cámaras, relés, sensores, SIM, accesorios) uno a uno o por CSV
+   (`tipo;modelo;serie`) y asígnalos al almacén o a un técnico. Estados: en almacén, con técnico, reservado,
+   instalado, con falla, de baja.
+3. **Órdenes**: crea la orden (instalación, mantenimiento, desinstalación, revisión o soporte) con cliente, contacto,
+   dirección, técnico, fecha, vehículo y los equipos a instalar (quedan reservados). La **Agenda** muestra la semana
+   por técnico; doble clic en un día crea una orden.
+4. **Panel del instalador** (celular): ve sus visitas de hoy y próximas, llama o escribe al cliente, abre la ruta en
+   Google Maps, marca *Voy en camino* e *Iniciar trabajo* (con su ubicación), registra IMEI, ICCID y odómetro,
+   completa la lista de verificación, toma fotos por categoría (se comprimen antes de subirlas), hace la **prueba de
+   señal** (si el equipo ya transmite, con satélites, encendido y voltaje), anota observaciones y recoge la **firma
+   del cliente** en la pantalla.
+5. **Cierre**: al completar, el IMEI se convierte en una **unidad nueva asignada al cliente** (nombre = placa), los
+   equipos pasan a *instalado*, la SIM (si está en el módulo SIMs) queda activa en esa unidad y se genera el **acta de
+   instalación** pública (`/acta/<token>`) con datos, verificación, fotos y firma, lista para imprimir o guardar en
+   PDF y enviarla al cliente por WhatsApp.
+6. **Soporte**: cualquier cliente abre tickets en *Soporte* (tipo, prioridad, unidad). El equipo de soporte responde,
+   deja notas internas, cambia estado/prioridad y con **Enviar técnico** crea una orden de visita; al completarla el
+   ticket queda resuelto automáticamente.

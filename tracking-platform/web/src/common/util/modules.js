@@ -23,6 +23,7 @@ export const MODULE_LABELS = {
   sims: 'moduleSims',
   billing: 'moduleBilling',
   regulator: 'moduleRegulator',
+  installations: 'moduleInstallations',
   whitelabel: 'moduleWhitelabel',
 };
 

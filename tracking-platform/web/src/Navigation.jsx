@@ -53,6 +53,10 @@ import MachineryPage from './machinery/MachineryPage';
 import SimsPage from './sims/SimsPage';
 import BillingPage from './billing/BillingPage';
 import RegulatorPage from './regulator/RegulatorPage';
+import InstallationsPage from './installations/InstallationsPage';
+import SupportPage from './installations/SupportPage';
+import InstallerPage from './installations/InstallerPage';
+import ActaPage from './installations/ActaPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -154,6 +158,8 @@ const Navigation = () => {
       <Route path="/conductor/:token" element={<DispatchDriverPage />} />
       <Route path="/entrega/:token" element={<DeliveryTrackPage />} />
       <Route path="/bus/:token" element={<DriverTransitPage />} />
+      <Route path="/instalador/:token" element={<InstallerPage />} />
+      <Route path="/acta/:token" element={<ActaPage />} />
       <Route path="/" element={<App />}>
         <Route index element={<MainPage />} />
 
@@ -176,6 +182,8 @@ const Navigation = () => {
         <Route path="sims" element={<SimsPage />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="regulator" element={<RegulatorPage />} />
+        <Route path="installations" element={<InstallationsPage />} />
+        <Route path="support" element={<SupportPage />} />
         <Route path="device-config" element={<DeviceConfigPage />} />
         <Route path="security" element={<SecurityPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
