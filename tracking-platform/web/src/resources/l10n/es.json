@@ -2811,7 +2811,7 @@
     "instGoing": "Voy en camino",
     "instStart": "Iniciar trabajo",
     "instDeviceData": "Datos del equipo",
-    "instImeiHelp": "Al cerrar la orden se crea la unidad con este IMEI para el cliente",
+    "instImeiHelp": "Al registrar el IMEI la unidad se crea para el cliente: usa «Probar ahora» para ver si ya transmite",
     "instChecklist": "Lista de verificación",
     "instPhotos": "Fotos de evidencia",
     "instPhotoOf": "Foto de",

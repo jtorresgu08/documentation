@@ -146,10 +146,10 @@ index 72ab97c..487c7f4 100644
  </databaseChangeLog>
 diff --git a/src/main/java/org/traccar/api/resource/InstallationResource.java b/src/main/java/org/traccar/api/resource/InstallationResource.java
 new file mode 100644
-index 0000000..5c083c4
+index 0000000..ead4383
 --- /dev/null
 +++ b/src/main/java/org/traccar/api/resource/InstallationResource.java
-@@ -0,0 +1,568 @@
+@@ -0,0 +1,572 @@
 +/*
 + * Licensed under the Apache License, Version 2.0 (the "License");
 + * you may not use this file except in compliance with the License.
@@ -646,6 +646,9 @@ index 0000000..5c083c4
 +        if (InstallationService.CANCELLED.equals(status) || InstallationService.SCHEDULED.equals(status)) {
 +            order.setStatus(status);
 +        }
++        if (InstallationService.CANCELLED.equals(order.getStatus())) {
++            installationService.discardDevice(order);
++        }
 +        storage.updateObject(order, new Request(new Columns.Exclude("id", "userId", "token", "createdAt"),
 +                new Condition.Equals("id", id)));
 +        if (InstallationService.CANCELLED.equals(order.getStatus())) {
@@ -666,6 +669,7 @@ index 0000000..5c083c4
 +        }
 +        if (!InstallationService.COMPLETED.equals(order.getStatus())) {
 +            installationService.release(order);
++            installationService.discardDevice(order);
 +        }
 +        installationService.removePhotos(order);
 +        storage.removeObject(WorkOrder.class, new Request(new Condition.Equals("id", id)));
@@ -1369,10 +1373,10 @@ index 0000000..8e28b65
 +}
 diff --git a/src/main/java/org/traccar/installations/InstallationService.java b/src/main/java/org/traccar/installations/InstallationService.java
 new file mode 100644
-index 0000000..6d65b7e
+index 0000000..6162804
 --- /dev/null
 +++ b/src/main/java/org/traccar/installations/InstallationService.java
-@@ -0,0 +1,555 @@
+@@ -0,0 +1,630 @@
 +/*
 + * Licensed under the Apache License, Version 2.0 (the "License");
 + * you may not use this file except in compliance with the License.
@@ -1397,6 +1401,7 @@ index 0000000..6d65b7e
 +import org.traccar.config.Keys;
 +import org.traccar.helper.UnitsConverter;
 +import org.traccar.model.Device;
++import org.traccar.model.ObjectOperation;
 +import org.traccar.model.Permission;
 +import org.traccar.model.Position;
 +import org.traccar.model.Sim;
@@ -1678,8 +1683,9 @@ index 0000000..6d65b7e
 +    }
 +
 +    /** details the technician fills during the visit */
-+    public void fill(WorkOrder order, Map<String, Object> body) throws StorageException {
++    public void fill(WorkOrder order, Map<String, Object> body) throws Exception {
 +        checkOpen(order);
++        String previousUniqueId = order.getUniqueId();
 +        if (body.containsKey("techNotes")) {
 +            order.setTechNotes(text(body.get("techNotes")));
 +        }
@@ -1706,7 +1712,91 @@ index 0000000..6d65b7e
 +            }
 +            order.getAttributes().put("checklist", clean);
 +        }
++        if (!java.util.Objects.equals(previousUniqueId, order.getUniqueId())) {
++            prepareDevice(order);
++        }
 +        save(order);
++    }
++
++    private static final String CREATED_DEVICE = "createdDeviceId";
++
++    /** whether the IMEI is free or already belongs to the account of the order (or one below it) */
++    private void checkDeviceOwner(WorkOrder order, Device device) throws StorageException {
++        if (device.getId() == order.getDeviceId()) {
++            return;
++        }
++        User owner = storage.getObject(User.class, new Request(
++                new Columns.All(), new Condition.Equals("id", order.getUserId())));
++        if (owner == null || owner.getAdministrator()) {
++            return;
++        }
++        List<Permission> links = storage.getPermissions(User.class, 0, Device.class, device.getId());
++        if (links.isEmpty()) {
++            return;
++        }
++        Set<Long> allowed = owners(order.getUserId(), false);
++        if (order.getClientId() > 0) {
++            allowed.add(order.getClientId());
++        }
++        if (links.stream().noneMatch(link -> allowed.contains(link.getOwnerId()))) {
++            throw new IllegalArgumentException("The IMEI " + device.getUniqueId() + " belongs to another account");
++        }
++    }
++
++    /** a cancelled or deleted order does not leave behind the unit its IMEI created */
++    public void discardDevice(WorkOrder order) throws Exception {
++        if (!COMPLETED.equals(order.getStatus())) {
++            removeCreatedDevice(order);
++        }
++    }
++
++    private void removeCreatedDevice(WorkOrder order) throws Exception {
++        long created = order.getLong(CREATED_DEVICE);
++        if (created > 0) {
++            storage.removeObject(Device.class, new Request(new Condition.Equals("id", created)));
++            cacheManager.invalidateObject(true, Device.class, created, ObjectOperation.DELETE);
++            order.getAttributes().remove(CREATED_DEVICE);
++            if (order.getDeviceId() == created) {
++                order.setDeviceId(0);
++            }
++            LOGGER.info("Device {} created by work order {} removed after an IMEI change", created, order.getId());
++        }
++    }
++
++    /**
++     * As soon as the technician enters the IMEI of a tracker being installed, the unit exists for the client, so the
++     * signal test shows real data during the visit. A unit created by a mistyped IMEI is removed when it is fixed.
++     */
++    private void prepareDevice(WorkOrder order) throws Exception {
++        if ("removal".equals(order.getType())) {
++            return;
++        }
++        String uniqueId = order.getUniqueId();
++        Device device = uniqueId != null ? deviceByUniqueId(uniqueId) : null;
++        if (device != null) {
++            checkDeviceOwner(order, device);
++        }
++        if (device == null || device.getId() != order.getLong(CREATED_DEVICE)) {
++            removeCreatedDevice(order);
++        }
++        if (uniqueId == null) {
++            return;
++        }
++        if (device == null) {
++            device = new Device();
++            device.setName(order.getPlate() != null ? order.getPlate()
++                    : order.getVehicle() != null ? order.getVehicle() : "Unidad " + uniqueId);
++            device.setUniqueId(uniqueId);
++            if (order.getPlate() != null) {
++                device.set("plate", order.getPlate());
++            }
++            device.setId(storage.addObject(device, new Request(new Columns.Exclude("id"))));
++            order.set(CREATED_DEVICE, device.getId());
++            LOGGER.info("Device {} created by work order {}", uniqueId, order.getId());
++        }
++        link(order.getUserId(), device.getId());
++        link(order.getClientId(), device.getId());
++        order.setDeviceId(device.getId());
 +    }
 +
 +    private Path mediaRoot() {
@@ -1821,20 +1911,9 @@ index 0000000..6d65b7e
 +        boolean removal = "removal".equals(order.getType());
 +        if (uniqueId != null && !removal) {
 +            Device device = deviceByUniqueId(uniqueId);
-+            if (device == null) {
-+                device = new Device();
-+                device.setName(order.getPlate() != null ? order.getPlate()
-+                        : order.getVehicle() != null ? order.getVehicle() : "Unidad " + uniqueId);
-+                device.setUniqueId(uniqueId);
-+                if (order.getPlate() != null) {
-+                    device.set("plate", order.getPlate());
-+                }
-+                device.setId(storage.addObject(device, new Request(new Columns.Exclude("id"))));
-+                LOGGER.info("Device {} created by work order {}", uniqueId, order.getId());
++            if (device == null || device.getId() != order.getDeviceId()) {
++                prepareDevice(order);
 +            }
-+            link(order.getUserId(), device.getId());
-+            link(order.getClientId(), device.getId());
-+            order.setDeviceId(device.getId());
 +        }
 +        for (StockItem item : orderItems(order.getId())) {
 +            item.setStatus(removal ? STOCK : INSTALLED);

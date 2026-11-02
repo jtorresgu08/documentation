@@ -68,6 +68,21 @@ def main():
     status, _ = field.req('POST', f'{base}/orders/{order["id"]}/status', {'status': 'enRoute'})
     status, detail = field.req('POST', f'{base}/orders/{order["id"]}/status', {'status': 'inProgress', 'latitude': -12.0501, 'longitude': -77.1102})
     check('on the way and started', status == 200 and detail['status'] == 'inProgress' and detail['enRouteAt'] and detail['startedAt'], detail)
+    wrong = imei[:-3] + '999'
+    status, typo = field.req('PUT', f'{base}/orders/{order["id"]}', {'uniqueId': wrong})
+    check('the unit exists as soon as the IMEI is entered', status == 200 and typo['deviceId'] > 0, typo)
+    wrong_device = typo['deviceId']
+    _, foreign = admin.req('POST', '/api/devices', {'name': f'Ajena {suffix}', 'uniqueId': f'foreign-{suffix}'})
+    _, foreign_owner = admin.req('POST', '/api/users', {'name': f'Dueño ajeno {suffix}', 'email': f'inst-f-{suffix}@test', 'password': password})
+    admin.req('POST', '/api/permissions', {'userId': foreign_owner['id'], 'deviceId': foreign['id']})
+    _, reseller_user = admin.req('POST', '/api/users', {'name': f'Distribuidor 2 {suffix}', 'email': f'inst-r-{suffix}@test', 'password': password, 'userLimit': 10, 'attributes': {'plan': 'reseller'}})
+    reseller, _ = login(f'inst-r-{suffix}@test', password)
+    _, reseller_tech = reseller.req('POST', '/api/installations/technicians', {'name': f'Técnico 2 {suffix}'})
+    _, reseller_order = reseller.req('POST', '/api/installations/orders', {'clientName': 'Cliente X', 'technicianId': reseller_tech['id'], 'scheduledAt': iso(tomorrow)})
+    reseller_base = f'/api/installer/{reseller_tech["token"]}/orders/{reseller_order["id"]}'
+    field.req('POST', f'{reseller_base}/status', {'status': 'inProgress'})
+    status, _ = field.req('PUT', reseller_base, {'uniqueId': foreign['uniqueId']})
+    check('the IMEI of another account is refused', status == 400, status)
     status, detail = field.req('PUT', f'{base}/orders/{order["id"]}', {
         'uniqueId': imei, 'iccid': '8951 1000 0000 0000 001', 'odometer': '154320',
         'checklist': {'power': True, 'gpsFix': True, 'engineStop': True, 'wiring': True, 'hack': True}, 'techNotes': 'Instalado bajo el tablero'})
@@ -86,8 +101,18 @@ def main():
     status, detail = field.req('DELETE', f'{base}/orders/{order["id"]}/photos/{extra["id"]}')
     check('photo removed by the installer', status == 200 and len(detail['photos']) == 3, len(detail.get('photos', [])))
 
+    _, devices_now = admin.req('GET', '/api/devices')
+    check('the unit of the mistyped IMEI is removed when fixed', all(d['id'] != wrong_device for d in devices_now) and detail['deviceId'] not in (0, wrong_device), detail.get('deviceId'))
     status, signal = field.req('GET', f'{base}/orders/{order["id"]}/signal')
-    check('signal test: tracker unknown before it reports', status == 200 and signal['known'] is False and signal['reporting'] is False, signal)
+    check('signal test: unit registered, waiting for data', status == 200 and signal['known'] is True and signal['reporting'] is False, signal)
+    send(imei, time.time(), -12.0502, -77.1101, 0, ignition='true', sat=11, power=12.6)
+    for _ in range(20):
+        _, signal = field.req('GET', f'{base}/orders/{order["id"]}/signal')
+        if signal.get('position'):
+            break
+        time.sleep(0.5)
+    check('signal test during the installation: reporting with satellites, ignition and voltage', signal['reporting'] is True and signal['position']['satellites'] == 11
+          and signal['position']['ignition'] is True and abs(signal['position']['power'] - 12.6) < 0.01, signal)
     status, _ = field.req('POST', f'{base}/orders/{order["id"]}/complete', {'signatureName': 'Rosa Pérez'})
     check('closing needs the client signature', status == 400, status)
     status, done = field.req('POST', f'{base}/orders/{order["id"]}/complete', {'signatureName': 'Rosa Pérez', 'signature': JPEG, 'latitude': -12.05, 'longitude': -77.11})
@@ -97,13 +122,7 @@ def main():
     _, devices = client.req('GET', '/api/devices')
     created = next((d for d in devices if d['uniqueId'] == imei), {})
     check('the client sees its new unit named by plate', created.get('name') == 'B7X-123' and created['attributes'].get('plate') == 'B7X-123', created)
-    send(imei, time.time(), -12.0502, -77.1101, 0, ignition='true', sat=11, power=12.6)
-    for _ in range(20):
-        _, signal = field.req('GET', f'{base}/orders/{order["id"]}/signal')
-        if signal.get('position'):
-            break
-        time.sleep(0.5)
-    check('signal test: tracker reporting with position', signal['reporting'] is True and signal['position']['satellites'] == 11, signal)
+    check('the same unit is kept when closing', done['deviceId'] == detail['deviceId'], (done['deviceId'], detail['deviceId']))
     _, stock = admin.req('GET', '/api/installations/stock')
     states = {i['serial']: (i['status'], i['deviceId']) for i in stock}
     check('equipment marked installed in the unit', states[imei] == ('installed', done['deviceId']) and states[f'RL-{suffix}'] == ('installed', done['deviceId']), states.get(imei))
@@ -160,6 +179,14 @@ def main():
     status, _ = client.req('DELETE', f'/api/support/tickets/{ticket["id"]}')
     check('only the administrator deletes tickets', status == 403, status)
 
+    cancel_imei = f'cancel-{suffix}'
+    reseller.req('PUT', reseller_base, {'uniqueId': cancel_imei})
+    status, cancelled = reseller.req('PUT', f'/api/installations/orders/{reseller_order["id"]}', {**reseller_order, 'status': 'cancelled'})
+    _, devices_now = admin.req('GET', '/api/devices')
+    check('cancelling the order removes the unit it created', status == 200 and not any(d['uniqueId'] == cancel_imei for d in devices_now), status)
+    admin.req('DELETE', f'/api/installations/orders/{reseller_order["id"]}')
+    admin.req('DELETE', f'/api/installations/technicians/{reseller_tech["id"]}')
+    admin.req('DELETE', f'/api/devices/{foreign["id"]}')
     for item in (pending['id'], visit, order['id']):
         admin.req('DELETE', f'/api/installations/orders/{item}')
     admin.req('DELETE', f'/api/support/tickets/{ticket["id"]}')
@@ -167,7 +194,7 @@ def main():
     for item in (gps, relay, camera):
         admin.req('DELETE', f'/api/installations/stock/{item["id"]}')
     admin.req('DELETE', f'/api/devices/{done["deviceId"]}')
-    for user in (client_user, other_user, basic_user, manager_user):
+    for user in (client_user, other_user, basic_user, manager_user, foreign_owner, reseller_user):
         admin.req('DELETE', f'/api/users/{user["id"]}')
     failed = [name for name, ok in results if not ok]
     print(f'\n{len(results) - len(failed)}/{len(results)} OK')

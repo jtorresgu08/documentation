@@ -2811,7 +2811,7 @@
     "instGoing": "On my way",
     "instStart": "Start work",
     "instDeviceData": "Device data",
-    "instImeiHelp": "When closing, the unit is created with this IMEI for the client",
+    "instImeiHelp": "Entering the IMEI creates the unit for the client: use «Test now» to see if it is transmitting",
     "instChecklist": "Checklist",
     "instPhotos": "Evidence photos",
     "instPhotoOf": "Photo of",

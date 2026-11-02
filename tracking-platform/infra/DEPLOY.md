@@ -656,10 +656,13 @@ Flujo de trabajo:
    completa la lista de verificación, toma fotos por categoría (se comprimen antes de subirlas), hace la **prueba de
    señal** (si el equipo ya transmite, con satélites, encendido y voltaje), anota observaciones y recoge la **firma
    del cliente** en la pantalla.
-5. **Cierre**: al completar, el IMEI se convierte en una **unidad nueva asignada al cliente** (nombre = placa), los
-   equipos pasan a *instalado*, la SIM (si está en el módulo SIMs) queda activa en esa unidad y se genera el **acta de
+5. **Unidad desde el IMEI**: apenas el técnico registra el IMEI se crea la **unidad del cliente** (nombre = placa), así
+   la **prueba de señal** muestra datos reales durante la instalación. Si corrige un IMEI mal escrito, la unidad
+   equivocada se elimina; un IMEI que pertenece a otra cuenta se rechaza; si la orden se cancela o elimina antes de
+   cerrarse, la unidad creada se borra.
+6. **Cierre**: al completar, los equipos pasan a *instalado*, la SIM (si está en el módulo SIMs) queda activa en esa unidad y se genera el **acta de
    instalación** pública (`/acta/<token>`) con datos, verificación, fotos y firma, lista para imprimir o guardar en
    PDF y enviarla al cliente por WhatsApp.
-6. **Soporte**: cualquier cliente abre tickets en *Soporte* (tipo, prioridad, unidad). El equipo de soporte responde,
+7. **Soporte**: cualquier cliente abre tickets en *Soporte* (tipo, prioridad, unidad). El equipo de soporte responde,
    deja notas internas, cambia estado/prioridad y con **Enviar técnico** crea una orden de visita; al completarla el
    ticket queda resuelto automáticamente.
