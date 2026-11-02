@@ -664,6 +664,20 @@ Capturas: `docs/capturas/v33-login-escritorio.png`, `v33-login-error.png`, `v33-
 híbrido, visibles solo con su clave (`esriKey`, `azureMapsKey`) y en planes con ese módulo. Configuración en
 `infra/DEPLOY.md` §25; captura `docs/capturas/v34-mapas-premium.png`.
 
+## SIMs, cobranza y SUTRAN / ATU (parche `0033`)
+
+- **Gestión de SIMs** (módulo `sims`): inventario de chips por cliente y equipo, importación CSV, consumo de datos
+  informado por el operador, SIMs sobre el límite, **SIMs silenciosas** (equipo sin reportar), costo mensual y
+  disponibilidad. Con `loginLiveStats` las cifras del login salen de estos datos reales.
+- **Cobranza** (módulo `billing`): precio por unidad + cargo fijo por cliente, factura mensual automática, aviso de
+  pago, vencidas, **suspensión automática** y reactivación al pagar, pagos manuales y **Mercado Pago** (enlace de
+  pago + notificación verificada contra su API).
+- **SUTRAN / ATU** (módulo `regulator`): destinos con plantilla JSON y credencial, inscripción de vehículos, cola
+  con reintentos y panel de cumplimiento por vehículo.
+
+Configuración: `infra/DEPLOY.md` §26. Pruebas: `server/tests/test_sims.py` (20), `test_billing.py` (28, con
+Mercado Pago simulado) y `test_regulator.py` (23, con entidad simulada). Capturas `docs/capturas/v35-*.png`.
+
 ## Correspondencia con las capturas
 
 | Función de la captura | Estado |

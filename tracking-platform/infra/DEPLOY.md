@@ -578,3 +578,57 @@ fija cada proveedor y cambian; confírmalos al crear la cuenta.
 
 Las opciones «Bing Maps» que trae Traccar se mantienen ocultas salvo que se configure `bingMapsKey`; solo deben
 usarse con una cuenta empresarial de Bing vigente.
+
+## 26. Gestión de SIMs, cobranza con Mercado Pago y transmisión a SUTRAN / ATU (parche `0033`)
+
+Tres módulos nuevos de plan: **SIMs** (`sims`, plan Distribuidor), **Cobranza** (`billing`, plan Distribuidor) y
+**SUTRAN / ATU** (`regulator`, planes Profesional, Video y Distribuidor). Las tablas `tc_sims`, `tc_invoices` y
+`tc_regulator_destinations` se crean solas al arrancar.
+
+### SIMs
+
+- Menú **SIMs y conectividad**: alta manual o **Importar CSV** (`iccid;telefono;operador;apn;plan;mb;costo;consumo;estado;imei`).
+  Con el IMEI la SIM queda instalada en ese equipo y su teléfono se copia al equipo (para comandos SMS).
+- **Consumo de datos**: lo informa el operador. Exporta el CSV de su portal (`iccid;consumo`) e impórtalo, o
+  envíalo desde un script conectado a la API del operador: `POST /api/sims/usage` con `[{"iccid": "...", "usageMb": 12.5}]`.
+- **SIM silenciosa**: activa pero su equipo no reporta hace más de 24 h (cámbialo con el atributo del servidor
+  `simSilentHours`).
+- **Cifras reales en el login**: con el atributo del servidor `loginLiveStats = true` la tarjeta del login muestra
+  SIMs activas, disponibilidad de las últimas 24 h y clientes activos (cuentas con plan). Solo expone esos totales.
+
+### Cobranza
+
+1. En **Facturación → Clientes**, configura cada cliente: precio por unidad, cargo fijo, moneda, día de facturación
+   (1-28), días para pagar, días de gracia y si se suspende el acceso automáticamente.
+2. Cada hora el servidor emite las facturas del mes (una por cliente y mes, contando las unidades de ese momento),
+   marca las vencidas y, pasados los días de gracia, suspende la cuenta (los equipos siguen reportando). Al pagar se
+   reactiva sola. El administrador puede forzarlo con **Procesar cobranza ahora**.
+3. El cliente ve un aviso 5 días antes del vencimiento y en **Facturación** el botón **Pagar**.
+4. Pagos manuales (transferencia, Yape, Plin, efectivo) con número de operación, y anulación de facturas.
+
+**Mercado Pago** (pago en línea con registro automático). En `traccar.xml`:
+
+```xml
+<entry key='web.url'>https://tu-dominio</entry>
+<entry key='billing.mercadoPago.accessToken'>APP_USR-...</entry>
+```
+
+El *Access token* se obtiene en https://www.mercadopago.com.pe/developers → Tus integraciones → Credenciales de
+producción. La notificación de pago llega a `https://tu-dominio/api/billing/mercadopago/webhook`; el servidor
+siempre vuelve a consultar el pago en Mercado Pago y solo lo acepta si está aprobado, por el monto completo y en la
+misma moneda. Prueba primero con credenciales de prueba y un usuario comprador de prueba.
+
+> Las facturas de este módulo son **cobros internos**, no comprobantes electrónicos de SUNAT. Para boletas y
+> facturas electrónicas se necesita un proveedor OSE/PSE (por ejemplo Nubefact) — se puede integrar más adelante.
+
+### SUTRAN / ATU
+
+1. Regístrate ante la entidad como proveedor de servicio GPS; te entregará la **ficha técnica** (URL, credencial y
+   formato de los datos).
+2. Como administrador, en **SUTRAN / ATU → Agregar destino**: elige la entidad, pega la URL y la credencial (se
+   guarda en el servidor y nunca se vuelve a mostrar) y **ajusta la plantilla JSON al formato exacto de la ficha** —
+   las plantillas incluidas son solo de referencia. Usa **Probar conexión** para ver la respuesta de la entidad.
+3. Pon la placa en cada vehículo (atributo `plate`; para ATU también `route`) e inscríbelos con **Inscribir unidades**.
+4. Cada posición válida se envía en segundo plano; si la entidad falla se reintenta hasta 6 veces (2 s a 64 s).
+   La pantalla muestra por vehículo: transmitiendo, con retraso (>5 min), con fallas, sin señal GPS (>30 min) o
+   pendiente. Las cifras se reinician si se reinicia el servidor.

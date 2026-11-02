@@ -1,0 +1,2940 @@
+diff --git a/schema/changelog-6.10-platform.xml b/schema/changelog-6.10-platform.xml
+index acadcd3..72ab97c 100644
+--- a/schema/changelog-6.10-platform.xml
++++ b/schema/changelog-6.10-platform.xml
+@@ -459,4 +459,91 @@
+     </createTable>
+   </changeSet>
+ 
++  <changeSet author="platform" id="changelog-6.10-platform-sims-billing-regulator">
++    <createTable tableName="tc_sims">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="iccid" type="VARCHAR(32)">
++        <constraints nullable="false" />
++      </column>
++      <column name="phone" type="VARCHAR(32)" />
++      <column name="carrier" type="VARCHAR(64)" />
++      <column name="apn" type="VARCHAR(128)" />
++      <column name="planname" type="VARCHAR(128)" />
++      <column name="datalimitmb" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="usagemb" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="usagedate" type="TIMESTAMP" />
++      <column name="monthlycost" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="status" type="VARCHAR(16)" />
++      <column name="deviceid" type="INT" />
++      <column name="activatedat" type="TIMESTAMP" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++    <addUniqueConstraint tableName="tc_sims" columnNames="iccid" constraintName="uk_sims_iccid" />
++
++    <createTable tableName="tc_invoices">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="userid" type="INT" />
++      <column name="issuerid" type="INT" />
++      <column name="period" type="VARCHAR(7)">
++        <constraints nullable="false" />
++      </column>
++      <column name="units" type="INT" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="unitprice" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="fixedfee" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="amount" type="DOUBLE" defaultValueNumeric="0">
++        <constraints nullable="false" />
++      </column>
++      <column name="currency" type="VARCHAR(8)" />
++      <column name="status" type="VARCHAR(16)" />
++      <column name="issuedate" type="TIMESTAMP" />
++      <column name="duedate" type="TIMESTAMP" />
++      <column name="paiddate" type="TIMESTAMP" />
++      <column name="paymentmethod" type="VARCHAR(32)" />
++      <column name="paymentref" type="VARCHAR(128)" />
++      <column name="paymenturl" type="VARCHAR(512)" />
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++    <addUniqueConstraint tableName="tc_invoices" columnNames="userid, period" constraintName="uk_invoices_user_period" />
++
++    <createTable tableName="tc_regulator_destinations">
++      <column name="id" type="INT" autoIncrement="true">
++        <constraints primaryKey="true" />
++      </column>
++      <column name="name" type="VARCHAR(128)">
++        <constraints nullable="false" />
++      </column>
++      <column name="type" type="VARCHAR(16)" />
++      <column name="url" type="VARCHAR(512)">
++        <constraints nullable="false" />
++      </column>
++      <column name="authheader" type="VARCHAR(64)" />
++      <column name="authvalue" type="VARCHAR(1024)" />
++      <column name="template" type="VARCHAR(4000)" />
++      <column name="batch" type="BOOLEAN" defaultValueBoolean="false">
++        <constraints nullable="false" />
++      </column>
++      <column name="enabled" type="BOOLEAN" defaultValueBoolean="true">
++        <constraints nullable="false" />
++      </column>
++      <column name="attributes" type="VARCHAR(4000)" />
++    </createTable>
++  </changeSet>
++
+ </databaseChangeLog>
+diff --git a/src/main/java/org/traccar/ProcessingHandler.java b/src/main/java/org/traccar/ProcessingHandler.java
+index dd11267..340de48 100644
+--- a/src/main/java/org/traccar/ProcessingHandler.java
++++ b/src/main/java/org/traccar/ProcessingHandler.java
+@@ -54,6 +54,7 @@ import org.traccar.handler.events.DispatchEventHandler;
+ import org.traccar.handler.events.TransitEventHandler;
+ import org.traccar.handler.events.TpmsEventHandler;
+ import org.traccar.handler.events.AssetEventHandler;
++import org.traccar.handler.events.RegulatorEventHandler;
+ import org.traccar.handler.events.GeofenceOverspeedEventHandler;
+ import org.traccar.handler.events.RuleEventHandler;
+ import org.traccar.handler.events.EngineStopEventHandler;
+@@ -142,6 +143,7 @@ public class ProcessingHandler extends ChannelInboundHandlerAdapter implements B
+                 TransitEventHandler.class,
+                 TpmsEventHandler.class,
+                 AssetEventHandler.class,
++                RegulatorEventHandler.class,
+                 BehaviorEventHandler.class,
+                 FuelEventHandler.class,
+                 FuelSensorEventHandler.class,
+diff --git a/src/main/java/org/traccar/api/resource/BillingResource.java b/src/main/java/org/traccar/api/resource/BillingResource.java
+new file mode 100644
+index 0000000..525543a
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/BillingResource.java
+@@ -0,0 +1,413 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.annotation.security.PermitAll;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.QueryParam;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.billing.BillingService;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.model.Invoice;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.User;
++import org.traccar.plans.PlanService;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Billing of client accounts: settings per client, invoices, manual payments, Mercado Pago payment links and the
++ * invoices a client has to pay.
++ */
++@Path("billing")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class BillingResource extends BaseResource {
++
++    @Inject
++    private BillingService billingService;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    @Inject
++    private PlanService planService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    private boolean admin() throws StorageException {
++        return !permissionsService.notAdmin(getUserId());
++    }
++
++    /** administrators, and managers whose plan includes billing, bill the accounts below them */
++    private void checkBiller() throws StorageException {
++        if (admin()) {
++            return;
++        }
++        User user = permissionsService.getUser(getUserId());
++        if (user.getUserLimit() == 0 || !planService.getModules(getUserId()).contains("billing")) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++    }
++
++    private Map<Long, User> managedUsers() throws StorageException {
++        Map<Long, User> result = new LinkedHashMap<>();
++        if (admin()) {
++            for (User user : storage.getObjects(User.class, new Request(new Columns.All()))) {
++                if (!user.getAdministrator()) {
++                    result.put(user.getId(), user);
++                }
++            }
++        } else {
++            for (long id : hierarchyService.getDescendants(getUserId())) {
++                User user = storage.getObject(User.class, new Request(
++                        new Columns.All(), new Condition.Equals("id", id)));
++                if (user != null) {
++                    result.put(id, user);
++                }
++            }
++        }
++        return result;
++    }
++
++    private User checkManaged(long userId) throws StorageException {
++        User user = managedUsers().get(userId);
++        if (user == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return user;
++    }
++
++    private Invoice checkInvoice(long id, boolean manage) throws StorageException {
++        Invoice invoice = storage.getObject(Invoice.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (invoice == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        boolean own = invoice.getUserId() == getUserId();
++        if (manage || !own) {
++            checkBiller();
++            checkManaged(invoice.getUserId());
++        }
++        return invoice;
++    }
++
++    private static Map<String, Object> settings(User user) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("price", user.getDouble(BillingService.PRICE));
++        result.put("fixedFee", user.getDouble(BillingService.FIXED));
++        result.put("currency", BillingService.currency(user));
++        result.put("day", BillingService.day(user));
++        result.put("dueDays", BillingService.dueDays(user));
++        result.put("graceDays", BillingService.graceDays(user));
++        result.put("autoSuspend", user.getBoolean(BillingService.AUTO_SUSPEND));
++        return result;
++    }
++
++    private Map<String, Object> view(Invoice invoice, Map<Long, User> users) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", invoice.getId());
++        result.put("userId", invoice.getUserId());
++        User user = users.get(invoice.getUserId());
++        result.put("userName", user != null ? user.getName() : null);
++        result.put("period", invoice.getPeriod());
++        result.put("units", invoice.getUnits());
++        result.put("unitPrice", invoice.getUnitPrice());
++        result.put("fixedFee", invoice.getFixedFee());
++        result.put("amount", invoice.getAmount());
++        result.put("currency", invoice.getCurrency());
++        result.put("status", invoice.getStatus());
++        result.put("issueDate", invoice.getIssueDate());
++        result.put("dueDate", invoice.getDueDate());
++        result.put("paidDate", invoice.getPaidDate());
++        result.put("paymentMethod", invoice.getPaymentMethod());
++        result.put("paymentRef", invoice.getPaymentRef());
++        result.put("paymentUrl", invoice.getPaymentUrl());
++        return result;
++    }
++
++    @GET
++    @Path("clients")
++    public List<Map<String, Object>> clients() throws StorageException {
++        checkBiller();
++        List<Map<String, Object>> result = new ArrayList<>();
++        Map<Long, List<Invoice>> invoices = new HashMap<>();
++        for (Invoice invoice : storage.getObjects(Invoice.class, new Request(new Columns.All()))) {
++            invoices.computeIfAbsent(invoice.getUserId(), key -> new ArrayList<>()).add(invoice);
++        }
++        for (User user : managedUsers().values()) {
++            Map<String, Object> item = new LinkedHashMap<>();
++            item.put("id", user.getId());
++            item.put("name", user.getName());
++            item.put("email", user.getEmail());
++            item.put("plan", user.getString("plan"));
++            item.put("units", billingService.units(user));
++            item.put("billed", BillingService.billed(user));
++            item.put("settings", settings(user));
++            item.put("disabled", user.getDisabled());
++            item.put("suspended", user.getBoolean(BillingService.SUSPENDED));
++            double open = 0;
++            int overdue = 0;
++            for (Invoice invoice : invoices.getOrDefault(user.getId(), List.of())) {
++                if (BillingService.PENDING.equals(invoice.getStatus())
++                        || BillingService.OVERDUE.equals(invoice.getStatus())) {
++                    open += invoice.getAmount();
++                }
++                if (BillingService.OVERDUE.equals(invoice.getStatus())) {
++                    overdue += 1;
++                }
++            }
++            item.put("openAmount", Math.round(open * 100) / 100.0);
++            item.put("overdue", overdue);
++            result.add(item);
++        }
++        return result;
++    }
++
++    private static double number(Object value) {
++        return value instanceof Number number ? number.doubleValue() : 0;
++    }
++
++    @PUT
++    @Path("clients/{id}")
++    public Map<String, Object> saveClient(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        checkBiller();
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        User user = checkManaged(id);
++        double price = number(body.get("price"));
++        double fixed = number(body.get("fixedFee"));
++        int day = (int) number(body.get("day"));
++        if (price < 0 || fixed < 0 || day < 0 || day > 28) {
++            throw new IllegalArgumentException("Invalid billing settings");
++        }
++        user.set(BillingService.PRICE, price);
++        user.set(BillingService.FIXED, fixed);
++        Object currency = body.get("currency");
++        user.set(BillingService.CURRENCY, currency != null ? String.valueOf(currency) : "PEN");
++        user.set(BillingService.DAY, day > 0 ? day : 1);
++        user.set(BillingService.DUE_DAYS, (int) Math.max(0, number(body.get("dueDays"))));
++        user.set(BillingService.GRACE_DAYS, (int) Math.max(0, number(body.get("graceDays"))));
++        user.set(BillingService.AUTO_SUSPEND, Boolean.TRUE.equals(body.get("autoSuspend")));
++        user.set(BillingService.ISSUER, getUserId());
++        storage.updateObject(user, new Request(
++                new Columns.Include("attributes"), new Condition.Equals("id", user.getId())));
++        cacheManager.invalidateObject(true, User.class, user.getId(), ObjectOperation.UPDATE);
++        return settings(user);
++    }
++
++    /** issues the invoice of the current month now, whatever the billing day */
++    @POST
++    @Path("clients/{id}/issue")
++    public Map<String, Object> issue(@PathParam("id") long id) throws Exception {
++        checkBiller();
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        User user = checkManaged(id);
++        if (!BillingService.billed(user)) {
++            throw new IllegalArgumentException("The client has no price");
++        }
++        String period = billingService.currentPeriod();
++        Invoice invoice = billingService.issue(user, period, new Date());
++        return view(invoice, Map.of(user.getId(), user));
++    }
++
++    @GET
++    @Path("invoices")
++    public List<Map<String, Object>> invoices(@QueryParam("status") String status) throws StorageException {
++        Map<Long, User> users = new HashMap<>();
++        Set<Long> visible = new HashSet<>();
++        visible.add(getUserId());
++        users.put(getUserId(), permissionsService.getUser(getUserId()));
++        boolean biller;
++        try {
++            checkBiller();
++            biller = true;
++        } catch (WebApplicationException e) {
++            biller = false;
++        }
++        if (biller) {
++            users.putAll(managedUsers());
++            visible.addAll(users.keySet());
++        }
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Invoice invoice : storage.getObjects(Invoice.class, new Request(new Columns.All()))) {
++            if (visible.contains(invoice.getUserId())
++                    && (status == null || status.isEmpty() || status.equals(invoice.getStatus()))) {
++                result.add(view(invoice, users));
++            }
++        }
++        result.sort(Comparator.comparing((Map<String, Object> item) -> (String) item.get("period")).reversed()
++                .thenComparing(item -> String.valueOf(item.get("userName"))));
++        return result;
++    }
++
++    @PUT
++    @Path("invoices/{id}/paid")
++    public Map<String, Object> paid(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Invoice invoice = checkInvoice(id, true);
++        Object method = body.get("method");
++        Object reference = body.get("reference");
++        billingService.markPaid(invoice, method != null ? String.valueOf(method) : "manual",
++                reference != null ? String.valueOf(reference) : null);
++        return view(invoice, managedUsers());
++    }
++
++    @PUT
++    @Path("invoices/{id}/void")
++    public Map<String, Object> markVoid(@PathParam("id") long id) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Invoice invoice = checkInvoice(id, true);
++        billingService.markVoid(invoice);
++        return view(invoice, managedUsers());
++    }
++
++    /** only voided invoices can be deleted, by an administrator */
++    @DELETE
++    @Path("invoices/{id}")
++    public Response remove(@PathParam("id") long id) throws Exception {
++        if (!admin()) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++        Invoice invoice = checkInvoice(id, true);
++        if (!BillingService.VOID.equals(invoice.getStatus())) {
++            throw new IllegalArgumentException("Void the invoice first");
++        }
++        storage.removeObject(Invoice.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    @POST
++    @Path("invoices/{id}/checkout")
++    public Map<String, Object> checkout(@PathParam("id") long id) throws Exception {
++        Invoice invoice = checkInvoice(id, false);
++        if (!BillingService.PENDING.equals(invoice.getStatus())
++                && !BillingService.OVERDUE.equals(invoice.getStatus())) {
++            throw new IllegalArgumentException("The invoice is not open");
++        }
++        billingService.checkout(invoice, "Servicio de rastreo " + invoice.getPeriod()
++                + " (" + invoice.getUnits() + " unidades)");
++        return view(invoice, Map.of());
++    }
++
++    /** open invoices of the caller, for the payment reminder */
++    @GET
++    @Path("me")
++    public Map<String, Object> mine() throws StorageException {
++        List<Map<String, Object>> open = new ArrayList<>();
++        long now = System.currentTimeMillis();
++        for (Invoice invoice : billingService.invoicesOf(getUserId())) {
++            if (BillingService.PENDING.equals(invoice.getStatus())
++                    || BillingService.OVERDUE.equals(invoice.getStatus())) {
++                Map<String, Object> item = view(invoice, Map.of());
++                item.put("daysLeft", invoice.getDueDate() != null
++                        ? Math.floorDiv(invoice.getDueDate().getTime() - now, 86_400_000L) : null);
++                open.add(item);
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("open", open);
++        result.put("mercadoPago", billingService.mercadoPagoEnabled());
++        return result;
++    }
++
++    @GET
++    @Path("summary")
++    public Map<String, Object> summary() throws StorageException {
++        checkBiller();
++        Map<Long, User> users = managedUsers();
++        String month = billingService.currentPeriod();
++        Map<String, Map<String, Double>> totals = new LinkedHashMap<>();
++        for (Invoice invoice : storage.getObjects(Invoice.class, new Request(new Columns.All()))) {
++            if (!users.containsKey(invoice.getUserId())) {
++                continue;
++            }
++            String key = switch (invoice.getStatus()) {
++                case BillingService.PENDING -> "pending";
++                case BillingService.OVERDUE -> "overdue";
++                case BillingService.PAID -> invoice.getPeriod().equals(month) ? "paidThisMonth" : null;
++                default -> null;
++            };
++            if (key != null) {
++                totals.computeIfAbsent(key, k -> new LinkedHashMap<>())
++                        .merge(invoice.getCurrency(), invoice.getAmount(), Double::sum);
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>(totals);
++        result.put("billedClients", users.values().stream().filter(BillingService::billed).count());
++        result.put("suspended", users.values().stream()
++                .filter(user -> user.getBoolean(BillingService.SUSPENDED)).count());
++        result.put("mercadoPago", billingService.mercadoPagoEnabled());
++        return result;
++    }
++
++    @POST
++    @Path("run")
++    public Map<String, Integer> run() throws Exception {
++        if (!admin()) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++        return billingService.run(new Date());
++    }
++
++    /** Mercado Pago payment notification; the payment itself is always checked with Mercado Pago */
++    @POST
++    @PermitAll
++    @Path("mercadopago/webhook")
++    public Response webhook(
++            @QueryParam("type") String type, @QueryParam("topic") String topic,
++            @QueryParam("data.id") String dataId, @QueryParam("id") String id,
++            Map<String, Object> body) throws Exception {
++        String kind = type != null ? type : topic;
++        String paymentId = dataId != null ? dataId : id;
++        if (body != null) {
++            if (kind == null && body.get("type") != null) {
++                kind = String.valueOf(body.get("type"));
++            }
++            if (body.get("data") instanceof Map<?, ?> data && data.get("id") != null) {
++                paymentId = String.valueOf(data.get("id"));
++            }
++        }
++        if (kind == null || "payment".equals(kind)) {
++            billingService.paymentNotified(paymentId);
++        }
++        return Response.ok().build();
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/RegulatorResource.java b/src/main/java/org/traccar/api/resource/RegulatorResource.java
+new file mode 100644
+index 0000000..0f76aa5
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/RegulatorResource.java
+@@ -0,0 +1,367 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.model.RegulatorDestination;
++import org.traccar.regulator.RegulatorService;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.stream.Collectors;
++
++/**
++ * Transmission of positions to authorities: destinations (administrator), vehicles enrolled in each destination
++ * and the transmission status of every enrolled vehicle.
++ */
++@Path("regulator")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class RegulatorResource extends BaseResource {
++
++    private static final String MASK = "********";
++    private static final List<String> TYPES = List.of("sutran", "atu", "custom");
++
++    /** delay after which a transmission is late, and after which a vehicle is considered not reporting */
++    private static final long LATE_MILLIS = 5 * 60_000L;
++    private static final long OFFLINE_MILLIS = 30 * 60_000L;
++
++    public static final Map<String, Map<String, Object>> PRESETS = Map.of(
++            "sutran", Map.of(
++                    "name", "SUTRAN",
++                    "authHeader", "Authorization",
++                    "batch", false,
++                    "template", "{\"plate\":\"${plate}\",\"imei\":\"${imei}\",\"latitude\":${lat},"
++                            + "\"longitude\":${lon},\"speed\":${speedKmh},\"course\":${course},"
++                            + "\"altitude\":${altitude},\"event\":\"${event}\",\"ignition\":${ignition01},"
++                            + "\"gpsDate\":\"${fixTime}\"}"),
++            "atu", Map.of(
++                    "name", "ATU",
++                    "authHeader", "Authorization",
++                    "batch", false,
++                    "template", "{\"imei\":\"${imei}\",\"placa\":\"${plate}\",\"ruta\":\"${route}\","
++                            + "\"latitud\":${lat},\"longitud\":${lon},\"velocidad\":${speedKmh},"
++                            + "\"rumbo\":${course},\"fecha\":\"${fixTimeIso}\",\"evento\":\"${event}\"}"));
++
++    @Inject
++    private RegulatorService regulatorService;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    private boolean admin() throws StorageException {
++        return !permissionsService.notAdmin(getUserId());
++    }
++
++    private void checkAdmin() throws StorageException {
++        if (!admin()) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++    }
++
++    private RegulatorDestination check(long id) throws StorageException {
++        RegulatorDestination destination = storage.getObject(RegulatorDestination.class, new Request(
++                new Columns.All(), new Condition.Equals("id", id)));
++        if (destination == null) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return destination;
++    }
++
++    private Map<String, Object> view(RegulatorDestination destination, boolean full) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", destination.getId());
++        result.put("name", destination.getName());
++        result.put("type", destination.getType());
++        result.put("enabled", destination.getEnabled());
++        if (full) {
++            result.put("url", destination.getUrl());
++            result.put("authHeader", destination.getAuthHeader());
++            String value = destination.getAuthValue();
++            result.put("authValue", value == null || value.isEmpty() ? "" : MASK);
++            result.put("template", destination.getTemplate());
++            result.put("batch", destination.getBatch());
++            result.put("attributes", destination.getAttributes());
++            RegulatorService.Stats stats = regulatorService.destinationStats(destination.getId());
++            result.put("queued", regulatorService.queued(destination.getId()));
++            result.put("dropped", regulatorService.dropped(destination.getId()));
++            result.put("sent", stats.getSent());
++            result.put("failed", stats.getFailed());
++            result.put("lastSent", stats.getLastSent());
++            result.put("lastError", stats.getLastError());
++            result.put("lastErrorTime", stats.getLastErrorTime());
++        }
++        return result;
++    }
++
++    @GET
++    @Path("destinations")
++    public List<Map<String, Object>> destinations() throws StorageException {
++        boolean full = admin();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (RegulatorDestination destination : storage.getObjects(RegulatorDestination.class, new Request(
++                new Columns.All(), new Order("name")))) {
++            if (full || destination.getEnabled()) {
++                result.add(view(destination, full));
++            }
++        }
++        return result;
++    }
++
++    @GET
++    @Path("presets")
++    public Map<String, Map<String, Object>> presets() {
++        return PRESETS;
++    }
++
++    private static String text(Object value) {
++        if (value == null) {
++            return null;
++        }
++        String result = String.valueOf(value).trim();
++        return result.isEmpty() ? null : result;
++    }
++
++    private static void read(RegulatorDestination destination, Map<String, Object> body) {
++        String name = text(body.get("name"));
++        String url = text(body.get("url"));
++        if (name == null || url == null || !url.matches("(?i)https?://.+")) {
++            throw new IllegalArgumentException("The destination needs a name and an http(s) URL");
++        }
++        String type = text(body.get("type"));
++        destination.setName(name);
++        destination.setType(type != null && TYPES.contains(type) ? type : "custom");
++        destination.setUrl(url);
++        destination.setAuthHeader(text(body.get("authHeader")));
++        String value = body.get("authValue") != null ? String.valueOf(body.get("authValue")) : null;
++        if (value != null && !MASK.equals(value)) {
++            destination.setAuthValue(value.isEmpty() ? null : value);
++        }
++        destination.setTemplate(text(body.get("template")));
++        destination.setBatch(Boolean.TRUE.equals(body.get("batch")));
++        destination.setEnabled(!Boolean.FALSE.equals(body.get("enabled")));
++        if (body.get("attributes") instanceof Map<?, ?> attributes) {
++            Map<String, Object> copy = new HashMap<>();
++            attributes.forEach((key, item) -> copy.put(String.valueOf(key), item));
++            destination.setAttributes(copy);
++        }
++    }
++
++    @POST
++    @Path("destinations")
++    public Map<String, Object> add(Map<String, Object> body) throws Exception {
++        checkAdmin();
++        RegulatorDestination destination = new RegulatorDestination();
++        read(destination, body);
++        destination.setId(storage.addObject(destination, new Request(new Columns.Exclude("id"))));
++        regulatorService.reload();
++        return view(destination, true);
++    }
++
++    @PUT
++    @Path("destinations/{id}")
++    public Map<String, Object> update(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        checkAdmin();
++        RegulatorDestination destination = check(id);
++        read(destination, body);
++        storage.updateObject(destination, new Request(new Columns.Exclude("id"), new Condition.Equals("id", id)));
++        regulatorService.reload();
++        return view(destination, true);
++    }
++
++    @DELETE
++    @Path("destinations/{id}")
++    public Response remove(@PathParam("id") long id) throws Exception {
++        checkAdmin();
++        check(id);
++        storage.removeObject(RegulatorDestination.class, new Request(new Condition.Equals("id", id)));
++        regulatorService.reload();
++        return Response.noContent().build();
++    }
++
++    /** sends one position (the latest of an enrolled vehicle, or a sample) and returns the reply */
++    @POST
++    @Path("destinations/{id}/test")
++    public Map<String, Object> test(@PathParam("id") long id) throws Exception {
++        checkAdmin();
++        RegulatorDestination destination = check(id);
++        Device sample = null;
++        Position position = null;
++        for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
++            if (RegulatorService.enrolled(device).contains(id)) {
++                Position latest = FleetUtil.latest(storage, cacheManager, device);
++                if (latest != null) {
++                    sample = device;
++                    position = latest;
++                    break;
++                }
++            }
++        }
++        if (sample == null) {
++            sample = new Device();
++            sample.setName("PRUEBA-001");
++            sample.setUniqueId("000000000000000");
++            position = new Position();
++            position.setLatitude(-12.0464);
++            position.setLongitude(-77.0428);
++            position.setFixTime(new Date());
++            position.setValid(true);
++        }
++        String template = destination.getTemplate() != null ? destination.getTemplate() : "";
++        String json = RegulatorService.render(template,
++                RegulatorService.values(sample, position, RegulatorService.zone(destination)),
++                destination.getAttributes());
++        if (destination.getBatch()) {
++            json = "[" + json + "]";
++        }
++        RegulatorService.Result result = regulatorService.post(destination, json);
++        Map<String, Object> response = new LinkedHashMap<>();
++        response.put("request", json);
++        response.put("status", result.status());
++        response.put("body", result.body());
++        response.put("error", result.error());
++        return response;
++    }
++
++    /** enrolls (or removes) vehicles the caller can see in a destination */
++    @PUT
++    @Path("devices")
++    public Map<String, Object> enroll(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        long destinationId = body.get("destinationId") instanceof Number number ? number.longValue() : 0;
++        RegulatorDestination destination = check(destinationId);
++        if (!destination.getEnabled() && !admin()) {
++            throw new WebApplicationException(Response.Status.FORBIDDEN);
++        }
++        boolean enrolled = !Boolean.FALSE.equals(body.get("enrolled"));
++        Set<Long> ids = new LinkedHashSet<>();
++        if (body.get("deviceIds") instanceof List<?> list) {
++            list.forEach(item -> {
++                if (item instanceof Number number) {
++                    ids.add(number.longValue());
++                }
++            });
++        }
++        int changed = 0;
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            if (!ids.contains(device.getId())) {
++                continue;
++            }
++            Set<Long> current = new LinkedHashSet<>(RegulatorService.enrolled(device));
++            boolean modified = enrolled ? current.add(destinationId) : current.remove(destinationId);
++            if (modified) {
++                if (current.isEmpty()) {
++                    device.getAttributes().remove(RegulatorService.ENROLLED);
++                } else {
++                    device.set(RegulatorService.ENROLLED,
++                            current.stream().map(String::valueOf).collect(Collectors.joining(",")));
++                }
++                FleetUtil.saveAttributes(storage, cacheManager, device);
++                changed += 1;
++            }
++        }
++        return Map.of("changed", changed);
++    }
++
++    /** every enrolled vehicle the caller can see, per destination, with its transmission state */
++    @GET
++    @Path("status")
++    public Map<String, Object> status() throws StorageException {
++        Map<Long, RegulatorDestination> destinations = new LinkedHashMap<>();
++        for (RegulatorDestination destination : storage.getObjects(RegulatorDestination.class, new Request(
++                new Columns.All(), new Order("name")))) {
++            destinations.put(destination.getId(), destination);
++        }
++        long now = System.currentTimeMillis();
++        List<Map<String, Object>> vehicles = new ArrayList<>();
++        Map<String, Integer> counts = new LinkedHashMap<>();
++        for (String state : List.of("ok", "late", "failing", "offline", "pending")) {
++            counts.put(state, 0);
++        }
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            for (long destinationId : RegulatorService.enrolled(device)) {
++                RegulatorDestination destination = destinations.get(destinationId);
++                if (destination == null) {
++                    continue;
++                }
++                RegulatorService.Stats stats = regulatorService.deviceStats(destinationId).get(device.getId());
++                Date lastSent = stats != null ? stats.getLastSent() : null;
++                Date lastErrorTime = stats != null ? stats.getLastErrorTime() : null;
++                boolean reporting = device.getLastUpdate() != null
++                        && now - device.getLastUpdate().getTime() < OFFLINE_MILLIS;
++                String state;
++                if (!reporting) {
++                    state = "offline";
++                } else if (lastErrorTime != null && (lastSent == null || lastErrorTime.after(lastSent))) {
++                    state = "failing";
++                } else if (lastSent == null) {
++                    state = "pending";
++                } else if (now - lastSent.getTime() > LATE_MILLIS) {
++                    state = "late";
++                } else {
++                    state = "ok";
++                }
++                counts.merge(state, 1, Integer::sum);
++                Map<String, Object> item = new LinkedHashMap<>();
++                item.put("deviceId", device.getId());
++                item.put("name", device.getName());
++                String plate = device.getString("plate");
++                item.put("plate", plate != null ? plate : device.getName());
++                item.put("destinationId", destinationId);
++                item.put("destination", destination.getName());
++                item.put("destinationEnabled", destination.getEnabled());
++                item.put("lastUpdate", device.getLastUpdate());
++                item.put("lastSent", lastSent);
++                item.put("sent", stats != null ? stats.getSent() : 0);
++                item.put("failed", stats != null ? stats.getFailed() : 0);
++                item.put("lastError", stats != null ? stats.getLastError() : null);
++                item.put("lastErrorTime", lastErrorTime);
++                item.put("state", state);
++                vehicles.add(item);
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("counts", counts);
++        result.put("vehicles", vehicles);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/api/resource/SimResource.java b/src/main/java/org/traccar/api/resource/SimResource.java
+new file mode 100644
+index 0000000..cad975d
+--- /dev/null
++++ b/src/main/java/org/traccar/api/resource/SimResource.java
+@@ -0,0 +1,524 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.api.resource;
++
++import jakarta.annotation.security.PermitAll;
++import jakarta.inject.Inject;
++import jakarta.ws.rs.Consumes;
++import jakarta.ws.rs.DELETE;
++import jakarta.ws.rs.GET;
++import jakarta.ws.rs.POST;
++import jakarta.ws.rs.PUT;
++import jakarta.ws.rs.Path;
++import jakarta.ws.rs.PathParam;
++import jakarta.ws.rs.Produces;
++import jakarta.ws.rs.WebApplicationException;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.traccar.api.BaseResource;
++import org.traccar.api.security.HierarchyService;
++import org.traccar.helper.model.FleetUtil;
++import org.traccar.model.Device;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.Server;
++import org.traccar.model.Sim;
++import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Order;
++import org.traccar.storage.query.Request;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Date;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * SIM inventory: carrier lines, data plans and costs, the device each SIM is installed in, usage imported from the
++ * carrier and SIMs that went silent (their device stopped reporting).
++ */
++@Path("sims")
++@Produces(MediaType.APPLICATION_JSON)
++@Consumes(MediaType.APPLICATION_JSON)
++public class SimResource extends BaseResource {
++
++    public static final String ACTIVE = "active";
++    public static final String INVENTORY = "inventory";
++    public static final String SUSPENDED = "suspended";
++    public static final String CANCELLED = "cancelled";
++    private static final List<String> STATUSES = List.of(ACTIVE, INVENTORY, SUSPENDED, CANCELLED);
++
++    private static final long HOUR = 3_600_000L;
++
++    @Inject
++    private CacheManager cacheManager;
++
++    @Inject
++    private HierarchyService hierarchyService;
++
++    /** accounts whose SIMs the caller sees: its own and those below it, or {@code null} for everything */
++    private Set<Long> visibleOwners() throws StorageException {
++        if (!permissionsService.notAdmin(getUserId())) {
++            return null;
++        }
++        Set<Long> owners = new HashSet<>(hierarchyService.getDescendants(getUserId()));
++        owners.add(getUserId());
++        return owners;
++    }
++
++    private List<Sim> visibleSims() throws StorageException {
++        Set<Long> owners = visibleOwners();
++        List<Sim> result = new ArrayList<>();
++        for (Sim sim : storage.getObjects(Sim.class, new Request(new Columns.All(), new Order("iccid")))) {
++            if (owners == null || owners.contains(sim.getUserId())) {
++                result.add(sim);
++            }
++        }
++        return result;
++    }
++
++    private Sim checkSim(long id) throws StorageException {
++        Sim sim = storage.getObject(Sim.class, new Request(new Columns.All(), new Condition.Equals("id", id)));
++        Set<Long> owners = visibleOwners();
++        if (sim == null || owners != null && !owners.contains(sim.getUserId())) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        return sim;
++    }
++
++    private Map<Long, Device> visibleDevices() throws StorageException {
++        Map<Long, Device> result = new HashMap<>();
++        for (Device device : FleetUtil.devices(storage, permissionsService, getUserId())) {
++            result.put(device.getId(), device);
++        }
++        return result;
++    }
++
++    private double silentHours() throws StorageException {
++        Server server = storage.getObject(Server.class, new Request(new Columns.All()));
++        double hours = server.getDouble("simSilentHours");
++        return hours > 0 ? hours : 24;
++    }
++
++    private static boolean reporting(Device device, long now, double hours) {
++        return device != null && device.getLastUpdate() != null
++                && now - device.getLastUpdate().getTime() < hours * HOUR;
++    }
++
++    private Map<String, Object> view(Sim sim, Map<Long, Device> devices, long now, double hours) {
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("id", sim.getId());
++        result.put("userId", sim.getUserId());
++        result.put("iccid", sim.getIccid());
++        result.put("phone", sim.getPhone());
++        result.put("carrier", sim.getCarrier());
++        result.put("apn", sim.getApn());
++        result.put("planName", sim.getPlanName());
++        result.put("dataLimitMb", sim.getDataLimitMb());
++        result.put("usageMb", sim.getUsageMb());
++        result.put("usageDate", sim.getUsageDate());
++        result.put("monthlyCost", sim.getMonthlyCost());
++        result.put("status", sim.getStatus());
++        result.put("deviceId", sim.getDeviceId());
++        result.put("activatedAt", sim.getActivatedAt());
++        result.put("attributes", sim.getAttributes());
++        Device device = devices.get(sim.getDeviceId());
++        result.put("deviceName", device != null ? device.getName() : null);
++        result.put("lastUpdate", device != null ? device.getLastUpdate() : null);
++        boolean active = ACTIVE.equals(sim.getStatus());
++        result.put("silent", active && sim.getDeviceId() > 0 && !reporting(device, now, hours));
++        result.put("overLimit", sim.getDataLimitMb() > 0 && sim.getUsageMb() >= sim.getDataLimitMb());
++        result.put("usagePercent", sim.getDataLimitMb() > 0
++                ? Math.round(sim.getUsageMb() * 1000 / sim.getDataLimitMb()) / 10.0 : null);
++        return result;
++    }
++
++    @GET
++    public List<Map<String, Object>> list() throws StorageException {
++        Map<Long, Device> devices = visibleDevices();
++        long now = System.currentTimeMillis();
++        double hours = silentHours();
++        List<Map<String, Object>> result = new ArrayList<>();
++        for (Sim sim : visibleSims()) {
++            result.add(view(sim, devices, now, hours));
++        }
++        return result;
++    }
++
++    private static String text(Object value) {
++        if (value == null) {
++            return null;
++        }
++        String result = String.valueOf(value).trim();
++        return result.isEmpty() ? null : result;
++    }
++
++    private static double number(Object value) {
++        if (value instanceof Number number) {
++            return number.doubleValue();
++        }
++        try {
++            return value != null ? Double.parseDouble(String.valueOf(value).trim().replace(',', '.')) : 0;
++        } catch (NumberFormatException e) {
++            return 0;
++        }
++    }
++
++    private static String cleanIccid(Object value) {
++        String iccid = text(value);
++        iccid = iccid != null ? iccid.replaceAll("[^0-9A-Za-z]", "") : null;
++        if (iccid == null || iccid.length() < 10 || iccid.length() > 22) {
++            throw new IllegalArgumentException("Invalid ICCID: " + value);
++        }
++        return iccid;
++    }
++
++    private void read(Sim sim, Map<String, Object> body, Map<Long, Device> devices) {
++        sim.setIccid(cleanIccid(body.get("iccid")));
++        sim.setPhone(text(body.get("phone")));
++        sim.setCarrier(text(body.get("carrier")));
++        sim.setApn(text(body.get("apn")));
++        sim.setPlanName(text(body.get("planName")));
++        sim.setDataLimitMb(Math.max(0, number(body.get("dataLimitMb"))));
++        sim.setMonthlyCost(Math.max(0, number(body.get("monthlyCost"))));
++        if (body.containsKey("usageMb")) {
++            sim.setUsageMb(Math.max(0, number(body.get("usageMb"))));
++        }
++        String status = text(body.get("status"));
++        long deviceId = (long) number(body.get("deviceId"));
++        if (deviceId > 0 && !devices.containsKey(deviceId)) {
++            throw new SecurityException("Device not accessible");
++        }
++        sim.setDeviceId(deviceId);
++        if (status == null) {
++            status = deviceId > 0 ? ACTIVE : INVENTORY;
++        }
++        if (!STATUSES.contains(status)) {
++            throw new IllegalArgumentException("Unknown status " + status);
++        }
++        if (ACTIVE.equals(status) && sim.getActivatedAt() == null) {
++            sim.setActivatedAt(new Date());
++        }
++        sim.setStatus(status);
++        if (body.get("attributes") instanceof Map<?, ?> attributes) {
++            Map<String, Object> copy = new HashMap<>();
++            attributes.forEach((key, value) -> copy.put(String.valueOf(key), value));
++            sim.setAttributes(copy);
++        }
++    }
++
++    private Sim byIccid(String iccid) throws StorageException {
++        return storage.getObject(Sim.class, new Request(new Columns.All(), new Condition.Equals("iccid", iccid)));
++    }
++
++    /** a device holds one SIM: installing it elsewhere frees it from the previous one, and the phone follows */
++    private void install(Sim sim, Map<Long, Device> devices) throws Exception {
++        if (sim.getDeviceId() <= 0) {
++            return;
++        }
++        for (Sim other : storage.getObjects(Sim.class, new Request(
++                new Columns.All(), new Condition.Equals("deviceId", sim.getDeviceId())))) {
++            if (other.getId() != sim.getId()) {
++                other.setDeviceId(0);
++                storage.updateObject(other, new Request(
++                        new Columns.Include("deviceId"), new Condition.Equals("id", other.getId())));
++            }
++        }
++        Device device = devices.get(sim.getDeviceId());
++        if (device != null && sim.getPhone() != null && !sim.getPhone().equals(device.getPhone())) {
++            device.setPhone(sim.getPhone());
++            storage.updateObject(device, new Request(
++                    new Columns.Include("phone"), new Condition.Equals("id", device.getId())));
++            cacheManager.invalidateObject(true, Device.class, device.getId(), ObjectOperation.UPDATE);
++        }
++    }
++
++    private Sim save(Sim sim, Map<Long, Device> devices) throws Exception {
++        Sim existing = byIccid(sim.getIccid());
++        if (existing != null && existing.getId() != sim.getId()) {
++            throw new IllegalArgumentException("ICCID already registered: " + sim.getIccid());
++        }
++        if (sim.getId() == 0) {
++            sim.setId(storage.addObject(sim, new Request(new Columns.Exclude("id"))));
++        } else {
++            storage.updateObject(sim, new Request(
++                    new Columns.Exclude("id", "userId"), new Condition.Equals("id", sim.getId())));
++        }
++        install(sim, devices);
++        return sim;
++    }
++
++    @POST
++    public Map<String, Object> add(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Map<Long, Device> devices = visibleDevices();
++        Sim sim = new Sim();
++        sim.setUserId(getUserId());
++        read(sim, body, devices);
++        save(sim, devices);
++        return view(sim, devices, System.currentTimeMillis(), silentHours());
++    }
++
++    @PUT
++    @Path("{id}")
++    public Map<String, Object> update(@PathParam("id") long id, Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Map<Long, Device> devices = visibleDevices();
++        Sim sim = checkSim(id);
++        read(sim, body, devices);
++        save(sim, devices);
++        return view(sim, devices, System.currentTimeMillis(), silentHours());
++    }
++
++    @DELETE
++    @Path("{id}")
++    public Response remove(@PathParam("id") long id) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        checkSim(id);
++        storage.removeObject(Sim.class, new Request(new Condition.Equals("id", id)));
++        return Response.noContent().build();
++    }
++
++    private static List<String> splitLine(String line, char separator) {
++        List<String> result = new ArrayList<>();
++        StringBuilder current = new StringBuilder();
++        boolean quoted = false;
++        for (char c : line.toCharArray()) {
++            if (c == '"') {
++                quoted = !quoted;
++            } else if (c == separator && !quoted) {
++                result.add(current.toString().trim());
++                current.setLength(0);
++            } else {
++                current.append(c);
++            }
++        }
++        result.add(current.toString().trim());
++        return result;
++    }
++
++    private static final Map<String, String> HEADERS = Map.ofEntries(
++            Map.entry("iccid", "iccid"), Map.entry("sim", "iccid"),
++            Map.entry("phone", "phone"), Map.entry("telefono", "phone"), Map.entry("msisdn", "phone"),
++            Map.entry("numero", "phone"),
++            Map.entry("carrier", "carrier"), Map.entry("operador", "carrier"),
++            Map.entry("apn", "apn"),
++            Map.entry("plan", "planName"), Map.entry("planname", "planName"),
++            Map.entry("limitmb", "dataLimitMb"), Map.entry("datalimitmb", "dataLimitMb"),
++            Map.entry("mb", "dataLimitMb"),
++            Map.entry("cost", "monthlyCost"), Map.entry("costo", "monthlyCost"),
++            Map.entry("monthlycost", "monthlyCost"),
++            Map.entry("usagemb", "usageMb"), Map.entry("consumomb", "usageMb"), Map.entry("consumo", "usageMb"),
++            Map.entry("status", "status"), Map.entry("estado", "status"),
++            Map.entry("imei", "imei"), Map.entry("uniqueid", "imei"));
++
++    /**
++     * Creates or updates SIMs from a CSV (header row required): iccid, phone, carrier, apn, plan, limitMb, cost,
++     * usageMb, status and imei of the device it is installed in. Existing ICCIDs are updated.
++     */
++    @POST
++    @Path("import")
++    public Map<String, Object> importCsv(Map<String, Object> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        String csv = text(body.get("csv"));
++        if (csv == null) {
++            throw new IllegalArgumentException("Empty CSV");
++        }
++        String[] lines = csv.replace("\r", "").split("\n");
++        char separator = lines[0].contains(";") ? ';' : ',';
++        List<String> header = new ArrayList<>();
++        for (String name : splitLine(lines[0], separator)) {
++            header.add(HEADERS.get(name.toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "")));
++        }
++        if (!header.contains("iccid")) {
++            throw new IllegalArgumentException("The CSV needs an iccid column");
++        }
++        Map<Long, Device> devices = visibleDevices();
++        Map<String, Device> byImei = new HashMap<>();
++        devices.values().forEach(device -> byImei.put(device.getUniqueId(), device));
++        Set<Long> owners = visibleOwners();
++        int created = 0;
++        int updated = 0;
++        List<String> errors = new ArrayList<>();
++        for (int i = 1; i < lines.length; i++) {
++            if (lines[i].isBlank()) {
++                continue;
++            }
++            List<String> values = splitLine(lines[i], separator);
++            Map<String, Object> row = new HashMap<>();
++            for (int j = 0; j < header.size() && j < values.size(); j++) {
++                if (header.get(j) != null && !values.get(j).isEmpty()) {
++                    row.put(header.get(j), values.get(j));
++                }
++            }
++            try {
++                Sim sim = byIccid(cleanIccid(row.get("iccid")));
++                boolean exists = sim != null;
++                if (exists && owners != null && !owners.contains(sim.getUserId())) {
++                    throw new SecurityException("ICCID belongs to another account");
++                }
++                if (!exists) {
++                    sim = new Sim();
++                    sim.setUserId(getUserId());
++                }
++                Map<String, Object> merged = new HashMap<>();
++                if (exists) {
++                    merged.put("phone", sim.getPhone());
++                    merged.put("carrier", sim.getCarrier());
++                    merged.put("apn", sim.getApn());
++                    merged.put("planName", sim.getPlanName());
++                    merged.put("dataLimitMb", sim.getDataLimitMb());
++                    merged.put("monthlyCost", sim.getMonthlyCost());
++                    merged.put("deviceId", sim.getDeviceId());
++                    merged.put("status", sim.getStatus());
++                }
++                merged.putAll(row);
++                Object imei = row.get("imei");
++                if (imei != null) {
++                    Device device = byImei.get(String.valueOf(imei));
++                    if (device == null) {
++                        throw new IllegalArgumentException("Unknown IMEI " + imei);
++                    }
++                    merged.put("deviceId", device.getId());
++                    if (row.get("status") == null && (!exists || INVENTORY.equals(sim.getStatus()))) {
++                        merged.put("status", ACTIVE);
++                    }
++                }
++                read(sim, merged, devices);
++                if (row.containsKey("usageMb")) {
++                    sim.setUsageDate(new Date());
++                }
++                save(sim, devices);
++                if (exists) {
++                    updated += 1;
++                } else {
++                    created += 1;
++                }
++            } catch (RuntimeException | StorageException e) {
++                errors.add("Line " + (i + 1) + ": " + e.getMessage());
++            }
++        }
++        return Map.of("created", created, "updated", updated, "errors", errors);
++    }
++
++    /**
++     * Data usage reported by the carrier (portal export or a script calling its API): [{iccid, usageMb}].
++     */
++    @POST
++    @Path("usage")
++    public Map<String, Object> usage(List<Map<String, Object>> body) throws Exception {
++        FleetUtil.checkWritable(permissionsService, getUserId());
++        Set<Long> owners = visibleOwners();
++        int updated = 0;
++        List<String> unknown = new ArrayList<>();
++        for (Map<String, Object> item : body) {
++            String iccid = text(item.get("iccid"));
++            Sim sim = iccid != null ? byIccid(iccid.replaceAll("[^0-9A-Za-z]", "")) : null;
++            if (sim == null || owners != null && !owners.contains(sim.getUserId())) {
++                unknown.add(iccid);
++                continue;
++            }
++            sim.setUsageMb(Math.max(0, number(item.get("usageMb"))));
++            sim.setUsageDate(new Date());
++            storage.updateObject(sim, new Request(
++                    new Columns.Include("usageMb", "usageDate"), new Condition.Equals("id", sim.getId())));
++            updated += 1;
++        }
++        return Map.of("updated", updated, "unknown", unknown);
++    }
++
++    private Map<String, Object> summarize(Collection<Sim> sims, Map<Long, Device> devices) throws StorageException {
++        long now = System.currentTimeMillis();
++        double hours = silentHours();
++        Map<String, Integer> counts = new LinkedHashMap<>();
++        STATUSES.forEach(status -> counts.put(status, 0));
++        int silent = 0;
++        int overLimit = 0;
++        int assigned = 0;
++        int online = 0;
++        double cost = 0;
++        Set<Long> withSim = new HashSet<>();
++        for (Sim sim : sims) {
++            counts.merge(sim.getStatus() != null ? sim.getStatus() : INVENTORY, 1, Integer::sum);
++            if (sim.getDataLimitMb() > 0 && sim.getUsageMb() >= sim.getDataLimitMb()) {
++                overLimit += 1;
++            }
++            if (ACTIVE.equals(sim.getStatus())) {
++                cost += sim.getMonthlyCost();
++                if (sim.getDeviceId() > 0) {
++                    assigned += 1;
++                    withSim.add(sim.getDeviceId());
++                    if (reporting(devices.get(sim.getDeviceId()), now, 24)) {
++                        online += 1;
++                    }
++                    if (!reporting(devices.get(sim.getDeviceId()), now, hours)) {
++                        silent += 1;
++                    }
++                }
++            }
++        }
++        Map<String, Object> result = new LinkedHashMap<>(counts);
++        result.put("total", sims.size());
++        result.put("silent", silent);
++        result.put("overLimit", overLimit);
++        result.put("availability", assigned > 0 ? Math.round(online * 1000.0 / assigned) / 10.0 : null);
++        result.put("monthlyCost", Math.round(cost * 100) / 100.0);
++        result.put("devicesWithoutSim", devices.keySet().stream().filter(id -> !withSim.contains(id)).count());
++        return result;
++    }
++
++    @GET
++    @Path("summary")
++    public Map<String, Object> summary() throws StorageException {
++        return summarize(visibleSims(), visibleDevices());
++    }
++
++    /**
++     * Figures for the login page, only when the administrator enables them (server attribute loginLiveStats):
++     * active SIMs, availability of the last 24 hours and client accounts (accounts with a plan).
++     */
++    @GET
++    @PermitAll
++    @Path("public")
++    public Map<String, Object> publicStats() throws StorageException {
++        Server server = storage.getObject(Server.class, new Request(new Columns.All()));
++        if (!server.getBoolean("loginLiveStats")) {
++            throw new WebApplicationException(Response.status(Response.Status.NOT_FOUND).build());
++        }
++        Map<Long, Device> devices = new HashMap<>();
++        for (Device device : storage.getObjects(Device.class, new Request(new Columns.All()))) {
++            devices.put(device.getId(), device);
++        }
++        Map<String, Object> summary = summarize(
++                storage.getObjects(Sim.class, new Request(new Columns.All())), devices);
++        long clients = storage.getObjects(User.class, new Request(new Columns.All())).stream()
++                .filter(user -> !user.getAdministrator() && !user.getDisabled() && user.getString("plan") != null)
++                .count();
++        Map<String, Object> result = new LinkedHashMap<>();
++        result.put("activeSims", summary.get(ACTIVE));
++        result.put("availability", summary.get("availability"));
++        result.put("clients", clients);
++        result.put("devices", devices.size());
++        return result;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/billing/BillingService.java b/src/main/java/org/traccar/billing/BillingService.java
+new file mode 100644
+index 0000000..1bedc16
+--- /dev/null
++++ b/src/main/java/org/traccar/billing/BillingService.java
+@@ -0,0 +1,379 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.billing;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import jakarta.ws.rs.client.Client;
++import jakarta.ws.rs.client.Entity;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.config.Config;
++import org.traccar.config.Keys;
++import org.traccar.model.Device;
++import org.traccar.model.Invoice;
++import org.traccar.model.ObjectOperation;
++import org.traccar.model.Server;
++import org.traccar.model.User;
++import org.traccar.session.cache.CacheManager;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Condition;
++import org.traccar.storage.query.Request;
++
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.util.ArrayList;
++import java.util.Date;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++
++/**
++ * Monthly billing of client accounts: on the billing day an invoice is issued for the units of the client (price
++ * per unit plus a fixed fee), it becomes overdue after its due date and, past the grace days, the account can be
++ * suspended until it is paid. Payments are registered by hand or through Mercado Pago payment links.
++ */
++@Singleton
++public class BillingService {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(BillingService.class);
++
++    public static final String PRICE = "billingPrice";
++    public static final String FIXED = "billingFixed";
++    public static final String CURRENCY = "billingCurrency";
++    public static final String DAY = "billingDay";
++    public static final String DUE_DAYS = "billingDueDays";
++    public static final String GRACE_DAYS = "billingGraceDays";
++    public static final String AUTO_SUSPEND = "billingAutoSuspend";
++    public static final String ISSUER = "billingIssuerId";
++    public static final String SUSPENDED = "billingSuspended";
++
++    public static final String PENDING = "pending";
++    public static final String OVERDUE = "overdue";
++    public static final String PAID = "paid";
++    public static final String VOID = "void";
++
++    private static final long DAY_MILLIS = 86_400_000L;
++
++    private final Config config;
++    private final Storage storage;
++    private final CacheManager cacheManager;
++    private final Client client;
++    private final ObjectMapper objectMapper;
++
++    @Inject
++    public BillingService(
++            Config config, Storage storage, CacheManager cacheManager, Client client, ObjectMapper objectMapper) {
++        this.config = config;
++        this.storage = storage;
++        this.cacheManager = cacheManager;
++        this.client = client;
++        this.objectMapper = objectMapper;
++    }
++
++    public static boolean billed(User user) {
++        return user.getDouble(PRICE) > 0 || user.getDouble(FIXED) > 0;
++    }
++
++    public static int day(User user) {
++        int day = user.getInteger(DAY);
++        return day >= 1 && day <= 28 ? day : 1;
++    }
++
++    public static int dueDays(User user) {
++        return user.getAttributes().containsKey(DUE_DAYS) ? Math.max(0, user.getInteger(DUE_DAYS)) : 10;
++    }
++
++    public static int graceDays(User user) {
++        return user.getAttributes().containsKey(GRACE_DAYS) ? Math.max(0, user.getInteger(GRACE_DAYS)) : 5;
++    }
++
++    public static String currency(User user) {
++        String currency = user.getString(CURRENCY);
++        return currency != null && !currency.isBlank() ? currency.toUpperCase(Locale.ROOT) : "PEN";
++    }
++
++    private ZoneId zone() throws StorageException {
++        Server server = storage.getObject(Server.class, new Request(new Columns.All()));
++        String timezone = server.getString("timezone");
++        try {
++            return timezone != null ? ZoneId.of(timezone) : ZoneId.systemDefault();
++        } catch (Exception e) {
++            return ZoneId.systemDefault();
++        }
++    }
++
++    public String currentPeriod() throws StorageException {
++        return period(ZonedDateTime.now(zone()));
++    }
++
++    public static String period(ZonedDateTime time) {
++        return String.format(Locale.ROOT, "%04d-%02d", time.getYear(), time.getMonthValue());
++    }
++
++    public Invoice find(long userId, String period) throws StorageException {
++        return storage.getObject(Invoice.class, new Request(new Columns.All(), new Condition.And(
++                new Condition.Equals("userId", userId), new Condition.Equals("period", period))));
++    }
++
++    /** devices of the account (every device for an administrator) */
++    public int units(User user) throws StorageException {
++        Request request = user.getAdministrator()
++                ? new Request(new Columns.Include("id"))
++                : new Request(new Columns.Include("id"),
++                        new Condition.Permission(User.class, user.getId(), Device.class));
++        return storage.getObjects(Device.class, request).size();
++    }
++
++    /** issues the invoice of a client for a period (one per period), counting the units it has now */
++    public Invoice issue(User user, String period, Date now) throws StorageException {
++        Invoice existing = find(user.getId(), period);
++        if (existing != null) {
++            return existing;
++        }
++        Invoice invoice = new Invoice();
++        invoice.setUserId(user.getId());
++        invoice.setIssuerId(user.getLong(ISSUER));
++        invoice.setPeriod(period);
++        invoice.setUnits(units(user));
++        invoice.setUnitPrice(Math.max(0, user.getDouble(PRICE)));
++        invoice.setFixedFee(Math.max(0, user.getDouble(FIXED)));
++        invoice.setAmount(Math.round((invoice.getUnits() * invoice.getUnitPrice() + invoice.getFixedFee()) * 100)
++                / 100.0);
++        invoice.setCurrency(currency(user));
++        invoice.setStatus(PENDING);
++        invoice.setIssueDate(now);
++        invoice.setDueDate(new Date(now.getTime() + dueDays(user) * DAY_MILLIS));
++        invoice.setId(storage.addObject(invoice, new Request(new Columns.Exclude("id"))));
++        LOGGER.info("Invoice {} issued to user {} for {}: {} {}",
++                invoice.getId(), user.getId(), period, invoice.getAmount(), invoice.getCurrency());
++        return invoice;
++    }
++
++    private void saveUser(User user) throws Exception {
++        storage.updateObject(user, new Request(
++                new Columns.Include("disabled", "attributes"), new Condition.Equals("id", user.getId())));
++        cacheManager.invalidateObject(true, User.class, user.getId(), ObjectOperation.UPDATE);
++    }
++
++    private User user(long userId) throws StorageException {
++        return storage.getObject(User.class, new Request(new Columns.All(), new Condition.Equals("id", userId)));
++    }
++
++    /**
++     * Issues the invoices that are due, marks the late ones and suspends or reactivates accounts. Runs every hour
++     * and can be called at any time: it never issues twice for the same month.
++     */
++    public synchronized Map<String, Integer> run(Date now) throws Exception {
++        ZonedDateTime local = now.toInstant().atZone(zone());
++        String period = period(local);
++        int issued = 0;
++        int overdue = 0;
++        int suspended = 0;
++        int reactivated = 0;
++        for (User user : storage.getObjects(User.class, new Request(new Columns.All()))) {
++            if (billed(user) && local.getDayOfMonth() >= day(user) && find(user.getId(), period) == null) {
++                issue(user, period, now);
++                issued += 1;
++            }
++        }
++        for (Invoice invoice : storage.getObjects(Invoice.class, new Request(
++                new Columns.All(), new Condition.Equals("status", PENDING)))) {
++            if (invoice.getDueDate() != null && now.after(invoice.getDueDate())) {
++                invoice.setStatus(OVERDUE);
++                storage.updateObject(invoice, new Request(
++                        new Columns.Include("status"), new Condition.Equals("id", invoice.getId())));
++                overdue += 1;
++            }
++        }
++        for (User user : storage.getObjects(User.class, new Request(new Columns.All()))) {
++            boolean late = mustSuspend(user, now);
++            if (late && !user.getDisabled() && user.getBoolean(AUTO_SUSPEND)) {
++                user.setDisabled(true);
++                user.set(SUSPENDED, true);
++                saveUser(user);
++                suspended += 1;
++                LOGGER.info("User {} suspended for unpaid invoices", user.getId());
++            } else if (!late && user.getBoolean(SUSPENDED)) {
++                reactivate(user);
++                reactivated += 1;
++            }
++        }
++        Map<String, Integer> result = new LinkedHashMap<>();
++        result.put("issued", issued);
++        result.put("overdue", overdue);
++        result.put("suspended", suspended);
++        result.put("reactivated", reactivated);
++        return result;
++    }
++
++    /** an overdue invoice past the grace days */
++    private boolean mustSuspend(User user, Date now) throws StorageException {
++        for (Invoice invoice : storage.getObjects(Invoice.class, new Request(new Columns.All(), new Condition.And(
++                new Condition.Equals("userId", user.getId()), new Condition.Equals("status", OVERDUE))))) {
++            if (invoice.getDueDate() != null
++                    && now.getTime() > invoice.getDueDate().getTime() + graceDays(user) * DAY_MILLIS) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private void reactivate(User user) throws Exception {
++        user.setDisabled(false);
++        user.getAttributes().remove(SUSPENDED);
++        saveUser(user);
++        LOGGER.info("User {} reactivated after payment", user.getId());
++    }
++
++    public synchronized Invoice markPaid(Invoice invoice, String method, String reference) throws Exception {
++        if (PAID.equals(invoice.getStatus())) {
++            return invoice;
++        }
++        if (VOID.equals(invoice.getStatus())) {
++            throw new IllegalArgumentException("The invoice was voided");
++        }
++        invoice.setStatus(PAID);
++        invoice.setPaidDate(new Date());
++        invoice.setPaymentMethod(method);
++        invoice.setPaymentRef(reference);
++        storage.updateObject(invoice, new Request(
++                new Columns.Include("status", "paidDate", "paymentMethod", "paymentRef"),
++                new Condition.Equals("id", invoice.getId())));
++        User user = user(invoice.getUserId());
++        if (user != null && user.getBoolean(SUSPENDED) && !mustSuspend(user, new Date())) {
++            reactivate(user);
++        }
++        return invoice;
++    }
++
++    public synchronized Invoice markVoid(Invoice invoice) throws Exception {
++        if (PAID.equals(invoice.getStatus())) {
++            throw new IllegalArgumentException("A paid invoice cannot be voided");
++        }
++        invoice.setStatus(VOID);
++        storage.updateObject(invoice, new Request(
++                new Columns.Include("status"), new Condition.Equals("id", invoice.getId())));
++        User user = user(invoice.getUserId());
++        if (user != null && user.getBoolean(SUSPENDED) && !mustSuspend(user, new Date())) {
++            reactivate(user);
++        }
++        return invoice;
++    }
++
++    // ---------- Mercado Pago ----------
++
++    public boolean mercadoPagoEnabled() {
++        String token = config.getString(Keys.BILLING_MERCADO_PAGO_TOKEN);
++        return token != null && !token.isBlank();
++    }
++
++    private String mercadoPagoUrl(String path) {
++        String base = config.getString(Keys.BILLING_MERCADO_PAGO_URL);
++        return (base.endsWith("/") ? base.substring(0, base.length() - 1) : base) + path;
++    }
++
++    /** creates (once) the Mercado Pago payment link of an invoice */
++    public Invoice checkout(Invoice invoice, String title) throws Exception {
++        if (invoice.getPaymentUrl() != null) {
++            return invoice;
++        }
++        if (!mercadoPagoEnabled()) {
++            throw new IllegalArgumentException("Mercado Pago is not configured");
++        }
++        String webUrl = config.getString(Keys.WEB_URL);
++        Map<String, Object> item = new LinkedHashMap<>();
++        item.put("title", title);
++        item.put("quantity", 1);
++        item.put("unit_price", invoice.getAmount());
++        item.put("currency_id", invoice.getCurrency());
++        Map<String, Object> body = new LinkedHashMap<>();
++        body.put("items", List.of(item));
++        body.put("external_reference", "invoice-" + invoice.getId());
++        if (webUrl != null) {
++            String base = webUrl.endsWith("/") ? webUrl.substring(0, webUrl.length() - 1) : webUrl;
++            body.put("notification_url", base + "/api/billing/mercadopago/webhook");
++            body.put("back_urls", Map.of("success", base + "/billing", "pending", base + "/billing",
++                    "failure", base + "/billing"));
++            body.put("auto_return", "approved");
++        }
++        try (Response response = client.target(mercadoPagoUrl("/checkout/preferences")).request()
++                .header("Authorization", "Bearer " + config.getString(Keys.BILLING_MERCADO_PAGO_TOKEN))
++                .post(Entity.entity(objectMapper.writeValueAsString(body), MediaType.APPLICATION_JSON))) {
++            String text = response.readEntity(String.class);
++            if (response.getStatus() / 100 != 2) {
++                throw new IllegalArgumentException("Mercado Pago rejected the payment link: " + response.getStatus());
++            }
++            JsonNode json = objectMapper.readTree(text);
++            String link = json.path("init_point").asText(null);
++            if (link == null) {
++                throw new IllegalArgumentException("Mercado Pago returned no payment link");
++            }
++            invoice.setPaymentUrl(link);
++            storage.updateObject(invoice, new Request(
++                    new Columns.Include("paymentUrl"), new Condition.Equals("id", invoice.getId())));
++            return invoice;
++        }
++    }
++
++    /**
++     * Payment notified by Mercado Pago: the payment is read back from Mercado Pago (never trusted from the
++     * notification) and, when approved for the full amount, the invoice of its reference is paid.
++     */
++    public boolean paymentNotified(String paymentId) throws Exception {
++        if (!mercadoPagoEnabled() || paymentId == null || !paymentId.matches("\\d{1,20}")) {
++            return false;
++        }
++        try (Response response = client.target(mercadoPagoUrl("/v1/payments/" + paymentId)).request()
++                .header("Authorization", "Bearer " + config.getString(Keys.BILLING_MERCADO_PAGO_TOKEN)).get()) {
++            if (response.getStatus() / 100 != 2) {
++                return false;
++            }
++            JsonNode json = objectMapper.readTree(response.readEntity(String.class));
++            String reference = json.path("external_reference").asText("");
++            if (!"approved".equals(json.path("status").asText()) || !reference.startsWith("invoice-")) {
++                return false;
++            }
++            long id;
++            try {
++                id = Long.parseLong(reference.substring("invoice-".length()));
++            } catch (NumberFormatException e) {
++                return false;
++            }
++            Invoice invoice = storage.getObject(Invoice.class, new Request(
++                    new Columns.All(), new Condition.Equals("id", id)));
++            String currency = json.path("currency_id").asText(invoice != null ? invoice.getCurrency() : "");
++            if (invoice == null || json.path("transaction_amount").asDouble() + 0.005 < invoice.getAmount()
++                    || !invoice.getCurrency().equalsIgnoreCase(currency)) {
++                LOGGER.warn("Mercado Pago payment {} does not match invoice {}", paymentId, id);
++                return false;
++            }
++            markPaid(invoice, "mercadopago", paymentId);
++            return true;
++        }
++    }
++
++    public List<Invoice> invoicesOf(long userId) throws StorageException {
++        return new ArrayList<>(storage.getObjects(Invoice.class, new Request(
++                new Columns.All(), new Condition.Equals("userId", userId))));
++    }
++
++}
+diff --git a/src/main/java/org/traccar/config/Keys.java b/src/main/java/org/traccar/config/Keys.java
+index 9d662d2..798ba69 100644
+--- a/src/main/java/org/traccar/config/Keys.java
++++ b/src/main/java/org/traccar/config/Keys.java
+@@ -2189,4 +2189,19 @@ public final class Keys {
+             "whatsapp.appSecret",
+             List.of(KeyType.CONFIG));
+ 
++    /**
++     * Mercado Pago access token used to create payment links for invoices and to check notified payments.
++     */
++    public static final ConfigKey<String> BILLING_MERCADO_PAGO_TOKEN = new StringConfigKey(
++            "billing.mercadoPago.accessToken",
++            List.of(KeyType.CONFIG));
++
++    /**
++     * Mercado Pago API base URL (changed only for tests).
++     */
++    public static final ConfigKey<String> BILLING_MERCADO_PAGO_URL = new StringConfigKey(
++            "billing.mercadoPago.url",
++            List.of(KeyType.CONFIG),
++            "https://api.mercadopago.com");
++
+ }
+diff --git a/src/main/java/org/traccar/handler/events/RegulatorEventHandler.java b/src/main/java/org/traccar/handler/events/RegulatorEventHandler.java
+new file mode 100644
+index 0000000..4746d93
+--- /dev/null
++++ b/src/main/java/org/traccar/handler/events/RegulatorEventHandler.java
+@@ -0,0 +1,44 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.handler.events;
++
++import jakarta.inject.Inject;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.regulator.RegulatorService;
++import org.traccar.session.cache.CacheManager;
++
++/**
++ * Hands the positions of vehicles enrolled with an authority (SUTRAN, ATU...) to the regulator queues.
++ */
++public class RegulatorEventHandler extends BaseEventHandler {
++
++    private final CacheManager cacheManager;
++    private final RegulatorService regulatorService;
++
++    @Inject
++    public RegulatorEventHandler(CacheManager cacheManager, RegulatorService regulatorService) {
++        this.cacheManager = cacheManager;
++        this.regulatorService = regulatorService;
++    }
++
++    @Override
++    public void onPosition(Position position, Callback callback) {
++        Device device = cacheManager.getObject(Device.class, position.getDeviceId());
++        if (device != null) {
++            regulatorService.onPosition(device, position);
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Invoice.java b/src/main/java/org/traccar/model/Invoice.java
+new file mode 100644
+index 0000000..f16439e
+--- /dev/null
++++ b/src/main/java/org/traccar/model/Invoice.java
+@@ -0,0 +1,176 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * Monthly invoice of a client account: units billed, amount, due date and payment.
++ */
++@StorageName("tc_invoices")
++public class Invoice extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private long issuerId;
++
++    public long getIssuerId() {
++        return issuerId;
++    }
++
++    public void setIssuerId(long issuerId) {
++        this.issuerId = issuerId;
++    }
++
++    private String period;
++
++    public String getPeriod() {
++        return period;
++    }
++
++    public void setPeriod(String period) {
++        this.period = period;
++    }
++
++    private int units;
++
++    public int getUnits() {
++        return units;
++    }
++
++    public void setUnits(int units) {
++        this.units = units;
++    }
++
++    private double unitPrice;
++
++    public double getUnitPrice() {
++        return unitPrice;
++    }
++
++    public void setUnitPrice(double unitPrice) {
++        this.unitPrice = unitPrice;
++    }
++
++    private double fixedFee;
++
++    public double getFixedFee() {
++        return fixedFee;
++    }
++
++    public void setFixedFee(double fixedFee) {
++        this.fixedFee = fixedFee;
++    }
++
++    private double amount;
++
++    public double getAmount() {
++        return amount;
++    }
++
++    public void setAmount(double amount) {
++        this.amount = amount;
++    }
++
++    private String currency;
++
++    public String getCurrency() {
++        return currency;
++    }
++
++    public void setCurrency(String currency) {
++        this.currency = currency;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private Date issueDate;
++
++    public Date getIssueDate() {
++        return issueDate;
++    }
++
++    public void setIssueDate(Date issueDate) {
++        this.issueDate = issueDate;
++    }
++
++    private Date dueDate;
++
++    public Date getDueDate() {
++        return dueDate;
++    }
++
++    public void setDueDate(Date dueDate) {
++        this.dueDate = dueDate;
++    }
++
++    private Date paidDate;
++
++    public Date getPaidDate() {
++        return paidDate;
++    }
++
++    public void setPaidDate(Date paidDate) {
++        this.paidDate = paidDate;
++    }
++
++    private String paymentMethod;
++
++    public String getPaymentMethod() {
++        return paymentMethod;
++    }
++
++    public void setPaymentMethod(String paymentMethod) {
++        this.paymentMethod = paymentMethod;
++    }
++
++    private String paymentRef;
++
++    public String getPaymentRef() {
++        return paymentRef;
++    }
++
++    public void setPaymentRef(String paymentRef) {
++        this.paymentRef = paymentRef;
++    }
++
++    private String paymentUrl;
++
++    public String getPaymentUrl() {
++        return paymentUrl;
++    }
++
++    public void setPaymentUrl(String paymentUrl) {
++        this.paymentUrl = paymentUrl;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/RegulatorDestination.java b/src/main/java/org/traccar/model/RegulatorDestination.java
+new file mode 100644
+index 0000000..ee4fd94
+--- /dev/null
++++ b/src/main/java/org/traccar/model/RegulatorDestination.java
+@@ -0,0 +1,104 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++/**
++ * Authority that receives the positions of enrolled vehicles (SUTRAN, ATU or any HTTP endpoint).
++ */
++@StorageName("tc_regulator_destinations")
++public class RegulatorDestination extends ExtendedModel {
++
++    private String name;
++
++    public String getName() {
++        return name;
++    }
++
++    public void setName(String name) {
++        this.name = name;
++    }
++
++    private String type;
++
++    public String getType() {
++        return type;
++    }
++
++    public void setType(String type) {
++        this.type = type;
++    }
++
++    private String url;
++
++    public String getUrl() {
++        return url;
++    }
++
++    public void setUrl(String url) {
++        this.url = url;
++    }
++
++    private String authHeader;
++
++    public String getAuthHeader() {
++        return authHeader;
++    }
++
++    public void setAuthHeader(String authHeader) {
++        this.authHeader = authHeader;
++    }
++
++    private String authValue;
++
++    public String getAuthValue() {
++        return authValue;
++    }
++
++    public void setAuthValue(String authValue) {
++        this.authValue = authValue;
++    }
++
++    private String template;
++
++    public String getTemplate() {
++        return template;
++    }
++
++    public void setTemplate(String template) {
++        this.template = template;
++    }
++
++    private boolean batch;
++
++    public boolean getBatch() {
++        return batch;
++    }
++
++    public void setBatch(boolean batch) {
++        this.batch = batch;
++    }
++
++    private boolean enabled;
++
++    public boolean getEnabled() {
++        return enabled;
++    }
++
++    public void setEnabled(boolean enabled) {
++        this.enabled = enabled;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/model/Sim.java b/src/main/java/org/traccar/model/Sim.java
+new file mode 100644
+index 0000000..f2ea55f
+--- /dev/null
++++ b/src/main/java/org/traccar/model/Sim.java
+@@ -0,0 +1,156 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.model;
++
++import org.traccar.storage.StorageName;
++
++import java.util.Date;
++
++/**
++ * SIM card of the inventory: carrier line, data plan, monthly cost and the device it is installed in.
++ */
++@StorageName("tc_sims")
++public class Sim extends ExtendedModel {
++
++    private long userId;
++
++    public long getUserId() {
++        return userId;
++    }
++
++    public void setUserId(long userId) {
++        this.userId = userId;
++    }
++
++    private String iccid;
++
++    public String getIccid() {
++        return iccid;
++    }
++
++    public void setIccid(String iccid) {
++        this.iccid = iccid;
++    }
++
++    private String phone;
++
++    public String getPhone() {
++        return phone;
++    }
++
++    public void setPhone(String phone) {
++        this.phone = phone;
++    }
++
++    private String carrier;
++
++    public String getCarrier() {
++        return carrier;
++    }
++
++    public void setCarrier(String carrier) {
++        this.carrier = carrier;
++    }
++
++    private String apn;
++
++    public String getApn() {
++        return apn;
++    }
++
++    public void setApn(String apn) {
++        this.apn = apn;
++    }
++
++    private String planName;
++
++    public String getPlanName() {
++        return planName;
++    }
++
++    public void setPlanName(String planName) {
++        this.planName = planName;
++    }
++
++    private double dataLimitMb;
++
++    public double getDataLimitMb() {
++        return dataLimitMb;
++    }
++
++    public void setDataLimitMb(double dataLimitMb) {
++        this.dataLimitMb = dataLimitMb;
++    }
++
++    private double usageMb;
++
++    public double getUsageMb() {
++        return usageMb;
++    }
++
++    public void setUsageMb(double usageMb) {
++        this.usageMb = usageMb;
++    }
++
++    private Date usageDate;
++
++    public Date getUsageDate() {
++        return usageDate;
++    }
++
++    public void setUsageDate(Date usageDate) {
++        this.usageDate = usageDate;
++    }
++
++    private double monthlyCost;
++
++    public double getMonthlyCost() {
++        return monthlyCost;
++    }
++
++    public void setMonthlyCost(double monthlyCost) {
++        this.monthlyCost = monthlyCost;
++    }
++
++    private String status;
++
++    public String getStatus() {
++        return status;
++    }
++
++    public void setStatus(String status) {
++        this.status = status;
++    }
++
++    private long deviceId;
++
++    public long getDeviceId() {
++        return deviceId;
++    }
++
++    public void setDeviceId(long deviceId) {
++        this.deviceId = deviceId;
++    }
++
++    private Date activatedAt;
++
++    public Date getActivatedAt() {
++        return activatedAt;
++    }
++
++    public void setActivatedAt(Date activatedAt) {
++        this.activatedAt = activatedAt;
++    }
++
++}
+diff --git a/src/main/java/org/traccar/plans/ModuleRequestFilter.java b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+index 1107dca..59251fd 100644
+--- a/src/main/java/org/traccar/plans/ModuleRequestFilter.java
++++ b/src/main/java/org/traccar/plans/ModuleRequestFilter.java
+@@ -51,6 +51,8 @@ public class ModuleRequestFilter implements ContainerRequestFilter {
+             Map.entry("agro", "agro"),
+             Map.entry("device-config", "deviceConfig"),
+             Map.entry("machinery", "machinery"),
++            Map.entry("sims", "sims"),
++            Map.entry("regulator", "regulator"),
+             Map.entry("hierarchy/domains", "whitelabel"));
+ 
+     @Inject
+diff --git a/src/main/java/org/traccar/plans/PlanService.java b/src/main/java/org/traccar/plans/PlanService.java
+index 31186e4..5bb93d6 100644
+--- a/src/main/java/org/traccar/plans/PlanService.java
++++ b/src/main/java/org/traccar/plans/PlanService.java
+@@ -54,7 +54,7 @@ public class PlanService {
+     public static final List<String> MODULES = List.of(
+             "video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes", "whatsapp", "chat",
+             "driving", "expenses", "maintenance", "reports", "dispatch", "transit", "tpms", "assets", "agro",
+-            "deviceConfig", "machinery", "premiumMaps", "whitelabel");
++            "deviceConfig", "machinery", "premiumMaps", "sims", "billing", "regulator", "whitelabel");
+ 
+     /** modules that existed before the catalog recorded which modules it knew */
+     private static final List<String> LEGACY_MODULES = List.of(
+@@ -67,11 +67,11 @@ public class PlanService {
+             new Plan("pro", "Profesional", "Flotas: sensores, combustible, alertas personalizadas y reportes",
+                     "#2563c9", 0, List.of("fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+                     "whatsapp", "driving", "expenses", "maintenance", "reports", "dispatch", "tpms", "assets",
+-                    "agro", "deviceConfig", "machinery")),
++                    "agro", "deviceConfig", "machinery", "regulator")),
+             new Plan("video", "Video", "Profesional más dashcams, video y chat con conductores", "#8e44ad", 0,
+                     List.of("video", "fuel", "sensors", "alerts", "geofenceSpeed", "routes",
+                     "whatsapp", "chat", "driving", "expenses", "maintenance", "reports", "dispatch", "tpms",
+-                    "assets", "agro", "deviceConfig", "machinery", "premiumMaps")),
++                    "assets", "agro", "deviceConfig", "machinery", "premiumMaps", "regulator")),
+             new Plan("reseller", "Distribuidor", "Todos los módulos y marca blanca para revender", "#1a9aa3", 0,
+                     MODULES));
+ 
+diff --git a/src/main/java/org/traccar/regulator/RegulatorService.java b/src/main/java/org/traccar/regulator/RegulatorService.java
+new file mode 100644
+index 0000000..dddd89e
+--- /dev/null
++++ b/src/main/java/org/traccar/regulator/RegulatorService.java
+@@ -0,0 +1,409 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.regulator;
++
++import jakarta.inject.Inject;
++import jakarta.inject.Singleton;
++import jakarta.ws.rs.client.Client;
++import jakarta.ws.rs.client.Entity;
++import jakarta.ws.rs.client.Invocation;
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.helper.UnitsConverter;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++import org.traccar.model.RegulatorDestination;
++import org.traccar.storage.Storage;
++import org.traccar.storage.StorageException;
++import org.traccar.storage.query.Columns;
++import org.traccar.storage.query.Request;
++
++import java.time.Instant;
++import java.time.ZoneId;
++import java.time.format.DateTimeFormatter;
++import java.util.ArrayDeque;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.Date;
++import java.util.Deque;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.Executors;
++import java.util.concurrent.ScheduledExecutorService;
++import java.util.concurrent.TimeUnit;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++import java.util.stream.Collectors;
++
++/**
++ * Sends the positions of enrolled vehicles to authorities (SUTRAN, ATU or any HTTP endpoint): one queue per
++ * destination, a JSON template per destination, retries with growing waits and transmission figures per vehicle so
++ * the operator can see which units are transmitting and which are not.
++ */
++@Singleton
++public class RegulatorService {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(RegulatorService.class);
++
++    public static final String ENROLLED = "regulator";
++
++    private static final int QUEUE_LIMIT = 20_000;
++    private static final int BATCH_LIMIT = 50;
++    private static final int MAX_ATTEMPTS = 6;
++    private static final long RELOAD_MILLIS = 60_000;
++    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([A-Za-z0-9]+)}");
++
++    private static final DateTimeFormatter LOCAL_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
++
++    private record Item(long deviceId, Map<String, String> values, int attempts, long notBefore) {
++    }
++
++    /** transmission figures of one vehicle to one destination */
++    public static final class Stats {
++        private volatile Date lastSent;
++        private volatile Date lastFix;
++        private volatile Date lastErrorTime;
++        private volatile String lastError;
++        private volatile long sent;
++        private volatile long failed;
++
++        public Date getLastSent() {
++            return lastSent;
++        }
++
++        public Date getLastFix() {
++            return lastFix;
++        }
++
++        public Date getLastErrorTime() {
++            return lastErrorTime;
++        }
++
++        public String getLastError() {
++            return lastError;
++        }
++
++        public long getSent() {
++            return sent;
++        }
++
++        public long getFailed() {
++            return failed;
++        }
++    }
++
++    private final Storage storage;
++    private final Client client;
++
++    private final Map<Long, Deque<Item>> queues = new ConcurrentHashMap<>();
++    private final Map<Long, Map<Long, Stats>> stats = new ConcurrentHashMap<>();
++    private final Map<Long, Stats> destinationStats = new ConcurrentHashMap<>();
++    private final Map<Long, Long> dropped = new ConcurrentHashMap<>();
++    private volatile Map<Long, RegulatorDestination> destinations = Map.of();
++    private volatile long loaded;
++    private ScheduledExecutorService executor;
++
++    @Inject
++    public RegulatorService(Storage storage, Client client) {
++        this.storage = storage;
++        this.client = client;
++    }
++
++    public void reload() {
++        try {
++            Map<Long, RegulatorDestination> result = new HashMap<>();
++            for (RegulatorDestination destination : storage.getObjects(
++                    RegulatorDestination.class, new Request(new Columns.All()))) {
++                result.put(destination.getId(), destination);
++            }
++            destinations = result;
++            queues.keySet().removeIf(id -> !result.containsKey(id));
++        } catch (StorageException e) {
++            LOGGER.warn("Regulator destinations not loaded", e);
++        }
++        loaded = System.currentTimeMillis();
++    }
++
++    private Map<Long, RegulatorDestination> destinations() {
++        if (System.currentTimeMillis() - loaded > RELOAD_MILLIS) {
++            reload();
++        }
++        return destinations;
++    }
++
++    public static Set<Long> enrolled(Device device) {
++        String value = device != null ? device.getString(ENROLLED) : null;
++        if (value == null || value.isBlank()) {
++            return Set.of();
++        }
++        return Arrays.stream(value.split("[,;\\s]+")).map(String::trim).filter(item -> item.matches("\\d+"))
++                .map(Long::parseLong).collect(Collectors.toSet());
++    }
++
++    private synchronized void start() {
++        if (executor == null) {
++            executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
++                Thread thread = new Thread(runnable, "regulator");
++                thread.setDaemon(true);
++                return thread;
++            });
++            executor.scheduleWithFixedDelay(this::flush, 1, 1, TimeUnit.SECONDS);
++        }
++    }
++
++    private static String number(double value, int decimals) {
++        return String.format(Locale.ROOT, "%." + decimals + "f", value);
++    }
++
++    /** values a template can use as ${name} */
++    public static Map<String, String> values(Device device, Position position, ZoneId zone) {
++        Map<String, String> values = new LinkedHashMap<>();
++        String plate = device.getString("plate");
++        values.put("plate", plate != null && !plate.isBlank() ? plate : device.getName());
++        values.put("name", device.getName());
++        values.put("imei", device.getUniqueId());
++        values.put("deviceId", String.valueOf(device.getId()));
++        values.put("route", device.getString("route") != null ? device.getString("route") : "");
++        values.put("lat", number(position.getLatitude(), 6));
++        values.put("lon", number(position.getLongitude(), 6));
++        values.put("speedKmh", number(UnitsConverter.kphFromKnots(position.getSpeed()), 1));
++        values.put("speedKnots", number(position.getSpeed(), 1));
++        values.put("course", number(position.getCourse(), 0));
++        values.put("altitude", number(position.getAltitude(), 0));
++        values.put("valid", String.valueOf(position.getValid()));
++        Object satellites = position.getAttributes().get(Position.KEY_SATELLITES);
++        values.put("satellites", satellites != null ? String.valueOf(satellites) : "0");
++        boolean ignition = position.getBoolean(Position.KEY_IGNITION);
++        values.put("ignition", String.valueOf(ignition));
++        values.put("ignition01", ignition ? "1" : "0");
++        values.put("motion", String.valueOf(position.getBoolean(Position.KEY_MOTION)));
++        values.put("odometerKm", number(position.getDouble(Position.KEY_TOTAL_DISTANCE) / 1000, 1));
++        String alarm = position.getString(Position.KEY_ALARM);
++        values.put("alarm", alarm != null ? alarm : "");
++        values.put("event", alarm != null ? alarm : ignition ? "position" : "stopped");
++        String driver = position.getString(Position.KEY_DRIVER_UNIQUE_ID);
++        values.put("driver", driver != null ? driver : "");
++        Instant fix = (position.getFixTime() != null ? position.getFixTime() : new Date()).toInstant();
++        values.put("fixTime", LOCAL_TIME.format(fix.atZone(zone)));
++        values.put("fixTimeIso", DateTimeFormatter.ISO_INSTANT.format(fix));
++        values.put("fixTimeEpoch", String.valueOf(fix.getEpochSecond()));
++        values.put("fixTimeMillis", String.valueOf(fix.toEpochMilli()));
++        return values;
++    }
++
++    private static String escape(String value) {
++        StringBuilder result = new StringBuilder();
++        for (char c : value.toCharArray()) {
++            switch (c) {
++                case '"' -> result.append("\\\"");
++                case '\\' -> result.append("\\\\");
++                case '\n' -> result.append("\\n");
++                case '\r' -> result.append("\\r");
++                case '\t' -> result.append("\\t");
++                default -> {
++                    if (c < 0x20) {
++                        result.append(String.format("\\u%04x", (int) c));
++                    } else {
++                        result.append(c);
++                    }
++                }
++            }
++        }
++        return result.toString();
++    }
++
++    /** fills the template; unknown placeholders stay empty and every value is escaped for JSON strings */
++    public static String render(String template, Map<String, String> values, Map<String, Object> extra) {
++        Matcher matcher = PLACEHOLDER.matcher(template);
++        StringBuilder result = new StringBuilder();
++        while (matcher.find()) {
++            String key = matcher.group(1);
++            Object value = values.containsKey(key) ? values.get(key) : extra.get(key);
++            String text = value != null ? String.valueOf(value) : "";
++            matcher.appendReplacement(result, Matcher.quoteReplacement(escape(text)));
++        }
++        matcher.appendTail(result);
++        return result.toString();
++    }
++
++    public static ZoneId zone(RegulatorDestination destination) {
++        try {
++            String timezone = destination.getString("timezone");
++            return ZoneId.of(timezone != null ? timezone : "America/Lima");
++        } catch (Exception e) {
++            return ZoneId.of("America/Lima");
++        }
++    }
++
++    public void onPosition(Device device, Position position) {
++        Set<Long> ids = enrolled(device);
++        if (ids.isEmpty() || !position.getValid()) {
++            return;
++        }
++        Map<Long, RegulatorDestination> all = destinations();
++        for (long id : ids) {
++            RegulatorDestination destination = all.get(id);
++            if (destination == null || !destination.getEnabled()) {
++                continue;
++            }
++            start();
++            Deque<Item> queue = queues.computeIfAbsent(id, key -> new ArrayDeque<>());
++            synchronized (queue) {
++                if (queue.size() >= QUEUE_LIMIT) {
++                    queue.pollFirst();
++                    dropped.merge(id, 1L, Long::sum);
++                }
++                queue.addLast(new Item(device.getId(), values(device, position, zone(destination)), 0, 0));
++            }
++            stats(id, device.getId()).lastFix = position.getFixTime();
++        }
++    }
++
++    private Stats stats(long destinationId, long deviceId) {
++        return stats.computeIfAbsent(destinationId, key -> new ConcurrentHashMap<>())
++                .computeIfAbsent(deviceId, key -> new Stats());
++    }
++
++    public Map<Long, Stats> deviceStats(long destinationId) {
++        return stats.getOrDefault(destinationId, Map.of());
++    }
++
++    public Stats destinationStats(long destinationId) {
++        return destinationStats.computeIfAbsent(destinationId, key -> new Stats());
++    }
++
++    public int queued(long destinationId) {
++        Deque<Item> queue = queues.get(destinationId);
++        if (queue == null) {
++            return 0;
++        }
++        synchronized (queue) {
++            return queue.size();
++        }
++    }
++
++    public long dropped(long destinationId) {
++        return dropped.getOrDefault(destinationId, 0L);
++    }
++
++    /** status code and start of the reply, or the error */
++    public record Result(int status, String body, String error) {
++        boolean success() {
++            return error == null && status / 100 == 2;
++        }
++    }
++
++    public Result post(RegulatorDestination destination, String json) {
++        try {
++            Invocation.Builder request = client.target(destination.getUrl()).request();
++            if (destination.getAuthHeader() != null && !destination.getAuthHeader().isBlank()
++                    && destination.getAuthValue() != null) {
++                request = request.header(destination.getAuthHeader(), destination.getAuthValue());
++            }
++            try (Response response = request.post(Entity.entity(json, MediaType.APPLICATION_JSON))) {
++                String body = response.hasEntity() ? response.readEntity(String.class) : "";
++                return new Result(response.getStatus(), body.length() > 300 ? body.substring(0, 300) : body, null);
++            }
++        } catch (Exception e) {
++            Throwable cause = e;
++            while (cause.getCause() != null && cause.getCause() != cause) {
++                cause = cause.getCause();
++            }
++            return new Result(0, null, cause.getClass().getSimpleName() + ": " + cause.getMessage());
++        }
++    }
++
++    private void flush() {
++        for (var entry : queues.entrySet()) {
++            RegulatorDestination destination = destinations().get(entry.getKey());
++            if (destination == null) {
++                continue;
++            }
++            try {
++                flush(destination, entry.getValue());
++            } catch (RuntimeException e) {
++                LOGGER.warn("Regulator {} flush failed", destination.getName(), e);
++            }
++        }
++    }
++
++    private void flush(RegulatorDestination destination, Deque<Item> queue) {
++        long now = System.currentTimeMillis();
++        List<Item> items = new ArrayList<>();
++        synchronized (queue) {
++            int skipped = 0;
++            while (!queue.isEmpty() && items.size() < BATCH_LIMIT && skipped < queue.size()) {
++                Item item = queue.pollFirst();
++                if (item.notBefore() > now) {
++                    queue.addLast(item);
++                    skipped += 1;
++                } else {
++                    items.add(item);
++                }
++            }
++        }
++        if (items.isEmpty()) {
++            return;
++        }
++        String template = destination.getTemplate() != null && !destination.getTemplate().isBlank()
++                ? destination.getTemplate() : "{\"imei\":\"${imei}\",\"lat\":${lat},\"lon\":${lon}}";
++        Map<String, Object> extra = destination.getAttributes();
++        if (destination.getBatch()) {
++            String json = items.stream().map(item -> render(template, item.values(), extra))
++                    .collect(Collectors.joining(",", "[", "]"));
++            Result result = post(destination, json);
++            items.forEach(item -> done(destination, queue, item, result));
++        } else {
++            for (Item item : items) {
++                done(destination, queue, item, post(destination, render(template, item.values(), extra)));
++            }
++        }
++    }
++
++    private void done(RegulatorDestination destination, Deque<Item> queue, Item item, Result result) {
++        Stats device = stats(destination.getId(), item.deviceId());
++        Stats total = destinationStats(destination.getId());
++        Date now = new Date();
++        if (result.success()) {
++            device.lastSent = now;
++            device.sent += 1;
++            total.lastSent = now;
++            total.sent += 1;
++            return;
++        }
++        String error = result.error() != null ? result.error() : "HTTP " + result.status() + " " + result.body();
++        device.lastError = error;
++        device.lastErrorTime = now;
++        total.lastError = error;
++        total.lastErrorTime = now;
++        int attempts = item.attempts() + 1;
++        if (attempts < MAX_ATTEMPTS) {
++            long wait = 2000L << attempts;
++            synchronized (queue) {
++                queue.addLast(new Item(item.deviceId(), item.values(), attempts, System.currentTimeMillis() + wait));
++            }
++        } else {
++            device.failed += 1;
++            total.failed += 1;
++        }
++    }
++
++}
+diff --git a/src/main/java/org/traccar/schedule/ScheduleManager.java b/src/main/java/org/traccar/schedule/ScheduleManager.java
+index b631d35..9391f95 100644
+--- a/src/main/java/org/traccar/schedule/ScheduleManager.java
++++ b/src/main/java/org/traccar/schedule/ScheduleManager.java
+@@ -54,7 +54,8 @@ public class ScheduleManager implements LifecycleObject {
+                 TaskStorageRetention.class,
+                 TaskMaintenanceReminder.class,
+                 TaskAlertRules.class,
+-                TaskAssetWatch.class)
++                TaskAssetWatch.class,
++                TaskBilling.class)
+                 .forEachOrdered(taskClass -> {
+                     var task = injector.getInstance(taskClass);
+                     if (task.multipleInstances() || !secondary) {
+diff --git a/src/main/java/org/traccar/schedule/TaskBilling.java b/src/main/java/org/traccar/schedule/TaskBilling.java
+new file mode 100644
+index 0000000..e3d0c9b
+--- /dev/null
++++ b/src/main/java/org/traccar/schedule/TaskBilling.java
+@@ -0,0 +1,53 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.traccar.schedule;
++
++import jakarta.inject.Inject;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.traccar.billing.BillingService;
++
++import java.util.Date;
++import java.util.concurrent.ScheduledExecutorService;
++import java.util.concurrent.TimeUnit;
++
++/**
++ * Every hour: issues the monthly invoices that are due, marks late ones and suspends or reactivates accounts.
++ */
++public class TaskBilling extends SingleScheduleTask {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger(TaskBilling.class);
++
++    private final BillingService billingService;
++
++    @Inject
++    public TaskBilling(BillingService billingService) {
++        this.billingService = billingService;
++    }
++
++    @Override
++    public void schedule(ScheduledExecutorService executor) {
++        executor.scheduleAtFixedRate(this, 3, 60, TimeUnit.MINUTES);
++    }
++
++    @Override
++    public void run() {
++        try {
++            billingService.run(new Date());
++        } catch (Exception e) {
++            LOGGER.warn("Billing run failed", e);
++        }
++    }
++
++}
+diff --git a/src/test/java/org/traccar/regulator/RegulatorServiceTest.java b/src/test/java/org/traccar/regulator/RegulatorServiceTest.java
+new file mode 100644
+index 0000000..19cab2a
+--- /dev/null
++++ b/src/test/java/org/traccar/regulator/RegulatorServiceTest.java
+@@ -0,0 +1,55 @@
++package org.traccar.regulator;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import org.junit.jupiter.api.Test;
++import org.traccar.model.Device;
++import org.traccar.model.Position;
++
++import java.time.ZoneId;
++import java.util.Date;
++import java.util.Map;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++public class RegulatorServiceTest {
++
++    @Test
++    public void testRender() throws Exception {
++        Device device = new Device();
++        device.setName("Bus 12");
++        device.setUniqueId("123456789012345");
++        device.set("plate", "AB\"C-1\\2");
++        Position position = new Position();
++        position.setLatitude(-12.046374);
++        position.setLongitude(-77.042793);
++        position.setSpeed(10.0);
++        position.setFixTime(new Date(1_793_577_600_000L));
++        position.setValid(true);
++        position.set(Position.KEY_IGNITION, true);
++
++        Map<String, String> values = RegulatorService.values(device, position, ZoneId.of("America/Lima"));
++        String json = RegulatorService.render(
++                "{\"plate\":\"${plate}\",\"lat\":${lat},\"speed\":${speedKmh},\"on\":${ignition01},"
++                        + "\"time\":\"${fixTime}\",\"token\":\"${token}\",\"x\":\"${unknown}\"}",
++                values, Map.of("token", "abc"));
++        JsonNode node = new ObjectMapper().readTree(json);
++        assertEquals("AB\"C-1\\2", node.get("plate").asText());
++        assertEquals(-12.046374, node.get("lat").asDouble(), 0.0000001);
++        assertEquals(18.5, node.get("speed").asDouble(), 0.01);
++        assertEquals(1, node.get("on").asInt());
++        assertEquals("2026-11-01 19:00:00", node.get("time").asText());
++        assertEquals("abc", node.get("token").asText());
++        assertEquals("", node.get("x").asText());
++    }
++
++    @Test
++    public void testEnrolled() {
++        Device device = new Device();
++        assertEquals(Set.of(), RegulatorService.enrolled(device));
++        device.set(RegulatorService.ENROLLED, "3, 7;x");
++        assertEquals(Set.of(3L, 7L), RegulatorService.enrolled(device));
++    }
++
++}

@@ -1,4 +1,5 @@
 import '@fontsource/dancing-script/600.css';
+import { useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import { makeStyles } from 'tss-react/mui';
 import PublicIcon from '@mui/icons-material/Public';
@@ -178,7 +179,20 @@ const LoginLayout = ({ children }) => {
   const headline = useBrandAttribute('loginHeadline') || t('loginHeadlineDefault');
   const text = useBrandAttribute('loginText') || t('loginTextDefault');
   const tagline = useBrandAttribute('loginTagline') || t('loginTaglineDefault');
-  const stats = parseStats(useBrandAttribute('loginStats') || t('loginStatsDefault'));
+  const configuredStats = parseStats(useBrandAttribute('loginStats') || t('loginStatsDefault'));
+  const [live, setLive] = useState(null);
+
+  // real figures when the administrator enables them (server attribute loginLiveStats)
+  useEffect(() => {
+    fetch('/api/sims/public').then((response) => (response.ok ? response.json() : null)).then(setLive).catch(() => {});
+  }, []);
+
+  const stats = live && live.activeSims > 0 ? [
+    { value: live.activeSims.toLocaleString('es-PE'), label: t('loginStatSims') },
+    { value: live.availability != null ? `${live.availability}%` : '—', label: t('loginStatAvailability') },
+    { value: live.clients.toLocaleString('es-PE'), label: t('loginStatClients') },
+    { value: '24/7', label: t('loginStatSupport') },
+  ] : configuredStats;
 
   // last word of the headline in the accent color, as in the brand artwork
   const words = headline.split(' ');

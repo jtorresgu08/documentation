@@ -12,6 +12,7 @@ import TermsDialog from './common/components/TermsDialog';
 import Loader from './common/components/Loader';
 import FloatingPanels from './panels/FloatingPanels';
 import fetchOrThrow from './common/util/fetchOrThrow';
+import BillingReminder from './billing/BillingReminder';
 
 const useStyles = makeStyles()(() => ({
   root: {
@@ -82,6 +83,7 @@ const App = () => {
         <AppSidebar />
         <div className={classes.page}>
           <Outlet />
+          <BillingReminder />
         </div>
       </div>
       <FloatingPanels />

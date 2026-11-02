@@ -31,6 +31,9 @@ import TireRepairIcon from '@mui/icons-material/TireRepair';
 import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
 import AgricultureIcon from '@mui/icons-material/Agriculture';
 import ConstructionIcon from '@mui/icons-material/Construction';
+import SimCardIcon from '@mui/icons-material/SimCard';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import GavelIcon from '@mui/icons-material/Gavel';
 import SettingsRemoteIcon from '@mui/icons-material/SettingsRemote';
 import ShieldIcon from '@mui/icons-material/Shield';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -309,6 +312,15 @@ const AppSidebar = () => {
     },
     hasModule('machinery') && {
       key: 'machinery', title: t('machineryTitle'), icon: <ConstructionIcon />, href: '/machinery', match: /^\/machinery/,
+    },
+    hasModule('regulator') && {
+      key: 'regulator', title: t('regulatorTitle'), icon: <GavelIcon />, href: '/regulator', match: /^\/regulator/,
+    },
+    hasModule('sims') && {
+      key: 'sims', title: t('simTitle'), icon: <SimCardIcon />, href: '/sims', match: /^\/sims/,
+    },
+    (admin || (manager && hasModule('billing'))) && {
+      key: 'billing', title: t('billingTitle'), icon: <ReceiptLongIcon />, href: '/billing', match: /^\/billing/,
     },
     hasModule('deviceConfig') && !readonly && !limitCommands && {
       key: 'deviceConfig', title: t('deviceConfigTitle'), icon: <SettingsRemoteIcon />, href: '/device-config', match: /^\/device-config/,

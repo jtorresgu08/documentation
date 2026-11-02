@@ -48,7 +48,7 @@ def main():
     latest = {position['deviceId']: position for position in positions} if status == 200 else {}
     frozen = [device['name'] for device in devices if latest.get(device['id'], {}).get('latitude') != -12.0]
     check('devices keep accepting positions afterwards', not frozen, frozen)
-    status, events = admin.req('GET', f'/api/reports/route?deviceId={devices[0]["id"]}&from={iso(start - 60)}&to={iso(time.time() + 60)}')
+    status, events = admin.req('GET', f'/api/reports/route?deviceId={devices[0]["id"]}&from={iso(start - 60)}&to={iso(time.time() + 60)}', headers={'Accept': 'application/json'})
     check('positions stored', status == 200 and len(events) >= count, len(events) if status == 200 else events)
     for device in devices:
         admin.req('DELETE', f'/api/devices/{device["id"]}')

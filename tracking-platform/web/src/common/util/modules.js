@@ -20,6 +20,9 @@ export const MODULE_LABELS = {
   deviceConfig: 'moduleDeviceConfig',
   machinery: 'moduleMachinery',
   premiumMaps: 'modulePremiumMaps',
+  sims: 'moduleSims',
+  billing: 'moduleBilling',
+  regulator: 'moduleRegulator',
   whitelabel: 'moduleWhitelabel',
 };
 

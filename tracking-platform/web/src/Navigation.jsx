@@ -50,6 +50,9 @@ import AgroPage from './agro/AgroPage';
 import DeviceConfigPage from './deviceConfig/DeviceConfigPage';
 import SecurityPage from './security/SecurityPage';
 import MachineryPage from './machinery/MachineryPage';
+import SimsPage from './sims/SimsPage';
+import BillingPage from './billing/BillingPage';
+import RegulatorPage from './regulator/RegulatorPage';
 import DriversPage from './settings/DriversPage';
 import DriverPage from './settings/DriverPage';
 import CalendarsPage from './settings/CalendarsPage';
@@ -170,6 +173,9 @@ const Navigation = () => {
         <Route path="assets" element={<AssetsPage />} />
         <Route path="agro" element={<AgroPage />} />
         <Route path="machinery" element={<MachineryPage />} />
+        <Route path="sims" element={<SimsPage />} />
+        <Route path="billing" element={<BillingPage />} />
+        <Route path="regulator" element={<RegulatorPage />} />
         <Route path="device-config" element={<DeviceConfigPage />} />
         <Route path="security" element={<SecurityPage />} />
         <Route path="emulator" element={<EmulatorPage />} />
